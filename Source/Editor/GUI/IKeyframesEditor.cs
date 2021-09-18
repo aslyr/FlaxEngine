@@ -1,5 +1,7 @@
 // Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using FlaxEngine;
 using FlaxEngine.GUI;
 
@@ -50,5 +52,35 @@ namespace FlaxEditor.GUI
         /// <param name="start">The movement start flag.</param>
         /// <param name="end">The movement end flag.</param>
         void OnKeyframesMove(IKeyframesEditor editor, ContainerControl control, Vector2 location, bool start, bool end);
+
+        /// <summary>
+        /// Called when keyframes selection should be copied.
+        /// </summary>
+        /// <param name="editor">The source editor.</param>
+        /// <param name="timeOffset">The additional time offset to apply to the copied keyframes (optional).</param>
+        /// <param name="data">The result copy data text stream.</param>
+        void OnKeyframesCopy(IKeyframesEditor editor, float? timeOffset, System.Text.StringBuilder data);
+
+        /// <summary>
+        /// Called when keyframes should be pasted (from clipboard).
+        /// </summary>
+        /// <param name="editor">The source editor.</param>
+        /// <param name="timeOffset">The additional time offset to apply to the pasted keyframes (optional).</param>
+        /// <param name="datas">The pasted data text.</param>
+        /// <param name="index">The counter for the current data index. Set to -1 until the calling editor starts paste operation.</param>
+        void OnKeyframesPaste(IKeyframesEditor editor, float? timeOffset, string[] datas, ref int index);
+
+        /// <summary>
+        /// Called when collecting keyframes from the context.
+        /// </summary>
+        /// <param name="trackName">The name of the track.</param>
+        /// <param name="get">The getter function to call for all keyframes. Args are: track name, keyframe time, keyframe object.</param>
+        void OnKeyframesGet(string trackName, Action<string, float, object> get);
+
+        /// <summary>
+        /// Called when setting keyframes data (opposite to <see cref="OnKeyframesGet"/>).
+        /// </summary>
+        /// <param name="keyframes">The list of keyframes, null for empty list. Keyframe data is: time and keyframe object.</param>
+        void OnKeyframesSet(List<KeyValuePair<float, object>> keyframes);
     }
 }

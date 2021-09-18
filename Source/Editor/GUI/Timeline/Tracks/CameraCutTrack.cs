@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using FlaxEditor.Utilities;
 using FlaxEngine;
 using FlaxEngine.GUI;
 using Object = FlaxEngine.Object;
@@ -671,7 +672,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         private static void LoadTrack(int version, Track track, BinaryReader stream)
         {
             var e = (CameraCutTrack)track;
-            e.ActorID = new Guid(stream.ReadBytes(16));
+            e.ActorID = stream.ReadGuid();
             var m = e.TrackMedia;
             m.StartFrame = stream.ReadInt32();
             m.DurationFrames = stream.ReadInt32();
@@ -728,7 +729,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
 
         /// <inheritdoc />
         public CameraCutTrack(ref TrackCreateOptions options)
-        : base(ref options)
+        : base(ref options, false)
         {
             Height = CameraCutThumbnailRenderer.Height + 8;
 

@@ -3,6 +3,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using FlaxEditor.Utilities;
 using FlaxEngine;
 
 namespace FlaxEditor.GUI.Timeline.Tracks
@@ -76,7 +77,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         private static void LoadTrack(int version, Track track, BinaryReader stream)
         {
             var e = (NestedSceneAnimationTrack)track;
-            Guid id = new Guid(stream.ReadBytes(16));
+            Guid id = stream.ReadGuid();
             e.Asset = FlaxEngine.Content.LoadAsync<SceneAnimation>(id);
             var m = e.TrackMedia;
             m.StartFrame = stream.ReadInt32();
@@ -127,18 +128,31 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         /// <inheritdoc />
         protected override void OnAssetChanged()
         {
-            if (Asset)
+            base.OnAssetChanged();
+
+            CheckCyclicReferences();
+        }
+
+        /// <inheritdoc />
+        public override void OnTimelineChanged(Timeline timeline)
+        {
+            base.OnTimelineChanged(timeline);
+
+            CheckCyclicReferences();
+        }
+
+        private void CheckCyclicReferences()
+        {
+            if (Asset && Timeline is SceneAnimationTimeline timeline)
             {
                 var refs = Asset.GetReferences();
-                var id = ((SceneAnimationTimeline)Timeline)._id;
+                var id = timeline._id;
                 if (Asset.ID == id || refs.Contains(id))
                 {
                     Asset = null;
                     throw new Exception("Cannot use nested scene animation (recursion).");
                 }
             }
-
-            base.OnAssetChanged();
         }
     }
 }

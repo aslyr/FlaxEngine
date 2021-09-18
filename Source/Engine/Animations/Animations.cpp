@@ -62,6 +62,11 @@ void AnimationsSystem::Job(int32 index)
 #endif
     )
     {
+#if COMPILE_WITH_PROFILER && TRACY_ENABLE
+        const StringView graphName(graph->GetPath());
+        ZoneName(*graphName, graphName.Length());
+#endif
+
         // Prepare skinning data
         animatedModel->SetupSkinningData();
 

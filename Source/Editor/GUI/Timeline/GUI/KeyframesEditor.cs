@@ -2,11 +2,15 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using FlaxEditor.CustomEditors;
 using FlaxEditor.GUI.ContextMenu;
+using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Json;
 
 namespace FlaxEditor.GUI
 {
@@ -58,6 +62,12 @@ namespace FlaxEditor.GUI
             {
                 return Time > other.Time ? 1 : 0;
             }
+
+            /// <inheritdoc />
+            public override string ToString()
+            {
+                return Value?.ToString() ?? string.Empty;
+            }
         }
 
         /// <summary>
@@ -74,7 +84,7 @@ namespace FlaxEditor.GUI
             internal Vector2 _mousePos = Vector2.Minimum;
             private Vector2 _movingViewLastPos;
             internal bool _isMovingSelection;
-            internal bool _movedKeyframes;
+            private bool _movedKeyframes;
             private float _movingSelectionStart;
             private float[] _movingSelectionOffsets;
             private Vector2 _cmShowPos;
@@ -294,13 +304,31 @@ namespace FlaxEditor.GUI
                 {
                     if (_leftMouseDown)
                     {
-                        // Check if user is pressing control
                         if (Root.GetKey(KeyboardKeys.Control))
                         {
                             // Toggle selection
                             keyframe.IsSelected = !keyframe.IsSelected;
                         }
-                        // Check if node isn't selected
+                        else if (Root.GetKey(KeyboardKeys.Shift))
+                        {
+                            // Select range
+                            keyframe.IsSelected = true;
+                            int selectionStart = 0;
+                            for (; selectionStart < _editor._points.Count; selectionStart++)
+                            {
+                                if (_editor._points[selectionStart].IsSelected)
+                                    break;
+                            }
+                            int selectionEnd = _editor._points.Count - 1;
+                            for (; selectionEnd > selectionStart; selectionEnd--)
+                            {
+                                if (_editor._points[selectionEnd].IsSelected)
+                                    break;
+                            }
+                            selectionStart++;
+                            for (; selectionStart < selectionEnd; selectionStart++)
+                                _editor._points[selectionStart].IsSelected = true;
+                        }
                         else if (!keyframe.IsSelected)
                         {
                             // Select node
@@ -372,11 +400,11 @@ namespace FlaxEditor.GUI
                     Cursor = CursorType.Default;
 
                     // Check if no move has been made at all
-                    if (Vector2.Distance(ref location, ref _rightMouseDownPos) < 3.0f)
+                    if (Vector2.Distance(ref location, ref _rightMouseDownPos) < 2.0f)
                     {
                         var selectionCount = _editor.SelectionCount;
-                        var underMouse = GetChildAt(location);
-                        if (selectionCount == 0 && underMouse is KeyframePoint point)
+                        var point = GetChildAt(location) as KeyframePoint;
+                        if (selectionCount == 0 && point != null)
                         {
                             // Select node
                             selectionCount = 1;
@@ -387,18 +415,26 @@ namespace FlaxEditor.GUI
                         _cmShowPos = PointToKeyframes(location, ref viewRect);
 
                         var cm = new ContextMenu.ContextMenu();
-                        cm.AddButton("Add keyframe", () => _editor.AddKeyframe(_cmShowPos)).Enabled = _editor.Keyframes.Count < _editor.MaxKeyframes;
-                        if (selectionCount > 0)
+                        cm.AddButton("Add keyframe", () => _editor.AddKeyframe(_cmShowPos)).Enabled = _editor.Keyframes.Count < _editor.MaxKeyframes && _editor.DefaultValue != null;
+                        if (selectionCount > 0 && _editor.EnableKeyframesValueEdit)
                         {
                             cm.AddButton(selectionCount == 1 ? "Edit keyframe" : "Edit keyframes", () => _editor.EditKeyframes(this, location));
                         }
                         var totalSelectionCount = _editor.KeyframesEditorContext?.OnKeyframesSelectionCount() ?? selectionCount;
-                        Debug.Log(totalSelectionCount);
                         if (totalSelectionCount > 0)
                         {
                             cm.AddButton(totalSelectionCount == 1 ? "Remove keyframe" : "Remove keyframes", _editor.RemoveKeyframes);
+                            cm.AddButton(totalSelectionCount == 1 ? "Copy keyframe" : "Copy keyframes", () => _editor.CopyKeyframes(point));
                         }
-                        cm.AddButton("Edit all keyframes", () => _editor.EditAllKeyframes(this, location));
+                        cm.AddButton("Paste keyframes", () => KeyframesEditorUtils.Paste(_editor, point?.Time ?? _cmShowPos.X)).Enabled = KeyframesEditorUtils.CanPaste();
+                        if (_editor.EnableKeyframesValueEdit)
+                            cm.AddButton("Edit all keyframes", () => _editor.EditAllKeyframes(this, location));
+                        cm.AddButton("Select all keyframes", _editor.SelectAll).Enabled = _editor._points.Count > 0;
+                        cm.AddButton("Copy all keyframes", () =>
+                        {
+                            _editor.SelectAll();
+                            _editor.CopyKeyframes(point);
+                        }).Enabled = _editor.DefaultValue != null;
                         if (_editor.EnableZoom && _editor.EnablePanning)
                         {
                             cm.AddSeparator();
@@ -480,6 +516,11 @@ namespace FlaxEditor.GUI
             /// Flag for selected keyframes.
             /// </summary>
             public bool IsSelected;
+
+            /// <summary>
+            /// Gets the time of the keyframe.
+            /// </summary>
+            public float Time => Editor._keyframes[Index].Time;
 
             /// <inheritdoc />
             public override void Draw()
@@ -610,6 +651,16 @@ namespace FlaxEditor.GUI
         /// True if enable view panning. Otherwise user won't be able to move the view area.
         /// </summary>
         public bool EnablePanning = true;
+
+        /// <summary>
+        /// True if enable keyframes values editing (via popup).
+        /// </summary>
+        public bool EnableKeyframesValueEdit = true;
+
+        /// <summary>
+        /// True if enable view panning. Otherwise user won't be able to move the view area.
+        /// </summary>
+        public bool Enable = true;
 
         /// <summary>
         /// Gets a value indicating whether user is editing the keyframes.
@@ -809,15 +860,21 @@ namespace FlaxEditor.GUI
         /// <param name="k">The keyframe to add.</param>
         public void AddKeyframe(Keyframe k)
         {
+            var eps = Mathf.Epsilon;
             if (FPS.HasValue)
             {
                 float fps = FPS.Value;
                 k.Time = Mathf.Floor(k.Time * fps) / fps;
+                eps = 1.0f / fps;
             }
+
             int pos = 0;
             while (pos < _keyframes.Count && _keyframes[pos].Time < k.Time)
                 pos++;
-            _keyframes.Insert(pos, k);
+            if (_keyframes.Count > pos && Mathf.Abs(_keyframes[pos].Time - k.Time) < eps)
+                _keyframes[pos] = k;
+            else
+                _keyframes.Insert(pos, k);
 
             OnKeyframesChanged();
             OnEdited();
@@ -1010,6 +1067,27 @@ namespace FlaxEditor.GUI
                 RemoveKeyframesInner();
         }
 
+        private void CopyKeyframes(KeyframePoint point = null)
+        {
+            float? timeOffset = null;
+            if (point != null)
+            {
+                timeOffset = -point.Time;
+            }
+            else
+            {
+                for (int i = 0; i < _points.Count; i++)
+                {
+                    if (_points[i].IsSelected)
+                    {
+                        timeOffset = -_points[i].Time;
+                        break;
+                    }
+                }
+            }
+            KeyframesEditorUtils.Copy(this, timeOffset);
+        }
+
         private void RemoveKeyframesInner()
         {
             if (SelectionCount == 0)
@@ -1188,22 +1266,33 @@ namespace FlaxEditor.GUI
             if (base.OnKeyDown(key))
                 return true;
 
-            if (key == KeyboardKeys.Delete)
+            switch (key)
             {
+            case KeyboardKeys.Delete:
                 RemoveKeyframes();
                 return true;
-            }
-
-            if (Root.GetKey(KeyboardKeys.Control))
-            {
-                switch (key)
+            case KeyboardKeys.A:
+                if (Root.GetKey(KeyboardKeys.Control))
                 {
-                case KeyboardKeys.A:
                     SelectAll();
                     return true;
                 }
+                break;
+            case KeyboardKeys.C:
+                if (Root.GetKey(KeyboardKeys.Control))
+                {
+                    CopyKeyframes();
+                    return true;
+                }
+                break;
+            case KeyboardKeys.V:
+                if (Root.GetKey(KeyboardKeys.Control))
+                {
+                    KeyframesEditorUtils.Paste(this);
+                    return true;
+                }
+                break;
             }
-
             return false;
         }
 
@@ -1256,6 +1345,8 @@ namespace FlaxEditor.GUI
         /// <inheritdoc />
         public void OnKeyframesMove(IKeyframesEditor editor, ContainerControl control, Vector2 location, bool start, bool end)
         {
+            if (SelectionCount == 0)
+                return;
             location = _contents.PointFromParent(control, location);
             if (start)
                 _contents.OnMoveStart(location);
@@ -1263,6 +1354,124 @@ namespace FlaxEditor.GUI
                 _contents.OnMoveEnd(location);
             else
                 _contents.OnMove(location);
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesCopy(IKeyframesEditor editor, float? timeOffset, StringBuilder data)
+        {
+            if (SelectionCount == 0 || DefaultValue == null)
+                return;
+            var offset = timeOffset ?? 0.0f;
+            data.AppendLine(KeyframesEditorUtils.CopyPrefix);
+            data.AppendLine(DefaultValue.GetType().FullName);
+            for (int i = 0; i < _keyframes.Count; i++)
+            {
+                if (!_points[i].IsSelected)
+                    continue;
+                var k = _keyframes[i];
+                data.AppendLine((k.Time + offset).ToString(CultureInfo.InvariantCulture));
+                data.AppendLine(JsonSerializer.Serialize(k.Value).RemoveNewLine());
+            }
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesPaste(IKeyframesEditor editor, float? timeOffset, string[] datas, ref int index)
+        {
+            if (DefaultValue == null)
+                return;
+            if (index == -1)
+            {
+                if (editor == this)
+                    index = 0;
+                else
+                    return;
+            }
+            else if (index >= datas.Length)
+                return;
+            var data = datas[index];
+            var offset = timeOffset ?? 0.0f;
+            var eps = FPS.HasValue ? 0.5f / FPS.Value : Mathf.Epsilon;
+            try
+            {
+                var lines = data.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length < 3 || lines.Length % 2 == 0)
+                    return;
+                var type = TypeUtils.GetManagedType(lines[0]);
+                if (type == null)
+                    throw new Exception($"Unknown type {lines[0]}.");
+                if (type != DefaultValue.GetType())
+                    throw new Exception($"Mismatching keyframes data type {type.FullName} when pasting into {DefaultValue.GetType().FullName}.");
+                var count = (lines.Length - 1) / 2;
+                var modified = false;
+                index++;
+                for (int i = 0; i < count; i++)
+                {
+                    var k = new Keyframe
+                    {
+                        Time = float.Parse(lines[i * 2 + 1], CultureInfo.InvariantCulture) + offset,
+                        Value = JsonSerializer.Deserialize(lines[i * 2 + 2], type),
+                    };
+                    if (FPS.HasValue)
+                    {
+                        float fps = FPS.Value;
+                        k.Time = Mathf.Floor(k.Time * fps) / fps;
+                    }
+                    int pos = 0;
+                    while (pos < _keyframes.Count && _keyframes[pos].Time < k.Time)
+                        pos++;
+                    if (_keyframes.Count > pos && Mathf.Abs(_keyframes[pos].Time - k.Time) < eps)
+                    {
+                        // Skip if the keyframe value won't change
+                        if (JsonSerializer.ValueEquals(_keyframes[pos].Value, k.Value))
+                            continue;
+                    }
+
+                    if (!modified)
+                    {
+                        modified = true;
+                        OnEditingStart();
+                    }
+
+                    AddKeyframe(k);
+                    _points[pos].IsSelected = true;
+                }
+                if (modified)
+                    OnEditingEnd();
+            }
+            catch (Exception ex)
+            {
+                Editor.LogWarning("Failed to paste keyframes.");
+                Editor.LogWarning(ex.Message);
+                Editor.LogWarning(ex);
+            }
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesGet(string trackName, Action<string, float, object> get)
+        {
+            for (int i = 0; i < _keyframes.Count; i++)
+            {
+                var k = _keyframes[i];
+                get(trackName, k.Time, k);
+            }
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesSet(List<KeyValuePair<float, object>> keyframes)
+        {
+            OnEditingStart();
+            _keyframes.Clear();
+            if (keyframes != null)
+            {
+                foreach (var e in keyframes)
+                {
+                    var k = (Keyframe)e.Value;
+                    _keyframes.Add(new Keyframe(e.Key, k.Value));
+                }
+            }
+            OnKeyframesChanged();
+            OnEdited();
+            OnEditingEnd();
         }
     }
 }

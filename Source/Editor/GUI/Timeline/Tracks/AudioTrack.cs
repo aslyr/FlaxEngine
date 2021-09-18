@@ -1,7 +1,9 @@
 // Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using FlaxEditor.Utilities;
 using FlaxEditor.GUI.Timeline.Undo;
 using FlaxEditor.Viewport.Previews;
 using FlaxEngine;
@@ -119,7 +121,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         private static void LoadTrack(int version, Track track, BinaryReader stream)
         {
             var e = (AudioTrack)track;
-            Guid id = new Guid(stream.ReadBytes(16));
+            Guid id = stream.ReadGuid();
             e.Asset = FlaxEngine.Content.LoadAsync<AudioClip>(id);
             var m = e.TrackMedia;
             m.StartFrame = stream.ReadInt32();
@@ -390,7 +392,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
             {
                 var time = (Timeline.CurrentFrame - _audioMedia.StartFrame) / Timeline.FramesPerSecond;
                 Curve.Evaluate(out var value, time, false);
-                Clipboard.Text = Utils.RoundTo2DecimalPlaces(Mathf.Saturate(value)).ToString("0.00");
+                Clipboard.Text = FlaxEngine.Utils.RoundTo2DecimalPlaces(Mathf.Saturate(value)).ToString("0.00");
             }).LinkTooltip("Copies the current track value to the clipboard").Enabled = Timeline.ShowPreviewValues;
         }
 
@@ -469,17 +471,19 @@ namespace FlaxEditor.GUI.Timeline.Tracks
 
             var time = (Timeline.CurrentFrame - _audioMedia.StartFrame) / Timeline.FramesPerSecond;
             Curve.Evaluate(out var value, time, false);
-            _previewValue.Text = Utils.RoundTo2DecimalPlaces(Mathf.Saturate(value)).ToString("0.00");
+            _previewValue.Text = FlaxEngine.Utils.RoundTo2DecimalPlaces(Mathf.Saturate(value)).ToString("0.00");
         }
 
         private void UpdateCurve()
         {
             if (_audioMedia == null || Curve == null || Timeline == null)
                 return;
+            bool wasVisible = Curve.Visible;
             Curve.Visible = Visible;
             if (!Visible)
             {
-                Curve.ClearSelection();
+                if (wasVisible)
+                    Curve.ClearSelection();
                 return;
             }
             Curve.KeyframesEditorContext = Timeline;
@@ -519,7 +523,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         private void OnCurveEditingEnd()
         {
             var after = EditTrackAction.CaptureData(this);
-            if (!Utils.ArraysEqual(_curveEditingStartData, after))
+            if (!FlaxEngine.Utils.ArraysEqual(_curveEditingStartData, after))
                 Timeline.AddBatchedUndoAction(new EditTrackAction(Timeline, this, _curveEditingStartData, after));
             _curveEditingStartData = null;
         }
@@ -687,6 +691,32 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         {
             if (Curve != null && Curve.Visible)
                 Curve.OnKeyframesMove(editor, control, location, start, end);
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesCopy(IKeyframesEditor editor, float? timeOffset, System.Text.StringBuilder data)
+        {
+            if (Curve != null && Curve.Visible)
+                Curve.OnKeyframesCopy(editor, timeOffset, data);
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesPaste(IKeyframesEditor editor, float? timeOffset, string[] datas, ref int index)
+        {
+            if (Curve != null && Curve.Visible)
+                Curve.OnKeyframesPaste(editor, timeOffset, datas, ref index);
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesGet(Action<string, float, object> get)
+        {
+            Curve?.OnKeyframesGet(Name, get);
+        }
+
+        /// <inheritdoc />
+        public void OnKeyframesSet(List<KeyValuePair<float, object>> keyframes)
+        {
+            Curve?.OnKeyframesSet(keyframes);
         }
     }
 }

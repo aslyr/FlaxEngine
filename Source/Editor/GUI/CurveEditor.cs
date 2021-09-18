@@ -154,6 +154,11 @@ namespace FlaxEditor.GUI
             /// </summary>
             public Vector2 Point => Editor.GetKeyframePoint(Index, Component);
 
+            /// <summary>
+            /// Gets the time of the keyframe point.
+            /// </summary>
+            public float Time => Editor.GetKeyframeTime(Index);
+
             /// <inheritdoc />
             public override void Draw()
             {
@@ -483,7 +488,14 @@ namespace FlaxEditor.GUI
         public abstract void Evaluate(out T result, float time, bool loop = false);
 
         /// <summary>
-        /// Gets the time of the keyframe
+        /// Gets the time of the keyframe.
+        /// </summary>
+        /// <param name="index">The keyframe index.</param>
+        /// <returns>The keyframe time.</returns>
+        protected abstract float GetKeyframeTime(int index);
+
+        /// <summary>
+        /// Gets the time of the keyframe.
         /// </summary>
         /// <param name="keyframe">The keyframe object.</param>
         /// <returns>The keyframe time.</returns>
@@ -611,6 +623,27 @@ namespace FlaxEditor.GUI
                 KeyframesEditorContext.OnKeyframesDelete(this);
             else
                 RemoveKeyframesInner();
+        }
+
+        private void CopyKeyframes(KeyframePoint point = null)
+        {
+            float? timeOffset = null;
+            if (point != null)
+            {
+                timeOffset = -point.Time;
+            }
+            else
+            {
+                for (int i = 0; i < _points.Count; i++)
+                {
+                    if (_points[i].IsSelected)
+                    {
+                        timeOffset = -_points[i].Time;
+                        break;
+                    }
+                }
+            }
+            KeyframesEditorUtils.Copy(this, timeOffset);
         }
 
         private void RemoveKeyframesInner()
@@ -893,23 +926,34 @@ namespace FlaxEditor.GUI
             if (base.OnKeyDown(key))
                 return true;
 
-            if (key == KeyboardKeys.Delete)
+            switch (key)
             {
+            case KeyboardKeys.Delete:
                 RemoveKeyframes();
                 return true;
-            }
-
-            if (Root.GetKey(KeyboardKeys.Control))
-            {
-                switch (key)
+            case KeyboardKeys.A:
+                if (Root.GetKey(KeyboardKeys.Control))
                 {
-                case KeyboardKeys.A:
                     SelectAll();
                     UpdateTangents();
                     return true;
                 }
+                break;
+            case KeyboardKeys.C:
+                if (Root.GetKey(KeyboardKeys.Control))
+                {
+                    CopyKeyframes();
+                    return true;
+                }
+                break;
+            case KeyboardKeys.V:
+                if (Root.GetKey(KeyboardKeys.Control))
+                {
+                    KeyframesEditorUtils.Paste(this);
+                    return true;
+                }
+                break;
             }
-
             return false;
         }
 
@@ -979,20 +1023,28 @@ namespace FlaxEditor.GUI
         /// Adds the new keyframe.
         /// </summary>
         /// <param name="k">The keyframe to add.</param>
-        public void AddKeyframe(LinearCurve<T>.Keyframe k)
+        /// <returns>The index of the keyframe.</returns>
+        public int AddKeyframe(LinearCurve<T>.Keyframe k)
         {
+            var eps = Mathf.Epsilon;
             if (FPS.HasValue)
             {
                 float fps = FPS.Value;
                 k.Time = Mathf.Floor(k.Time * fps) / fps;
+                eps = 1.0f / fps;
             }
+
             int pos = 0;
             while (pos < _keyframes.Count && _keyframes[pos].Time < k.Time)
                 pos++;
-            _keyframes.Insert(pos, k);
+            if (_keyframes.Count > pos && Mathf.Abs(_keyframes[pos].Time - k.Time) < eps)
+                _keyframes[pos] = k;
+            else
+                _keyframes.Insert(pos, k);
 
             OnKeyframesChanged();
             OnEdited();
+            return pos;
         }
 
         /// <summary>
@@ -1099,6 +1151,12 @@ namespace FlaxEditor.GUI
                 Keyframes = _keyframes.ToArray()
             };
             curve.Evaluate(out result, time, loop);
+        }
+
+        /// <inheritdoc />
+        protected override float GetKeyframeTime(int index)
+        {
+            return _keyframes[index].Time;
         }
 
         /// <inheritdoc />
@@ -1223,9 +1281,15 @@ namespace FlaxEditor.GUI
         }
 
         /// <inheritdoc />
-        public override void AddKeyframe(float time, object value)
+        public override int AddKeyframe(float time, object value)
         {
-            AddKeyframe(new LinearCurve<T>.Keyframe(time, (T)value));
+            return AddKeyframe(new LinearCurve<T>.Keyframe(time, (T)value));
+        }
+
+        /// <inheritdoc />
+        public override int AddKeyframe(float time, object value, object tangentIn, object tangentOut)
+        {
+            return AddKeyframe(new LinearCurve<T>.Keyframe(time, (T)value));
         }
 
         /// <inheritdoc />
@@ -1260,6 +1324,34 @@ namespace FlaxEditor.GUI
         {
             var k = _keyframes[index];
             return new Vector2(k.Time, Accessor.GetCurveValue(ref k.Value, component));
+        }
+
+        /// <inheritdoc />
+        public override void OnKeyframesGet(string trackName, Action<string, float, object> get)
+        {
+            for (int i = 0; i < _keyframes.Count; i++)
+            {
+                var k = _keyframes[i];
+                get(trackName, k.Time, k);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void OnKeyframesSet(List<KeyValuePair<float, object>> keyframes)
+        {
+            OnEditingStart();
+            _keyframes.Clear();
+            if (keyframes != null)
+            {
+                foreach (var e in keyframes)
+                {
+                    var k = (LinearCurve<T>.Keyframe)e.Value;
+                    _keyframes.Add(new LinearCurve<T>.Keyframe(e.Key, k.Value));
+                }
+            }
+            OnKeyframesChanged();
+            OnEdited();
+            OnEditingEnd();
         }
 
         /// <inheritdoc />
@@ -1452,20 +1544,28 @@ namespace FlaxEditor.GUI
         /// Adds the new keyframe.
         /// </summary>
         /// <param name="k">The keyframe to add.</param>
-        public void AddKeyframe(BezierCurve<T>.Keyframe k)
+        /// <returns>The index of the keyframe.</returns>
+        public int AddKeyframe(BezierCurve<T>.Keyframe k)
         {
+            var eps = Mathf.Epsilon;
             if (FPS.HasValue)
             {
                 float fps = FPS.Value;
                 k.Time = Mathf.Floor(k.Time * fps) / fps;
+                eps = 1.0f / fps;
             }
+
             int pos = 0;
             while (pos < _keyframes.Count && _keyframes[pos].Time < k.Time)
                 pos++;
-            _keyframes.Insert(pos, k);
+            if (_keyframes.Count > pos && Mathf.Abs(_keyframes[pos].Time - k.Time) < eps)
+                _keyframes[pos] = k;
+            else
+                _keyframes.Insert(pos, k);
 
             OnKeyframesChanged();
             OnEdited();
+            return pos;
         }
 
         /// <summary>
@@ -1764,6 +1864,12 @@ namespace FlaxEditor.GUI
         }
 
         /// <inheritdoc />
+        protected override float GetKeyframeTime(int index)
+        {
+            return _keyframes[index].Time;
+        }
+
+        /// <inheritdoc />
         protected override float GetKeyframeTime(object keyframe)
         {
             return ((BezierCurve<T>.Keyframe)keyframe).Time;
@@ -1895,9 +2001,15 @@ namespace FlaxEditor.GUI
         }
 
         /// <inheritdoc />
-        public override void AddKeyframe(float time, object value)
+        public override int AddKeyframe(float time, object value)
         {
-            AddKeyframe(new BezierCurve<T>.Keyframe(time, (T)value));
+            return AddKeyframe(new BezierCurve<T>.Keyframe(time, (T)value));
+        }
+
+        /// <inheritdoc />
+        public override int AddKeyframe(float time, object value, object tangentIn, object tangentOut)
+        {
+            return AddKeyframe(new BezierCurve<T>.Keyframe(time, (T)value, (T)tangentIn, (T)tangentOut));
         }
 
         /// <inheritdoc />
@@ -1933,6 +2045,34 @@ namespace FlaxEditor.GUI
         {
             var k = _keyframes[index];
             return new Vector2(k.Time, Accessor.GetCurveValue(ref k.Value, component));
+        }
+
+        /// <inheritdoc />
+        public override void OnKeyframesGet(string trackName, Action<string, float, object> get)
+        {
+            for (int i = 0; i < _keyframes.Count; i++)
+            {
+                var k = _keyframes[i];
+                get(trackName, k.Time, k);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void OnKeyframesSet(List<KeyValuePair<float, object>> keyframes)
+        {
+            OnEditingStart();
+            _keyframes.Clear();
+            if (keyframes != null)
+            {
+                foreach (var e in keyframes)
+                {
+                    var k = (BezierCurve<T>.Keyframe)e.Value;
+                    _keyframes.Add(new BezierCurve<T>.Keyframe(e.Key, k.Value, k.TangentIn, k.TangentOut));
+                }
+            }
+            OnKeyframesChanged();
+            OnEdited();
+            OnEditingEnd();
         }
 
         /// <inheritdoc />
