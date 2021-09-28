@@ -380,7 +380,7 @@ namespace FlaxEditor.CustomEditors
                     return false;
 
                 // Skip array items (show diff only on a bottom level properties and fields)
-                if (ParentEditor != null && ParentEditor.Values.Type != ScriptType.Null && ParentEditor.Values.Type.IsArray)
+                if (ParentEditor is Editors.ArrayEditor)
                     return false;
 
                 return true;
@@ -394,9 +394,6 @@ namespace FlaxEditor.CustomEditors
         {
             if (!Values.HasDefaultValue)
                 return;
-
-            Editor.Log("Reverting object changes to default");
-
             RevertDiffToDefault(this);
         }
 
@@ -465,7 +462,7 @@ namespace FlaxEditor.CustomEditors
                     return false;
 
                 // Skip array items (show diff only on a bottom level properties and fields)
-                if (ParentEditor != null && ParentEditor.Values.Type != ScriptType.Null && ParentEditor.Values.Type.IsArray)
+                if (ParentEditor is Editors.ArrayEditor)
                     return false;
 
                 return true;
@@ -479,9 +476,6 @@ namespace FlaxEditor.CustomEditors
         {
             if (!Values.HasReferenceValue)
                 return;
-
-            Editor.Log("Reverting object changes to prefab");
-
             RevertDiffToReference(this);
         }
 
@@ -618,6 +612,13 @@ namespace FlaxEditor.CustomEditors
                     return false;
                 JsonSerializer.ParseID(text, out var id);
                 obj = FlaxEngine.Object.Find<FlaxEngine.Object>(ref id);
+            }
+            else if (Color.TryParseHex(text, out var color))
+            {
+                // Hex color
+                obj = color;
+                if (Values.Type.Type == typeof(Color32))
+                    obj = (Color32)color;
             }
             else
             {

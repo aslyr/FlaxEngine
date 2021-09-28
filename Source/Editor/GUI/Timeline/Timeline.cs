@@ -38,7 +38,7 @@ namespace FlaxEditor.GUI.Timeline
             new KeyValuePair<float, string>(0, "Custom"),
         };
 
-        internal const int FormatVersion = 3;
+        internal const int FormatVersion = 4;
 
         /// <summary>
         /// The base class for timeline properties proxy objects.
@@ -221,7 +221,7 @@ namespace FlaxEditor.GUI.Timeline
         private Vector2 _rightMouseButtonMovePos;
         private float _zoom = 1.0f;
         private bool _isMovingPositionHandle;
-        private bool _canPlayPauseStop = true;
+        private bool _canPlayPause = true, _canStop = true;
         private List<IUndoAction> _batchedUndoActions;
 
         /// <summary>
@@ -290,7 +290,11 @@ namespace FlaxEditor.GUI.Timeline
         /// <summary>
         /// Gets the current animation time position (in seconds).
         /// </summary>
-        public float CurrentTime => _currentFrame / _framesPerSecond;
+        public float CurrentTime
+        {
+            get => _currentFrame / _framesPerSecond;
+            set => CurrentFrame = (int)(value * _framesPerSecond);
+        }
 
         /// <summary>
         /// Occurs when current playback animation frame gets changed.
@@ -511,16 +515,31 @@ namespace FlaxEditor.GUI.Timeline
         }
 
         /// <summary>
-        /// Gets or sets a value indicating whether user can use Play/Pause/Stop buttons, otherwise those should be disabled.
+        /// Gets or sets a value indicating whether user can use Play and Pause buttons, otherwise those should be disabled.
         /// </summary>
-        public bool CanPlayPauseStop
+        public bool CanPlayPause
         {
-            get => _canPlayPauseStop;
+            get => _canPlayPause;
             set
             {
-                if (_canPlayPauseStop == value)
+                if (_canPlayPause == value)
                     return;
-                _canPlayPauseStop = value;
+                _canPlayPause = value;
+                UpdatePlaybackButtons();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether user can use Stop button, otherwise those should be disabled.
+        /// </summary>
+        public bool CanPlayStop
+        {
+            get => _canStop;
+            set
+            {
+                if (_canStop == value)
+                    return;
+                _canStop = value;
                 UpdatePlaybackButtons();
             }
         }
@@ -1146,7 +1165,7 @@ namespace FlaxEditor.GUI.Timeline
                 if (_playbackPlay != null)
                 {
                     _playbackPlay.Visible = true;
-                    _playbackPlay.Enabled = _canPlayPauseStop;
+                    _playbackPlay.Enabled = _canPlayPause;
                     _playbackPlay.Brush = new SpriteBrush(icons.Play64);
                     _playbackPlay.Tag = false;
                 }
@@ -1167,12 +1186,12 @@ namespace FlaxEditor.GUI.Timeline
                 if (_playbackStop != null)
                 {
                     _playbackStop.Visible = true;
-                    _playbackStop.Enabled = _canPlayPauseStop;
+                    _playbackStop.Enabled = _canStop;
                 }
                 if (_playbackPlay != null)
                 {
                     _playbackPlay.Visible = true;
-                    _playbackPlay.Enabled = _canPlayPauseStop;
+                    _playbackPlay.Enabled = _canPlayPause;
                     _playbackPlay.Brush = new SpriteBrush(icons.Pause64);
                     _playbackPlay.Tag = true;
                 }
@@ -1193,12 +1212,12 @@ namespace FlaxEditor.GUI.Timeline
                 if (_playbackStop != null)
                 {
                     _playbackStop.Visible = true;
-                    _playbackStop.Enabled = _canPlayPauseStop;
+                    _playbackStop.Enabled = _canStop;
                 }
                 if (_playbackPlay != null)
                 {
                     _playbackPlay.Visible = true;
-                    _playbackPlay.Enabled = _canPlayPauseStop;
+                    _playbackPlay.Enabled = _canPlayPause;
                     _playbackPlay.Brush = new SpriteBrush(icons.Play64);
                     _playbackPlay.Tag = false;
                 }
@@ -1451,7 +1470,7 @@ namespace FlaxEditor.GUI.Timeline
         }
 
         /// <summary>
-        /// Deletes the tracks.
+        /// Deletes the track.
         /// </summary>
         /// <param name="track">The track to delete (and its sub tracks).</param>
         /// <param name="withUndo">True if use undo/redo action for track removing.</param>
@@ -1459,8 +1478,6 @@ namespace FlaxEditor.GUI.Timeline
         {
             if (track == null)
                 throw new ArgumentNullException();
-
-            // Delete tracks
             var tracks = new List<Track>(4);
             GetTracks(track, tracks);
             if (withUndo && Undo != null && Undo.Enabled)
@@ -1495,6 +1512,43 @@ namespace FlaxEditor.GUI.Timeline
             SelectedTracks.Remove(track);
             _tracks.Remove(track);
             track.OnDeleted();
+        }
+
+        /// <summary>
+        /// Deletes the media.
+        /// </summary>
+        /// <param name="media">The media to delete.</param>
+        /// <param name="withUndo">True if use undo/redo action for media removing.</param>
+        public void Delete(Media media, bool withUndo = true)
+        {
+            if (media == null)
+                throw new ArgumentNullException();
+            var track = media.Track;
+            if (track == null)
+                throw new InvalidOperationException();
+            if (withUndo && Undo != null && Undo.Enabled)
+            {
+                var before = EditTrackAction.CaptureData(track);
+                OnDeleteMedia(media);
+                var after = EditTrackAction.CaptureData(track);
+                Undo.AddAction(new EditTrackAction(this, track, before, after));
+            }
+            else
+            {
+                OnDeleteMedia(media);
+            }
+            MarkAsEdited();
+        }
+
+        /// <summary>
+        /// Called to delete media.
+        /// </summary>
+        /// <param name="media">The media.</param>
+        protected virtual void OnDeleteMedia(Media media)
+        {
+            SelectedMedia.Remove(media);
+            media.Track.RemoveMedia(media);
+            media.OnDeleted();
         }
 
         /// <summary>
@@ -1582,6 +1636,39 @@ namespace FlaxEditor.GUI.Timeline
                 MarkAsEdited();
                 SelectedTracks[0].Focus();
             }
+        }
+
+        /// <summary>
+        /// Splits the media (all or selected only) at the given frame.
+        /// </summary>
+        /// <param name="frame">The frame to split at.</param>
+        public void Split(int frame)
+        {
+            List<IUndoAction> actions = null;
+            foreach (var track in _tracks)
+            {
+                byte[] trackData = null;
+                for (int i = track.Media.Count - 1; i >= 0; i--)
+                {
+                    if (track.Media.Count >= track.MaxMediaCount)
+                        break;
+                    var media = track.Media[i];
+                    if (media.CanSplit && media.StartFrame < frame && media.EndFrame > frame)
+                    {
+                        if (Undo != null && Undo.Enabled)
+                            trackData = EditTrackAction.CaptureData(track);
+                        media.Split(frame);
+                    }
+                }
+                if (trackData != null)
+                {
+                    if (actions == null)
+                        actions = new List<IUndoAction>();
+                    actions.Add(new EditTrackAction(this, track, trackData, EditTrackAction.CaptureData(track)));
+                }
+            }
+            if (actions != null)
+                Undo.AddAction(new MultiUndoAction(actions, "Split"));
         }
 
         /// <summary>
@@ -1970,7 +2057,7 @@ namespace FlaxEditor.GUI.Timeline
                 }
                 break;
             case KeyboardKeys.Spacebar:
-                if (CanPlayPauseStop)
+                if (CanPlayPause)
                 {
                     if (PlaybackState == PlaybackStates.Playing)
                         OnPause();
@@ -1979,6 +2066,9 @@ namespace FlaxEditor.GUI.Timeline
                     return true;
                 }
                 break;
+            case KeyboardKeys.S:
+                Split(CurrentFrame);
+                return true;
             }
 
             return false;

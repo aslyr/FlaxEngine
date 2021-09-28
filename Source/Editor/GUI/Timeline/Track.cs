@@ -172,6 +172,16 @@ namespace FlaxEditor.GUI.Timeline
         public bool Loop;
 
         /// <summary>
+        /// The minimum amount of media items for this track.
+        /// </summary>
+        public int MinMediaCount = 0;
+
+        /// <summary>
+        /// The maximum amount of media items for this track.
+        /// </summary>
+        public int MaxMediaCount = 1024;
+
+        /// <summary>
         /// The track archetype.
         /// </summary>
         public TrackArchetype Archetype;
@@ -1022,10 +1032,10 @@ namespace FlaxEditor.GUI.Timeline
                 // Show context menu
                 var menu = new ContextMenu.ContextMenu();
                 if (CanRename)
-                    menu.AddButton("Rename", StartRenaming);
+                    menu.AddButton("Rename", "F2", StartRenaming);
                 if (CanCopyPaste)
-                    menu.AddButton("Duplicate", () => Timeline.DuplicateSelection());
-                menu.AddButton("Delete", Delete);
+                    menu.AddButton("Duplicate", "Ctrl+D", () => Timeline.DuplicateSelection());
+                menu.AddButton("Delete", "Del", Delete);
                 if (CanExpand)
                 {
                     menu.AddSeparator();
