@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -111,7 +111,6 @@ public:
     /// <summary>
     /// Gets the Vulkan image handle.
     /// </summary>
-    /// <returns>The image handle.</returns>
     FORCE_INLINE VkImage GetHandle() const
     {
         return _image;
@@ -182,7 +181,7 @@ protected:
 
     // [GPUTexture]
     bool OnInit() override;
-    void onResidentMipsChanged() override;
+    void OnResidentMipsChanged() override;
     void OnReleaseGPU() override;
 };
 

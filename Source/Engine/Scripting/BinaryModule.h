@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -8,8 +8,7 @@
 #include "Engine/Core/Types/Variant.h"
 #include "Engine/Core/Collections/Dictionary.h"
 #include "Engine/Core/Collections/Array.h"
-#include "Engine/Serialization/ISerializable.h"
-#include "ManagedCLR/MAssemblyOptions.h"
+#include "Engine/Core/ISerializable.h"
 
 /// <summary>
 /// The scripting type method metadata for code reflection.
@@ -60,6 +59,9 @@ public:
     /// <param name="name">The module name.</param>
     /// <returns>The found binary module or null if missing.</returns>
     static BinaryModule* GetModule(const StringAnsiView& name);
+
+    // Global scripting locker for cached data.
+    static CriticalSection Locker;
 
 protected:
 
@@ -260,8 +262,8 @@ public:
 
 private:
 
-    int32 _firstManagedTypeIndex;
-    Array<char*> _managedTypesNames;
+    int32 _firstManagedTypeIndex = 0;
+    Array<void*> _managedMemoryBlocks;
 
 public:
 
@@ -269,8 +271,7 @@ public:
     /// Initializes a new instance of the <see cref="ManagedBinaryModule" /> class.
     /// </summary>
     /// <param name="name">The module name.</param>
-    /// <param name="options">The assembly options.</param>
-    ManagedBinaryModule(const StringAnsiView& name, const MAssemblyOptions& options);
+    ManagedBinaryModule(const StringAnsiView& name);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ManagedBinaryModule" /> class.
@@ -290,19 +291,27 @@ public:
     /// </summary>
     MAssembly* Assembly;
 
+#if USE_CSHARP
     /// <summary>
     /// The scripting types cache that maps the managed class to the scripting type index. Build after assembly is loaded and scripting types get the managed classes information.
     /// </summary>
-    Dictionary<MonoClass*, int32, HeapAllocation> ClassToTypeIndex;
+    Dictionary<MClass*, int32, HeapAllocation> ClassToTypeIndex;
+#endif
 
     static ScriptingObject* ManagedObjectSpawn(const ScriptingObjectSpawnParams& params);
     static MMethod* FindMethod(MClass* mclass, const ScriptingTypeMethodSignature& signature);
+#if USE_CSHARP
+    static ManagedBinaryModule* FindModule(const MClass* klass);
+    static ScriptingTypeHandle FindType(const MClass* klass);
+#endif
 
 private:
 
     void OnLoading(MAssembly* assembly);
     void OnLoaded(MAssembly* assembly);
+    void InitType(MClass* mclass);
     void OnUnloading(MAssembly* assembly);
+    void OnUnloaded(MAssembly* assembly);
 
 public:
 
@@ -331,8 +340,7 @@ public:
     /// Initializes a new instance of the <see cref="NativeBinaryModule" /> class.
     /// </summary>
     /// <param name="name">The module name.</param>
-    /// <param name="options">The assembly options.</param>
-    NativeBinaryModule(const StringAnsiView& name, const MAssemblyOptions& options);
+    NativeBinaryModule(const StringAnsiView& name);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="NativeBinaryModule" /> class.

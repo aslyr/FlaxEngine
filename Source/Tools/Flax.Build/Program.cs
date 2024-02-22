@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Diagnostics;
@@ -64,6 +64,7 @@ namespace Flax.Build
                     Log.Verbose("Arguments: " + CommandLine.Get());
                     Log.Verbose("Workspace: " + Globals.Root);
                     Log.Verbose("Engine: " + Globals.EngineRoot);
+                    Log.Verbose(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
                 }
 
                 // Load project
@@ -73,15 +74,25 @@ namespace Flax.Build
                         Globals.Project = ProjectInfo.Load(projectFiles[0]);
                     else if (projectFiles.Length > 1)
                         throw new Exception("Too many project files. Don't know which to pick.");
-                    else
+                    else if (!Configuration.LogMessagesOnly)
                         Log.Warning("Missing project file.");
+                }
+
+                // Configure engine
+                {
+                    var engineProject = EngineTarget.EngineProject;
+                    if (engineProject != null && engineProject.Configuration != null && engineProject.Configuration.Count != 0)
+                    {
+                        CommandLine.Configure(typeof(EngineConfiguration), engineProject.Configuration);
+                        CommandLine.Configure(typeof(Configuration), engineProject.Configuration);
+                    }
+                    CommandLine.Configure(typeof(EngineConfiguration));
                 }
 
                 // Use mutex if required
                 if (Configuration.Mutex)
                 {
                     singleInstanceMutex = new Mutex(true, "Flax.Build", out var oneInstanceMutexCreated);
-
                     if (!oneInstanceMutexCreated)
                     {
                         try
@@ -106,11 +117,11 @@ namespace Flax.Build
                 // Collect all targets and modules from the workspace
                 Builder.GenerateRulesAssembly();
 
-                // Print SDKs
-                if (Configuration.PrintSDKs)
+                // Run console commands
+                if (CommandLine.ConsoleCommands != null)
                 {
-                    Log.Info("Printing SDKs...");
-                    Sdk.Print();
+                    foreach (var e in CommandLine.ConsoleCommands)
+                        e.Invoke(null, null);
                 }
 
                 // Deps tool
@@ -162,8 +173,10 @@ namespace Flax.Build
             }
             catch (Exception ex)
             {
-                Log.Exception(ex);
-                return 1;
+                // Ignore exception logging for build errors
+                if (!(ex is BuildException))
+                    Log.Exception(ex);
+                failed = true;
             }
             finally
             {

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Navigation.h"
 #include "NavigationSettings.h"
@@ -9,6 +9,8 @@
 #include "Engine/Content/JsonAsset.h"
 #include "Engine/Threading/Threading.h"
 #if USE_EDITOR
+#include "Editor/Editor.h"
+#include "Editor/Managed/ManagedEditor.h"
 #include "Engine/Level/Level.h"
 #include "Engine/Level/Scene/Scene.h"
 #endif
@@ -23,6 +25,11 @@
 namespace
 {
     Array<NavMeshRuntime*, InlinedAllocation<16>> NavMeshes;
+}
+
+NavMeshRuntime* NavMeshRuntime::Get()
+{
+    return NavMeshes.Count() != 0 ? NavMeshes[0] : nullptr;
 }
 
 NavMeshRuntime* NavMeshRuntime::Get(const StringView& navMeshName)
@@ -100,7 +107,7 @@ Color NavMeshRuntime::NavAreasColors[64];
 
 bool NavAgentProperties::operator==(const NavAgentProperties& other) const
 {
-    return Math::NearEqual(Radius, other.Radius) && Math::NearEqual(Height, other.Height) && Math::NearEqual(StepHeight, other.StepHeight) && Math::NearEqual(MaxSlopeAngle, other.MaxSlopeAngle);
+    return Math::NearEqual(Radius, other.Radius) && Math::NearEqual(Height, other.Height) && Math::NearEqual(StepHeight, other.StepHeight) && Math::NearEqual(MaxSlopeAngle, other.MaxSlopeAngle) && Math::NearEqual(MaxSpeed, other.MaxSpeed) && Math::NearEqual(CrowdSeparationWeight, other.CrowdSeparationWeight);
 }
 
 bool NavAgentMask::IsAgentSupported(int32 agentIndex) const
@@ -152,7 +159,6 @@ bool NavMeshProperties::operator==(const NavMeshProperties& other) const
 class NavigationService : public EngineService
 {
 public:
-
     NavigationService()
         : EngineService(TEXT("Navigation"), 60)
     {
@@ -201,7 +207,7 @@ NavigationSettings::NavigationSettings()
     areaWalkable.Cost = 1;
 }
 
-IMPLEMENT_SETTINGS_GETTER(NavigationSettings, Navigation);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(NavigationSettings, Navigation);
 
 void NavigationSettings::Apply()
 {
@@ -211,11 +217,22 @@ void NavigationSettings::Apply()
         if (area.Id < DT_MAX_AREAS)
         {
             NavMeshRuntime::NavAreasCosts[area.Id] = area.Cost;
-#if USE_EDITOR
+#if COMPILE_WITH_DEBUG_DRAW
             NavMeshRuntime::NavAreasColors[area.Id] = area.Color;
 #endif
         }
     }
+
+#if USE_EDITOR
+    if (!Editor::IsPlayMode && Editor::Managed && Editor::Managed->CanAutoBuildNavMesh())
+    {
+        // Rebuild all navmeshs after apply changes on navigation
+        for (auto scene : Level::Scenes)
+        {
+            Navigation::BuildNavMesh(scene);
+        }
+    }
+#endif
 }
 
 void NavigationSettings::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)

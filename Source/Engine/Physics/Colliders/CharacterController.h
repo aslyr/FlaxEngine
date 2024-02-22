@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -9,11 +9,12 @@
 /// Physical objects that allows to easily do player movement constrained by collisions without having to deal with a rigidbody.
 /// </summary>
 /// <seealso cref="Collider" />
-API_CLASS() class FLAXENGINE_API CharacterController : public Collider, public IPhysicsActor
+API_CLASS(Attributes="ActorContextMenu(\"New/Physics/Character Controller\"), ActorToolbox(\"Physics\")")
+class FLAXENGINE_API CharacterController : public Collider, public IPhysicsActor
 {
-DECLARE_SCENE_OBJECT(CharacterController);
+    API_AUTO_SERIALIZATION();
+    DECLARE_SCENE_OBJECT(CharacterController);
 public:
-
     /// <summary>
     /// Specifies which sides a character is colliding with.
     /// </summary>
@@ -57,8 +58,7 @@ public:
     };
 
 private:
-
-    PxCapsuleController* _controller;
+    void* _controller;
     float _stepOffset;
     float _slopeLimit;
     float _radius;
@@ -68,7 +68,6 @@ private:
     Vector3 _upDirection;
     NonWalkableModes _nonWalkableMode;
     CollisionFlags _lastFlags;
-    uint32 _filterData[4];
 
 public:
     /// <summary>
@@ -129,7 +128,7 @@ public:
     /// <summary>
     /// Gets the character up vector.
     /// </summary>
-    API_PROPERTY(Attributes="EditorOrder(240), DefaultValue(true), EditorDisplay(\"Character Controller\")")
+    API_PROPERTY(Attributes="EditorOrder(240), DefaultValue(typeof(Vector3), \"0,1,0\"), EditorDisplay(\"Character Controller\"), Limit(-1, 1)")
     Vector3 GetUpDirection() const;
 
     /// <summary>
@@ -149,7 +148,6 @@ public:
     API_PROPERTY() void SetMinMoveDistance(float value);
 
 public:
-
     /// <summary>
     /// Gets the linear velocity of the Character Controller. This allows tracking how fast the character is actually moving, for instance when it is stuck at a wall this value will be the near zero vector.
     /// </summary>
@@ -166,7 +164,6 @@ public:
     API_PROPERTY() CollisionFlags GetFlags() const;
 
 public:
-
     /// <summary>
     /// Moves the character with the given speed. Gravity is automatically applied. It will slide along colliders. Result collision flags is the summary of collisions that occurred during the Move.
     /// </summary>
@@ -181,13 +178,7 @@ public:
     /// <returns>The collision flags. It can be used to trigger various character animations.</returns>
     API_FUNCTION() CollisionFlags Move(const Vector3& displacement);
 
-    /// <summary>
-    /// Gets the native PhysX rigid actor object.
-    /// </summary>
-    PxRigidDynamic* GetPhysXRigidActor() const;
-
 protected:
-
     /// <summary>
     /// Creates the physics actor.
     /// </summary>
@@ -204,13 +195,10 @@ protected:
     void UpdateSize() const;
 
 public:
-
     // [Collider]
 #if USE_EDITOR
     void OnDebugDrawSelected() override;
 #endif
-    void Serialize(SerializeStream& stream, const void* otherObj) override;
-    void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
     void CreateShape() override;
     void UpdateBounds() override;
     void AddMovement(const Vector3& translation, const Quaternion& rotation) override;
@@ -218,15 +206,13 @@ public:
     RigidBody* GetAttachedRigidBody() const override;
 
     // [IPhysicsActor]
-    void OnActiveTransformChanged(const PxTransform& transform) override;
-    PxRigidActor* GetRigidActor() override;
+    void OnActiveTransformChanged() override;
+    void* GetPhysicsActor() const override;
 
 protected:
-
     // [PhysicsActor]
     void UpdateGeometry() override;
-    void GetGeometry(PxGeometryHolder& geometry) override;
-    void UpdateLayerBits() override;
+    void GetGeometry(CollisionShape& collision) override;
     void BeginPlay(SceneBeginData* data) override;
     void EndPlay() override;
 #if USE_EDITOR
@@ -237,4 +223,5 @@ protected:
     void OnDisable() override;
     void OnParentChanged() override;
     void OnTransformChanged() override;
+    void OnPhysicsSceneChanged(PhysicsScene* previous) override;
 };

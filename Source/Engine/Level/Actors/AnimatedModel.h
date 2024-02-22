@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,11 +12,11 @@
 /// <summary>
 /// Performs an animation and renders a skinned model.
 /// </summary>
-API_CLASS() class FLAXENGINE_API AnimatedModel : public ModelInstanceActor
+API_CLASS(Attributes="ActorContextMenu(\"New/Other/Animated Model\"), ActorToolbox(\"Visuals\")")
+class FLAXENGINE_API AnimatedModel : public ModelInstanceActor
 {
-DECLARE_SCENE_OBJECT(AnimatedModel);
+    DECLARE_SCENE_OBJECT(AnimatedModel);
     friend class AnimationsSystem;
-public:
 
     /// <summary>
     /// Describes the animation graph updates frequency for the animated model.
@@ -55,19 +55,27 @@ public:
     };
 
 private:
+    struct BlendShapeMesh
+    {
+        uint16 LODIndex;
+        uint16 MeshIndex;
+        uint32 Usages;
+    };
 
-    BoundingBox _boxLocal;
-    Matrix _world;
     GeometryDrawStateData _drawState;
     SkinnedMeshDrawData _skinningData;
     AnimationUpdateMode _actualMode;
     uint32 _counter;
-    float _lastMinDstSqr;
+    Real _lastMinDstSqr;
+    bool _isDuringUpdateEvent = false;
     uint64 _lastUpdateFrame;
-    BlendShapesInstance _blendShapes;
+    mutable MeshDeformation* _deformation = nullptr;
     ScriptingObjectReference<AnimatedModel> _masterPose;
+    Array<Pair<String, float>> _blendShapeWeights;
+    Array<BlendShapeMesh> _blendShapeMeshes;
 
 public:
+    ~AnimatedModel();
 
     /// <summary>
     /// The skinned model asset used for rendering.
@@ -142,10 +150,17 @@ public:
     DrawPass DrawModes = DrawPass::Default;
 
     /// <summary>
+    /// The object sort order key used when sorting drawable objects during rendering. Use lower values to draw object before others, higher values are rendered later (on top). Can be use to control transparency drawing.
+    /// </summary>
+    API_FIELD(Attributes="EditorDisplay(\"Skinned Model\"), EditorOrder(110), DefaultValue(0)")
+    int16 SortOrder = 0;
+
+    /// <summary>
     /// The shadows casting mode.
+    /// [Deprecated on 26.10.2022, expires on 26.10.2024]
     /// </summary>
     API_FIELD(Attributes="EditorOrder(110), DefaultValue(ShadowsCastingMode.All), EditorDisplay(\"Skinned Model\")")
-    ShadowsCastingMode ShadowsMode = ShadowsCastingMode::All;
+    DEPRECATED ShadowsCastingMode ShadowsMode = ShadowsCastingMode::All;
 
     /// <summary>
     /// The animation root motion apply target. If not specified the animated model will apply it itself.
@@ -154,19 +169,10 @@ public:
     ScriptingObjectReference<Actor> RootMotionTarget;
 
 public:
-
     /// <summary>
     /// The graph instance data container. For dynamic usage only at runtime, not serialized.
     /// </summary>
     AnimGraphInstanceData GraphInstance;
-
-    /// <summary>
-    /// Gets the model world matrix transform.
-    /// </summary>
-    FORCE_INLINE void GetWorld(Matrix* world) const
-    {
-        *world = _world;
-    }
 
     /// <summary>
     /// Resets the animation state (clears the instance state data but preserves the instance parameters values).
@@ -177,7 +183,7 @@ public:
     /// Performs the full animation update. The actual update will be performed during gameplay tick.
     /// </summary>
     API_FUNCTION() void UpdateAnimation();
-    
+
     /// <summary>
     /// Called after animation gets updated (new skeleton pose).
     /// </summary>
@@ -224,6 +230,22 @@ public:
     API_FUNCTION() void GetNodeTransformation(const StringView& nodeName, API_PARAM(Out) Matrix& nodeTransformation, bool worldSpace = false) const;
 
     /// <summary>
+    /// Sets the node final transformation. If multiple nodes are to be set within a frame, do not use set worldSpace to true, and do the conversion yourself to avoid recalculation of inv matrices. 
+    /// </summary>
+    /// <param name="nodeIndex">The index of the skinned model skeleton node.</param>
+    /// <param name="nodeTransformation">The final node transformation matrix.</param>
+    /// <param name="worldSpace">True if convert matrices from world-space, otherwise values will be in local-space of the actor.</param>
+    API_FUNCTION() void SetNodeTransformation(int32 nodeIndex, const Matrix& nodeTransformation, bool worldSpace = false);
+
+    /// <summary>
+    /// Sets the node final transformation. If multiple nodes are to be set within a frame, do not use set worldSpace to true, and do the conversion yourself to avoid recalculation of inv matrices. 
+    /// </summary>
+    /// <param name="nodeName">The name of the skinned model skeleton node.</param>
+    /// <param name="nodeTransformation">The final node transformation matrix.</param>
+    /// <param name="worldSpace">True if convert matrices from world-space, otherwise values will be in local-space of the actor.</param>
+    API_FUNCTION() void SetNodeTransformation(const StringView& nodeName, const Matrix& nodeTransformation, bool worldSpace = false);
+
+    /// <summary>
     /// Finds the closest node to a given location.
     /// </summary>
     /// <param name="location">The text location (in local-space of the actor or world-space depending on <paramref name="worldSpace"/>).</param>
@@ -237,8 +259,28 @@ public:
     /// <param name="masterPose">The master pose actor to use.</param>
     API_FUNCTION() void SetMasterPoseModel(AnimatedModel* masterPose);
 
-public:
+    /// <summary>
+    /// Enables extracting animation playback insights for debugging or custom scripting.
+    /// </summary>
+    API_PROPERTY(Attributes="HideInEditor, NoSerialize") bool GetEnableTracing() const
+    {
+        return GraphInstance.EnableTracing;
+    }
 
+    /// <summary>
+    /// Enables extracting animation playback insights for debugging or custom scripting.
+    /// </summary>
+    API_PROPERTY() void SetEnableTracing(bool value)
+    {
+        GraphInstance.EnableTracing = value;
+    }
+
+    /// <summary>
+    /// Gets the trace events from the last animation update. Valid only when EnableTracing is active.
+    /// </summary>
+    API_PROPERTY(Attributes="HideInEditor, NoSerialize") const Array<AnimGraphTraceEvent>& GetTraceEvents() const;
+
+public:
     /// <summary>
     /// Gets the anim graph instance parameters collection.
     /// </summary>
@@ -283,7 +325,6 @@ public:
     API_FUNCTION() void SetParameterValue(const Guid& id, const Variant& value);
 
 public:
-
     /// <summary>
     /// Gets the weight of the blend shape.
     /// </summary>
@@ -299,18 +340,64 @@ public:
     API_FUNCTION() void SetBlendShapeWeight(const StringView& name, float value);
 
     /// <summary>
-    /// Clears the weights of the blend shapes (disabled any used blend shapes).
+    /// Clears the weights of the blend shapes (disables any used blend shapes).
     /// </summary>
     API_FUNCTION() void ClearBlendShapeWeights();
 
-private:
+public:
+    /// <summary>
+    /// Plays the animation on the slot in Anim Graph.
+    /// </summary>
+    /// <param name="slotName">The name of the slot.</param>
+    /// <param name="anim">The animation to play.</param>
+    /// <param name="speed">The playback speed.</param>
+    /// <param name="blendInTime">The animation blending in time (in seconds). Cam be used to smooth the slot animation playback with the input pose when starting the animation.</param>
+    /// <param name="blendOutTime">The animation blending out time (in seconds). Cam be used to smooth the slot animation playback with the input pose when ending animation.</param>
+    /// <param name="loopCount">The amount of loops to play the animation: 0 to play once, -1 to play infinite, 1 or higher to loop once or more.</param>
+    API_FUNCTION() void PlaySlotAnimation(const StringView& slotName, Animation* anim, float speed = 1.0f, float blendInTime = 0.2f, float blendOutTime = 0.2f, int32 loopCount = 0);
 
-    void ApplyRootMotion(const RootMotionData& rootMotionDelta);
+    /// <summary>
+    /// Stops all the animations playback on the all slots in Anim Graph.
+    /// </summary>
+    API_FUNCTION() void StopSlotAnimation();
+
+    /// <summary>
+    /// Stops the animation playback on the slot in Anim Graph.
+    /// </summary>
+    /// <param name="slotName">The name of the slot.</param>
+    /// <param name="anim">The animation to stop.</param>
+    API_FUNCTION() void StopSlotAnimation(const StringView& slotName, Animation* anim);
+
+    /// <summary>
+    /// Pauses all the animations playback on the all slots in Anim Graph.
+    /// </summary>
+    API_FUNCTION() void PauseSlotAnimation();
+
+    /// <summary>
+    /// Pauses the animation playback on the slot in Anim Graph.
+    /// </summary>
+    /// <param name="slotName">The name of the slot.</param>
+    /// <param name="anim">The animation to pause.</param>
+    API_FUNCTION() void PauseSlotAnimation(const StringView& slotName, Animation* anim);
+
+    /// <summary>
+    /// Checks if the any animation playback is active on the any slot in Anim Graph (not paused).
+    /// </summary>
+    API_FUNCTION() bool IsPlayingSlotAnimation();
+
+    /// <summary>
+    /// Checks if the animation playback is active on the slot in Anim Graph (not paused).
+    /// </summary>
+    /// <param name="slotName">The name of the slot.</param>
+    /// <param name="anim">The animation to check.</param>
+    API_FUNCTION() bool IsPlayingSlotAnimation(const StringView& slotName, Animation* anim);
+
+private:
+    void ApplyRootMotion(const Transform& rootMotionDelta);
     void SyncParameters();
+    void RunBlendShapeDeformer(const MeshBase* mesh, struct MeshDeformationData& deformation);
 
     void Update();
-    void UpdateLocalBounds();
-    void UpdateBounds();
     void UpdateSockets();
     void OnAnimationUpdated_Async();
     void OnAnimationUpdated_Sync();
@@ -323,27 +410,32 @@ private:
     void OnGraphLoaded();
 
 public:
-
     // [ModelInstanceActor]
     bool HasContentLoaded() const override;
     void Draw(RenderContext& renderContext) override;
-    void DrawGeneric(RenderContext& renderContext) override;
+    void Draw(RenderContextBatch& renderContextBatch) override;
 #if USE_EDITOR
     void OnDebugDrawSelected() override;
+    BoundingBox GetEditorBox() const override;
 #endif
-    bool IntersectsItself(const Ray& ray, float& distance, Vector3& normal) override;
+    bool IntersectsItself(const Ray& ray, Real& distance, Vector3& normal) override;
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
-    bool IntersectsEntry(int32 entryIndex, const Ray& ray, float& distance, Vector3& normal) override;
-    bool IntersectsEntry(const Ray& ray, float& distance, Vector3& normal, int32& entryIndex) override;
+    const Span<MaterialSlot> GetMaterialSlots() const override;
+    MaterialBase* GetMaterial(int32 entryIndex) override;
+    bool IntersectsEntry(int32 entryIndex, const Ray& ray, Real& distance, Vector3& normal) override;
+    bool IntersectsEntry(const Ray& ray, Real& distance, Vector3& normal, int32& entryIndex) override;
+    bool GetMeshData(const MeshReference& mesh, MeshBufferType type, BytesContainer& result, int32& count) const override;
+    void UpdateBounds() override;
+    MeshDeformation* GetMeshDeformation() const override;
+    void OnDeleteObject() override;
 
 protected:
-
     // [ModelInstanceActor]
     void BeginPlay(SceneBeginData* data) override;
     void EndPlay() override;
     void OnEnable() override;
     void OnDisable() override;
     void OnActiveInTreeChanged() override;
-    void OnTransformChanged() override;
+    void WaitForModelLoad() override;
 };

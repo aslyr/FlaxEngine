@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,7 +12,7 @@
 #define GPU_MAX_CB_BINDED 4
 
 // Maximum amount of binded unordered access resources at the same time
-#define GPU_MAX_UA_BINDED 2
+#define GPU_MAX_UA_BINDED 4
 
 // Maximum amount of binded texture sampler resources at the same time
 #define GPU_MAX_SAMPLER_BINDED 16
@@ -57,9 +57,9 @@
 #define GPU_USE_SHADERS_DEBUG_LAYER (BUILD_DEBUG)
 
 // Maximum size of the texture that is supported by the engine (specific platforms can have lower limit)
-#define GPU_MAX_TEXTURE_SIZE 8192
-#define GPU_MAX_TEXTURE_MIP_LEVELS 14
-#define GPU_MAX_TEXTURE_ARRAY_SIZE 512
+#define GPU_MAX_TEXTURE_SIZE 16384
+#define GPU_MAX_TEXTURE_MIP_LEVELS 15
+#define GPU_MAX_TEXTURE_ARRAY_SIZE 1024
 
 // Define default back buffer(s) format
 #if GPU_USE_BGRA_BACK_BUFFER

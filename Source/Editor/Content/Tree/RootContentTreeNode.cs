@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEditor.Content
 {
@@ -17,6 +17,6 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override string NavButtonLabel => string.Empty;
+        public override string NavButtonLabel => " /";
     }
 }

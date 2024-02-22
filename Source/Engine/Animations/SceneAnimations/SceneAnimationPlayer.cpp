@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SceneAnimationPlayer.h"
 #include "Engine/Core/Random.h"
@@ -13,12 +13,12 @@
 #include "Engine/Renderer/RenderList.h"
 #include "Engine/Scripting/Scripting.h"
 #include "Engine/Scripting/Script.h"
-#include "Engine/Scripting/MException.h"
+#include "Engine/Scripting/ManagedCLR/MException.h"
 #include "Engine/Scripting/ManagedCLR/MProperty.h"
 #include "Engine/Scripting/ManagedCLR/MUtils.h"
-#include "Engine/Scripting/ManagedCLR/MType.h"
 #include "Engine/Scripting/ManagedCLR/MField.h"
 #include "Engine/Scripting/ManagedCLR/MClass.h"
+#include "Engine/Scripting/ManagedCLR/MMethod.h"
 
 // This could be Update, LateUpdate or FixedUpdate
 #define UPDATE_POINT Update
@@ -260,6 +260,7 @@ void SceneAnimationPlayer::MapTrack(const StringView& from, const Guid& to)
 
 void SceneAnimationPlayer::Restore(SceneAnimation* anim, int32 stateIndexOffset)
 {
+#if USE_CSHARP
     // Restore all tracks
     for (int32 j = 0; j < anim->Tracks.Count(); j++)
     {
@@ -293,7 +294,7 @@ void SceneAnimationPlayer::Restore(SceneAnimation* anim, int32 stateIndexOffset)
                 || state.RestoreStateIndex == -1
                 || (state.Field == nullptr && state.Property == nullptr))
                 break;
-            MonoObject* instance = _tracks[stateIndexOffset + parentTrack.TrackStateIndex].ManagedObject;
+            MObject* instance = _tracks[stateIndexOffset + parentTrack.TrackStateIndex].ManagedObject;
             if (!instance)
                 break;
 
@@ -318,7 +319,7 @@ void SceneAnimationPlayer::Restore(SceneAnimation* anim, int32 stateIndexOffset)
             {
                 if (state.Property)
                 {
-                    MonoObject* exception = nullptr;
+                    MObject* exception = nullptr;
                     state.ManagedObject = state.Property->GetValue(instance, &exception);
                     if (exception)
                     {
@@ -341,7 +342,7 @@ void SceneAnimationPlayer::Restore(SceneAnimation* anim, int32 stateIndexOffset)
             // Set the value
             if (state.Property)
             {
-                MonoObject* exception = nullptr;
+                MObject* exception = nullptr;
                 state.Property->SetValue(instance, value, &exception);
                 if (exception)
                 {
@@ -353,16 +354,17 @@ void SceneAnimationPlayer::Restore(SceneAnimation* anim, int32 stateIndexOffset)
             {
                 state.Field->SetValue(instance, value);
             }
-
             break;
         }
         default: ;
         }
     }
+#endif
 }
 
 bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexOffset, SceneAnimation* anim, float time, const SceneAnimation::Track& track, TrackInstance& state, void* target)
 {
+#if USE_CSHARP
     switch (track.Type)
     {
     case SceneAnimation::Track::Types::KeyframesProperty:
@@ -420,6 +422,8 @@ bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexO
             return false;
 
         // Evaluate the curve
+        byte valueData[sizeof(Double4)];
+        void* curveDst = trackDataKeyframes->DataType == trackDataKeyframes->ValueType ? target : valueData;
         switch (trackDataKeyframes->DataType)
         {
 #define IMPL_CURVE(dataType, valueType) \
@@ -427,19 +431,49 @@ bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexO
     { \
         CurveBase<valueType, BezierCurveKeyframe<valueType>> volumeCurve; \
         CurveBase<valueType, BezierCurveKeyframe<valueType>>::KeyFrameData data((BezierCurveKeyframe<valueType>*)trackDataKeyframes->Keyframes, trackDataKeyframes->KeyframesCount); \
-        volumeCurve.Evaluate(data, *(valueType*)target, time, false); \
+        static_assert(sizeof(valueData) >= sizeof(valueType), "Invalid valueData size."); \
+        volumeCurve.Evaluate(data, *(valueType*)curveDst, time, false); \
         break; \
     }
         IMPL_CURVE(Float, float);
         IMPL_CURVE(Double, double);
-        IMPL_CURVE(Vector2, Vector2);
-        IMPL_CURVE(Vector3, Vector3);
-        IMPL_CURVE(Vector4, Vector4);
+        IMPL_CURVE(Float2, Float2);
+        IMPL_CURVE(Float3, Float3);
+        IMPL_CURVE(Float4, Float4);
+        IMPL_CURVE(Double2, Double2);
+        IMPL_CURVE(Double3, Double3);
+        IMPL_CURVE(Double4, Double4);
         IMPL_CURVE(Quaternion, Quaternion);
         IMPL_CURVE(Color, Color);
         IMPL_CURVE(Color32, Color32);
 #undef IMPL_CURVE
         default: ;
+        }
+        if (trackDataKeyframes->DataType != trackDataKeyframes->ValueType)
+        {
+            // Convert evaluated curve data into the runtime type (eg. when using animation saved with Vector3=Double3 and playing it in a build with Vector3=Float3)
+            switch (trackDataKeyframes->DataType)
+            {
+            // Assume just Vector type converting
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Float2:
+                *(Double2*)target = *(Float2*)valueData;
+                break;
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Float3:
+                *(Double3*)target = *(Float3*)valueData;
+                break;
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Float4:
+                *(Double4*)target = *(Float4*)valueData;
+                break;
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Double2:
+                *(Float2*)target = *(Double2*)valueData;
+                break;
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Double3:
+                *(Float3*)target = *(Double3*)valueData;
+                break;
+            case SceneAnimation::CurvePropertyTrack::DataTypes::Double4:
+                *(Float4*)target = *(Double4*)valueData;
+                break;
+            }
         }
         break;
     }
@@ -477,7 +511,7 @@ bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexO
 
         // Return the value
         StringView str(keyframesValues[leftKey], keyframesLengths[leftKey]);
-        *(MonoString**)target = MUtils::ToString(str);
+        *(MString**)target = MUtils::ToString(str);
         break;
     }
     case SceneAnimation::Track::Types::StructProperty:
@@ -494,10 +528,10 @@ bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexO
             // Cache field
             if (!childTrackState.Field)
             {
-                MType type = state.Property ? state.Property->GetType() : (state.Field ? state.Field->GetType() : MType());
+                MType* type = state.Property ? state.Property->GetType() : (state.Field ? state.Field->GetType() : nullptr);
                 if (!type)
                     continue;
-                MClass* mclass = Scripting::FindClass(mono_type_get_class(type.GetNative()));
+                MClass* mclass = MCore::Type::GetClass(type);
                 childTrackState.Field = mclass->GetField(childTrackRuntimeData->PropertyName);
                 if (!childTrackState.Field)
                     continue;
@@ -511,17 +545,18 @@ bool SceneAnimationPlayer::TickPropertyTrack(int32 trackIndex, int32 stateIndexO
     case SceneAnimation::Track::Types::ObjectProperty:
     {
         // Cache the sub-object pointer for the sub-tracks
-        state.ManagedObject = *(MonoObject**)target;
+        state.ManagedObject = *(MObject**)target;
         return false;
     }
     default: ;
     }
-
+#endif
     return true;
 }
 
 void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int32 stateIndexOffset, CallStack& callStack)
 {
+#if USE_CSHARP
     const float fps = anim->FramesPerSecond;
 #if !BUILD_RELEASE || USE_EDITOR
     callStack.Add(anim);
@@ -762,10 +797,12 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                 const auto trackData = track.GetData<SceneAnimation::ActorTrack::Data>();
                 Guid id = trackData->ID;
                 _objectsMapping.TryGet(id, id);
-                state.Object = Scripting::FindObject<Actor>(id);
+                state.Object = Scripting::TryFindObject<Actor>(id);
                 if (!state.Object)
                 {
-                    LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("actor"));
+                    if (state.Warn)
+                        LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("actor"));
+                    state.Warn = false;
                     break;
                 }
             }
@@ -792,10 +829,12 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                 // Find script
                 Guid id = trackData->ID;
                 _objectsMapping.TryGet(id, id);
-                state.Object = Scripting::FindObject<Script>(id);
+                state.Object = Scripting::TryFindObject<Script>(id);
                 if (!state.Object)
                 {
-                    LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("script"));
+                    if (state.Warn)
+                        LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("script"));
+                    state.Warn = false;
                     break;
                 }
 
@@ -827,14 +866,14 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                 break;
 
             // Skip if parent object is missing
-            MonoObject* instance = _tracks[stateIndexOffset + parentTrack.TrackStateIndex].ManagedObject;
+            MObject* instance = _tracks[stateIndexOffset + parentTrack.TrackStateIndex].ManagedObject;
             if (!instance)
                 break;
 
             // Cache property or field
             if (!state.Property && !state.Field)
             {
-                MClass* mclass = Scripting::FindClass(mono_object_get_class(instance));
+                MClass* mclass = MCore::Object::GetClass(instance);
                 state.Property = mclass->GetProperty(runtimeData->PropertyName);
                 if (!state.Property)
                 {
@@ -847,9 +886,8 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
             }
 
             // Get stack memory for data value
-            MType valueType = state.Property ? state.Property->GetType() : state.Field->GetType();
-            int32 valueAlignment;
-            int32 valueSize = mono_type_stack_size(valueType.GetNative(), &valueAlignment);
+            MType* valueType = state.Property ? state.Property->GetType() : state.Field->GetType();
+            int32 valueSize = MCore::Type::GetSize(valueType);
             _tracksDataStack.AddDefault(valueSize);
             void* value = &_tracksDataStack[_tracksDataStack.Count() - valueSize];
 
@@ -860,23 +898,23 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
             {
                 if (state.Property)
                 {
-                    MonoObject* exception = nullptr;
+                    MObject* exception = nullptr;
                     auto boxed = state.Property->GetValue(instance, &exception);
                     if (exception)
                     {
                         MException ex(exception);
                         ex.Log(LogType::Error, TEXT("Property"));
                     }
-                    else if (!valueType.IsPointer())
+                    else if (!MCore::Type::IsPointer(valueType) && !MCore::Type::IsReference(valueType))
                     {
                         if (boxed)
-                            Platform::MemoryCopy(value, mono_object_unbox(boxed), valueSize);
+                            Platform::MemoryCopy(value, MCore::Object::Unbox(boxed), valueSize);
                         else
                             Platform::MemoryClear(value, valueSize);
                     }
                     else
                     {
-                        *(MonoObject**)value = boxed;
+                        *(MObject**)value = boxed;
                     }
                 }
                 else
@@ -893,14 +931,14 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                     case SceneAnimation::Track::Types::StringProperty:
                     {
                         StringView str;
-                        MUtils::ToString(*(MonoString**)value, str);
+                        MUtils::ToString(*(MString**)value, str);
                         _restoreData.Add((byte*)str.Get(), str.Length());
                         _restoreData.Add('\0');
                         break;
                     }
                     case SceneAnimation::Track::Types::ObjectReferenceProperty:
                     {
-                        auto obj = Scripting::FindObject(*(MonoObject**)value);
+                        auto obj = Scripting::FindObject(*(MObject**)value);
                         auto id = obj ? obj->GetID() : Guid::Empty;
                         _restoreData.Add((byte*)&id, sizeof(Guid));
                         break;
@@ -918,11 +956,11 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
             if (TickPropertyTrack(j, stateIndexOffset, anim, time, track, state, value))
             {
                 // Set the value
-                if (valueType.IsPointer())
+                if (MCore::Type::IsPointer(valueType))
                     value = (void*)*(intptr*)value;
                 if (state.Property)
                 {
-                    MonoObject* exception = nullptr;
+                    MObject* exception = nullptr;
                     state.Property->SetValue(instance, value, &exception);
                     if (exception)
                     {
@@ -988,15 +1026,15 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                         // Cache method
                         if (!state.Method)
                         {
-                            state.Method = mono_class_get_method_from_name(mono_object_get_class(instance), runtimeData->EventName, runtimeData->EventParamsCount);
+                            state.Method = MCore::Object::GetClass(instance)->FindMethod(runtimeData->EventName, runtimeData->EventParamsCount);
                             if (!state.Method)
                                 break;
                         }
 
                         // Invoke the method
                         Variant result;
-                        MonoObject* exception = nullptr;
-                        mono_runtime_invoke((MonoMethod*)state.Method, instance, paramsData, &exception);
+                        MObject* exception = nullptr;
+                        state.Method->Invoke(instance, paramsData, &exception);
                         if (exception)
                         {
                             MException ex(exception);
@@ -1044,10 +1082,12 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
                 // Find actor
                 Guid id = trackData->ID;
                 _objectsMapping.TryGet(id, id);
-                state.Object = Scripting::FindObject<Camera>(id);
+                state.Object = Scripting::TryFindObject<Camera>(id);
                 if (!state.Object)
                 {
-                    LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("actor"));
+                    if (state.Warn)
+                        LOG(Warning, "Failed to find {3} of ID={0} for track '{1}' in scene animation '{2}'", id, track.Name, anim->ToString(), TEXT("camera"));
+                    state.Warn = false;
                     break;
                 }
             }
@@ -1064,6 +1104,7 @@ void SceneAnimationPlayer::Tick(SceneAnimation* anim, float time, float dt, int3
         default: ;
         }
     }
+#endif
 }
 
 void SceneAnimationPlayer::Tick()
@@ -1120,6 +1161,7 @@ void SceneAnimationPlayer::Serialize(SerializeStream& stream, const void* otherO
     SERIALIZE(RandomStartTime);
     SERIALIZE(RestoreStateOnStop);
     SERIALIZE(UpdateMode);
+    SERIALIZE(UsePrefabObjects);
 }
 
 void SceneAnimationPlayer::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
@@ -1136,6 +1178,30 @@ void SceneAnimationPlayer::Deserialize(DeserializeStream& stream, ISerializeModi
     DESERIALIZE(RandomStartTime);
     DESERIALIZE(RestoreStateOnStop);
     DESERIALIZE(UpdateMode);
+    DESERIALIZE(UsePrefabObjects);
+
+    if (UsePrefabObjects && Animation && !Animation->WaitForLoaded())
+    {
+        // When loading from prefab automatically map objects from prefab instance into animation tracks with object references
+        for (auto& track : Animation->Tracks)
+        {
+            if (track.Disabled || !(track.Flag & SceneAnimation::Track::Flags::PrefabObject))
+                continue;
+            switch (track.Type)
+            {
+            case SceneAnimation::Track::Types::Actor:
+            case SceneAnimation::Track::Types::Script:
+            case SceneAnimation::Track::Types::CameraCut:
+            {
+                const auto trackData = track.GetData<SceneAnimation::ObjectTrack::Data>();
+                Guid id;
+                if (modifier->IdsMapping.TryGet(trackData->ID, id))
+                    _objectsMapping[trackData->ID] = id;
+                break;
+            }
+            }
+        }
+    }
 }
 
 void SceneAnimationPlayer::Collect(RenderContext& renderContext)

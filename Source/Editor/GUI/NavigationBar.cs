@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -50,14 +50,9 @@ namespace FlaxEditor.GUI
         {
             if (toolstrip == null)
                 return;
-
             var lastToolstripButton = toolstrip.LastButton;
             var parentSize = Parent.Size;
-            Bounds = new Rectangle
-            (
-             new Vector2(lastToolstripButton.Right + 8.0f, 0),
-             new Vector2(parentSize.X - X - 8.0f, toolstrip.Height)
-            );
+            Bounds = new Rectangle(lastToolstripButton.Right + 8.0f, 0, parentSize.X - X - 8.0f, toolstrip.Height);
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "NavMeshData.h"
 #include "Engine/Core/Log.h"
@@ -12,7 +12,7 @@ void NavMeshData::Save(WriteStream& stream)
     header.Version = 1;
     header.TileSize = TileSize;
     header.TilesCount = Tiles.Count();
-    stream.Write(&header);
+    stream.Write(header);
 
     // Write tiles
     for (int32 tileIndex = 0; tileIndex < Tiles.Count(); tileIndex++)
@@ -25,7 +25,7 @@ void NavMeshData::Save(WriteStream& stream)
         tileHeader.PosY = tile.PosY;
         tileHeader.Layer = tile.Layer;
         tileHeader.DataSize = tile.Data.Length();
-        stream.Write(&tileHeader);
+        stream.Write(tileHeader);
 
         // Write tile data
         if (tileHeader.DataSize)
@@ -50,7 +50,7 @@ bool NavMeshData::Load(BytesContainer& data, bool copyData)
     MemoryReadStream stream(data.Get(), data.Length());
 
     // Read header
-    const auto header = stream.Read<NavMeshDataHeader>(1);
+    const auto header = stream.Move<NavMeshDataHeader>(1);
     if (header->Version != 1)
     {
         LOG(Warning, "Invalid valid navmesh data version {0}.", header->Version);
@@ -70,7 +70,7 @@ bool NavMeshData::Load(BytesContainer& data, bool copyData)
         auto& tile = Tiles[tileIndex];
 
         // Read tile header
-        const auto tileHeader = stream.Read<NavMeshTileDataHeader>(1);
+        const auto tileHeader = stream.Move<NavMeshTileDataHeader>(1);
         if (tileHeader->DataSize <= 0)
         {
             LOG(Warning, "Invalid navmesh tile data.");
@@ -81,7 +81,7 @@ bool NavMeshData::Load(BytesContainer& data, bool copyData)
         tile.Layer = tileHeader->Layer;
 
         // Read tile data
-        const auto tileData = stream.Read<byte>(tileHeader->DataSize);
+        const auto tileData = stream.Move<byte>(tileHeader->DataSize);
         if (copyData)
         {
             tile.Data.Copy(tileData, tileHeader->DataSize);

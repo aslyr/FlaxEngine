@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEditor.GUI;
@@ -14,7 +14,7 @@ namespace FlaxEditor.Surface.Archetypes
     [HideInEditor]
     public static class Comparisons
     {
-        private static NodeArchetype Op(ushort id, string title, string desc)
+        private static NodeArchetype Op(ushort id, string title, string desc, string[] altTitles = null)
         {
             return new NodeArchetype
             {
@@ -22,8 +22,9 @@ namespace FlaxEditor.Surface.Archetypes
                 Title = title,
                 Description = desc,
                 Flags = NodeFlags.AllGraphs,
+                AlternativeTitles = altTitles,
                 ConnectionsHints = ConnectionsHint.Value,
-                Size = new Vector2(100, 40),
+                Size = new Float2(100, 40),
                 IndependentBoxes = new[]
                 {
                     0,
@@ -50,9 +51,9 @@ namespace FlaxEditor.Surface.Archetypes
             {
             }
 
-            public override void OnLoaded()
+            public override void OnLoaded(SurfaceNodeActions action)
             {
-                base.OnLoaded();
+                base.OnLoaded(action);
 
                 // Restore saved input boxes layout
                 if (Values[0] is byte[] data)
@@ -62,9 +63,9 @@ namespace FlaxEditor.Surface.Archetypes
                 }
             }
 
-            public override void OnSurfaceLoaded()
+            public override void OnSurfaceLoaded(SurfaceNodeActions action)
             {
-                base.OnSurfaceLoaded();
+                base.OnSurfaceLoaded(action);
 
                 UpdateBoxes();
                 GetBox(0).CurrentTypeChanged += box => UpdateBoxes();
@@ -170,12 +171,12 @@ namespace FlaxEditor.Surface.Archetypes
         /// </summary>
         public static NodeArchetype[] Nodes =
         {
-            Op(1, "==", "Determines whether two values are equal"),
-            Op(2, "!=", "Determines whether two values are not equal"),
-            Op(3, ">", "Determines whether the first value is greater than the other"),
-            Op(4, "<", "Determines whether the first value is less than the other"),
-            Op(5, "<=", "Determines whether the first value is less or equal to the other"),
-            Op(6, ">=", "Determines whether the first value is greater or equal to the other"),
+            Op(1, "==", "Determines whether two values are equal", new[] { "equals" }),
+            Op(2, "!=", "Determines whether two values are not equal", new[] { "not equals" }),
+            Op(3, ">", "Determines whether the first value is greater than the other", new[] { "greater than", "larger than", "bigger than" }),
+            Op(4, "<", "Determines whether the first value is less than the other", new[] { "less than", "smaller than" }),
+            Op(5, "<=", "Determines whether the first value is less or equal to the other", new[] { "less equals than", "smaller equals than" }),
+            Op(6, ">=", "Determines whether the first value is greater or equal to the other", new[] { "greater equals than", "larger equals than", "bigger equals than" }),
             new NodeArchetype
             {
                 TypeID = 7,
@@ -183,7 +184,7 @@ namespace FlaxEditor.Surface.Archetypes
                 AlternativeTitles = new[] { "if", "switch" },
                 Description = "Returns one of the input values based on the condition value",
                 Flags = NodeFlags.AllGraphs,
-                Size = new Vector2(160, 60),
+                Size = new Float2(160, 60),
                 ConnectionsHints = ConnectionsHint.Value,
                 IndependentBoxes = new[]
                 {
@@ -214,7 +215,7 @@ namespace FlaxEditor.Surface.Archetypes
                 Create = (id, context, arch, groupArch) => new SwitchOnEnumNode(id, context, arch, groupArch),
                 Description = "Returns one of the input values based on the enum value",
                 Flags = NodeFlags.VisualScriptGraph | NodeFlags.AnimGraph,
-                Size = new Vector2(160, 60),
+                Size = new Float2(160, 60),
                 DefaultValues = new object[] { Utils.GetEmptyArray<byte>() },
                 ConnectionsHints = ConnectionsHint.Enum,
                 Elements = new[]

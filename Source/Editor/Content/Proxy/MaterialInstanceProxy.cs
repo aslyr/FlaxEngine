@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content.Thumbnails;
@@ -14,6 +14,7 @@ namespace FlaxEditor.Content
     /// A <see cref="MaterialInstance"/> asset proxy object.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.BinaryAssetProxy" />
+    [ContentContextMenu("New/Material/Material Instance")]
     public class MaterialInstanceProxy : BinaryAssetProxy
     {
         private MaterialPreview _preview;
@@ -42,7 +43,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override void Create(string outputPath, object arg)
         {
-            if (Editor.CreateAsset(Editor.NewAssetType.MaterialInstance, outputPath))
+            if (Editor.CreateAsset("MaterialInstance", outputPath))
                 throw new Exception("Failed to create new asset.");
         }
 
@@ -51,19 +52,8 @@ namespace FlaxEditor.Content
         {
             if (_preview == null)
             {
-                _preview = new MaterialPreview(false)
-                {
-                    RenderOnlyWithWindow = false,
-                    UseAutomaticTaskManagement = false,
-                    AnchorPreset = AnchorPresets.StretchAll,
-                    Offsets = Margin.Zero,
-                };
-                _preview.Task.Enabled = false;
-
-                var eyeAdaptation = _preview.PostFxVolume.EyeAdaptation;
-                eyeAdaptation.Mode = EyeAdaptationMode.None;
-                eyeAdaptation.OverrideFlags |= EyeAdaptationSettingsOverride.Mode;
-                _preview.PostFxVolume.EyeAdaptation = eyeAdaptation;
+                _preview = new MaterialPreview(false);
+                InitAssetPreview(_preview);
             }
 
             // TODO: disable streaming for dependant assets during thumbnail rendering (and restore it after)
@@ -72,7 +62,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override bool CanDrawThumbnail(ThumbnailRequest request)
         {
-            return _preview.HasLoadedAssets;
+            return _preview.HasLoadedAssets && ThumbnailsModule.HasMinimumQuality((MaterialInstance)request.Asset);
         }
 
         /// <inheritdoc />

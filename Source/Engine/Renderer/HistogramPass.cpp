@@ -1,10 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "HistogramPass.h"
 #include "RenderList.h"
 #include "Engine/Content/Assets/Shader.h"
 #include "Engine/Content/Content.h"
-#include "Engine/Graphics/PostProcessBase.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/GPULimits.h"
@@ -27,7 +26,7 @@ PACK_STRUCT(struct HistogramData {
 GPUBuffer* HistogramPass::Render(RenderContext& renderContext, GPUTexture* colorBuffer)
 {
     auto device = GPUDevice::Instance;
-    auto context = device->GetMainContext();;
+    auto context = device->GetMainContext();
     if (checkIfSkipPass() || !_isSupported)
         return nullptr;
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SkeletonMask.h"
 #include "Engine/Core/Log.h"
@@ -23,7 +23,7 @@ Asset::LoadResult SkeletonMask::load()
     MemoryReadStream stream(dataChunk->Get(), dataChunk->Size());
 
     Guid skeletonId;
-    stream.Read(&skeletonId);
+    stream.Read(skeletonId);
     int32 maskedNodesCount;
     stream.ReadInt32(&maskedNodesCount);
     _maskedNodes.Resize(maskedNodesCount);
@@ -83,7 +83,7 @@ bool SkeletonMask::Save(const StringView& path)
     // Write data
     MemoryWriteStream stream(4096);
     const auto skeletonId = Skeleton.GetID();
-    stream.Write(&skeletonId);
+    stream.Write(skeletonId);
     stream.WriteInt32(_maskedNodes.Count());
     for (auto& e : _maskedNodes)
     {

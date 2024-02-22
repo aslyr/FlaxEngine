@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,9 +13,8 @@
 /// </summary>
 API_CLASS(NoSpawn) class FLAXENGINE_API SceneAnimation final : public BinaryAsset
 {
-DECLARE_BINARY_ASSET_HEADER(SceneAnimation, 1);
+    DECLARE_BINARY_ASSET_HEADER(SceneAnimation, 1);
 public:
-
     /// <summary>
     /// The animation timeline track data.
     /// </summary>
@@ -42,6 +41,7 @@ public:
             CameraCut = 16,
             //AnimationChannel = 17,
             //AnimationChannelData = 18,
+            //AnimationEvent = 19,
         };
 
         enum class Flags
@@ -49,6 +49,7 @@ public:
             None = 0,
             Mute = 1,
             Loop = 2,
+            PrefabObject = 4,
         };
 
         /// <summary>
@@ -298,9 +299,12 @@ public:
             Unknown,
             Float,
             Double,
-            Vector2,
-            Vector3,
-            Vector4,
+            Float2,
+            Float3,
+            Float4,
+            Double2,
+            Double3,
+            Double4,
             Quaternion,
             Color,
             Color32,
@@ -314,6 +318,7 @@ public:
         struct Runtime : PropertyTrack::Runtime
         {
             DataTypes DataType;
+            DataTypes ValueType;
             int32 KeyframesCount;
 
             /// <summary>
@@ -406,12 +411,10 @@ public:
     };
 
 private:
-
     BytesContainer _data;
     MemoryWriteStream _runtimeData;
 
 public:
-
     /// <summary>
     /// The frames amount per second of the timeline animation.
     /// </summary>
@@ -433,14 +436,12 @@ public:
     int32 TrackStatesCount;
 
 public:
-
     /// <summary>
     /// Gets the animation duration (in seconds).
     /// </summary>
     API_PROPERTY() float GetDuration() const;
 
 public:
-
     /// <summary>
     /// Gets the serialized timeline data.
     /// </summary>
@@ -460,16 +461,16 @@ public:
 #endif
 
 public:
-
     // [BinaryAsset]
 #if USE_EDITOR
     void GetReferences(Array<Guid>& output) const override;
 #endif
 
 protected:
-
     // [SceneAnimationBase]
     LoadResult load() override;
     void unload(bool isReloading) override;
     AssetChunksFlag getChunksToPreload() const override;
 };
+
+DECLARE_ENUM_OPERATORS(SceneAnimation::Track::Flags);

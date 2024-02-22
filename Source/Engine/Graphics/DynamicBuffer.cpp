@@ -1,10 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "DynamicBuffer.h"
+#include "GPUContext.h"
+#include "PixelFormatExtensions.h"
 #include "GPUDevice.h"
+#include "RenderTask.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Utilities.h"
-#include "Engine/Threading/Threading.h"
+#include "Engine/Core/Math/Math.h"
 
 DynamicBuffer::DynamicBuffer(uint32 initialCapacity, uint32 stride, const String& name)
     : _buffer(nullptr)
@@ -43,9 +46,11 @@ void DynamicBuffer::Flush()
         }
 
         // Upload data to the buffer
-        if (IsInMainThread() && GPUDevice::Instance->IsRendering())
+        if (GPUDevice::Instance->IsRendering())
         {
+            RenderContext::GPULocker.Lock();
             GPUDevice::Instance->GetMainContext()->UpdateBuffer(_buffer, Data.Get(), size);
+            RenderContext::GPULocker.Unlock();
         }
         else
         {
@@ -86,4 +91,25 @@ void DynamicBuffer::Dispose()
 {
     SAFE_DELETE_GPU_RESOURCE(_buffer);
     Data.Resize(0);
+}
+
+void DynamicStructuredBuffer::InitDesc(GPUBufferDescription& desc, int32 numElements)
+{
+    desc = GPUBufferDescription::Structured(numElements, _stride, _isUnorderedAccess);
+    desc.Usage = GPUResourceUsage::Dynamic;
+}
+
+DynamicTypedBuffer::DynamicTypedBuffer(uint32 initialCapacity, PixelFormat format, bool isUnorderedAccess, const String& name)
+    : DynamicBuffer(initialCapacity, PixelFormatExtensions::SizeInBytes(format), name)
+    , _format(format)
+    , _isUnorderedAccess(isUnorderedAccess)
+{
+}
+
+void DynamicTypedBuffer::InitDesc(GPUBufferDescription& desc, int32 numElements)
+{
+    auto bufferFlags = GPUBufferFlags::ShaderResource;
+    if (_isUnorderedAccess)
+        bufferFlags |= GPUBufferFlags::UnorderedAccess;
+    desc = GPUBufferDescription::Buffer(numElements * _stride, bufferFlags, _format, nullptr, _stride, GPUResourceUsage::Dynamic);
 }

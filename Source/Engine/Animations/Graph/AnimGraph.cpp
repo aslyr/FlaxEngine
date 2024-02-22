@@ -1,59 +1,15 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "AnimGraph.h"
 #include "Engine/Animations/Animations.h"
+#include "Engine/Animations/AnimEvent.h"
 #include "Engine/Content/Assets/SkinnedModel.h"
 #include "Engine/Graphics/Models/SkeletonData.h"
 #include "Engine/Scripting/Scripting.h"
 
-ThreadLocal<AnimGraphContext> AnimGraphExecutor::Context;
+extern void RetargetSkeletonNode(const SkeletonData& sourceSkeleton, const SkeletonData& targetSkeleton, const SkinnedModel::SkeletonMapping& sourceMapping, Transform& node, int32 i);
 
-RootMotionData RootMotionData::Identity = { Vector3(0.0f), Quaternion(0.0f, 0.0f, 0.0f, 1.0f) };
-
-RootMotionData& RootMotionData::operator+=(const RootMotionData& b)
-{
-    Translation += b.Translation;
-    Rotation *= b.Rotation;
-    return *this;
-}
-
-RootMotionData& RootMotionData::operator+=(const Transform& b)
-{
-    Translation += b.Translation;
-    Rotation *= b.Orientation;
-    return *this;
-}
-
-RootMotionData& RootMotionData::operator-=(const Transform& b)
-{
-    Translation -= b.Translation;
-    Quaternion invRotation = Rotation;
-    invRotation.Invert();
-    Quaternion::Multiply(invRotation, b.Orientation, Rotation);
-    return *this;
-}
-
-RootMotionData RootMotionData::operator+(const RootMotionData& b) const
-{
-    RootMotionData result;
-
-    result.Translation = Translation + b.Translation;
-    result.Rotation = Rotation * b.Rotation;
-
-    return result;
-}
-
-RootMotionData RootMotionData::operator-(const RootMotionData& b) const
-{
-    RootMotionData result;
-
-    result.Rotation = Rotation;
-    result.Rotation.Invert();
-    Vector3::Transform(b.Translation - Translation, result.Rotation, result.Translation);
-    Quaternion::Multiply(result.Rotation, b.Rotation, result.Rotation);
-
-    return result;
-}
+ThreadLocal<AnimGraphContext*> AnimGraphExecutor::Context;
 
 Transform AnimGraphImpulse::GetNodeModelTransformation(SkeletonData& skeleton, int32 nodeIndex) const
 {
@@ -82,25 +38,25 @@ void AnimGraphImpulse::SetNodeModelTransformation(SkeletonData& skeleton, int32 
 
 void AnimGraphInstanceData::Clear()
 {
-    Version = 0;
-    LastUpdateTime = -1;
-    CurrentFrame = 0;
-    RootTransform = Transform::Identity;
-    RootMotion = RootMotionData::Identity;
+    ClearState();
+    Slots.Clear();
     Parameters.Resize(0);
-    State.Resize(0);
-    NodesPose.Resize(0);
 }
 
 void AnimGraphInstanceData::ClearState()
 {
+    for (const auto& e : ActiveEvents)
+        OutgoingEvents.Add(e.End((AnimatedModel*)Object));
+    ActiveEvents.Clear();
+    InvokeAnimEvents();
     Version = 0;
     LastUpdateTime = -1;
     CurrentFrame = 0;
     RootTransform = Transform::Identity;
-    RootMotion = RootMotionData::Identity;
+    RootMotion = Transform::Identity;
     State.Resize(0);
     NodesPose.Resize(0);
+    TraceEvents.Clear();
 }
 
 void AnimGraphInstanceData::Invalidate()
@@ -109,9 +65,46 @@ void AnimGraphInstanceData::Invalidate()
     CurrentFrame = 0;
 }
 
+void AnimGraphInstanceData::InvokeAnimEvents()
+{
+    const bool all = IsInMainThread();
+    for (int32 i = 0; i < OutgoingEvents.Count(); i++)
+    {
+        const OutgoingEvent e = OutgoingEvents[i];
+        if (all || e.Instance->Async)
+        {
+            OutgoingEvents.RemoveAtKeepOrder(i);
+            switch (e.Type)
+            {
+            case OutgoingEvent::OnEvent:
+                e.Instance->OnEvent(e.Actor, e.Anim, e.Time, e.DeltaTime);
+                break;
+            case OutgoingEvent::OnBegin:
+                ((AnimContinuousEvent*)e.Instance)->OnBegin(e.Actor, e.Anim, e.Time, e.DeltaTime);
+                break;
+            case OutgoingEvent::OnEnd:
+                ((AnimContinuousEvent*)e.Instance)->OnEnd(e.Actor, e.Anim, e.Time, e.DeltaTime);
+                break;
+            }
+        }
+    }
+}
+
+AnimGraphInstanceData::OutgoingEvent AnimGraphInstanceData::ActiveEvent::End(AnimatedModel* actor) const
+{
+    OutgoingEvent out;
+    out.Instance = Instance;
+    out.Actor = actor;
+    out.Anim = Anim;
+    out.Time = 0.0f;
+    out.DeltaTime = 0.0f;
+    out.Type = OutgoingEvent::OnEnd;
+    return out;
+}
+
 AnimGraphImpulse* AnimGraphNode::GetNodes(AnimGraphExecutor* executor)
 {
-    auto& context = AnimGraphExecutor::Context.Get();
+    auto& context = *AnimGraphExecutor::Context.Get();
     const int32 count = executor->_skeletonNodesCount;
     if (context.PoseCacheSize == context.PoseCache.Count())
         context.PoseCache.AddOne();
@@ -211,19 +204,24 @@ void AnimGraphExecutor::Update(AnimGraphInstanceData& data, float dt)
 
     // Initialize
     auto& skeleton = _graph.BaseModel->Skeleton;
-    auto& context = Context.Get();
+    auto& contextPtr = Context.Get();
+    if (!contextPtr)
+        contextPtr = New<AnimGraphContext>();
+    auto& context = *contextPtr;
     {
         ANIM_GRAPH_PROFILE_EVENT("Init");
 
         // Init data from base model
         _skeletonNodesCount = skeleton.Nodes.Count();
-        _rootMotionMode = (RootMotionMode)(int32)_graph._rootNode->Values[0];
+        _rootMotionMode = (RootMotionExtraction)(int32)_graph._rootNode->Values[0];
 
         // Prepare context data for the evaluation
         context.GraphStack.Clear();
         context.GraphStack.Push((Graph*)&_graph);
+        context.NodePath.Clear();
         context.Data = &data;
         context.DeltaTime = dt;
+        context.StackOverFlow = false;
         context.CurrentFrameIndex = ++data.CurrentFrame;
         context.CallStack.Clear();
         context.Functions.Clear();
@@ -244,49 +242,123 @@ void AnimGraphExecutor::Update(AnimGraphInstanceData& data, float dt)
             // Initialize buckets
             ResetBuckets(context, &_graph);
         }
+        for (auto& e : data.ActiveEvents)
+            e.Hit = false;
+        data.TraceEvents.Clear();
 
         // Init empty nodes data
-        context.EmptyNodes.RootMotion = RootMotionData::Identity;
+        context.EmptyNodes.RootMotion = Transform::Identity;
         context.EmptyNodes.Position = 0.0f;
         context.EmptyNodes.Length = 0.0f;
         context.EmptyNodes.Nodes.Resize(_skeletonNodesCount, false);
         for (int32 i = 0; i < _skeletonNodesCount; i++)
-        {
-            auto& node = skeleton.Nodes[i];
-            context.EmptyNodes.Nodes[i] = node.LocalTransform;
-        }
+            context.EmptyNodes.Nodes[i] = skeleton.Nodes[i].LocalTransform;
     }
 
     // Update the animation graph and gather skeleton nodes transformations in nodes local space
-    AnimGraphImpulse* animResult;
+    AnimGraphImpulse* animResult = nullptr;
     {
         ANIM_GRAPH_PROFILE_EVENT("Evaluate");
 
-        auto result = eatBox((Node*)_graph._rootNode, &_graph._rootNode->Boxes[0]);
-        if (result.Type.Type != VariantType::Pointer)
+        const Variant result = eatBox((Node*)_graph._rootNode, &_graph._rootNode->Boxes[0]);
+        switch (result.Type.Type)
         {
-            result = VariantType::Null;
-            LOG(Warning, "Invalid animation update result");
+        case VariantType::Pointer:
+            animResult = (AnimGraphImpulse*)result.AsPointer;
+            break;
+        case ValueType::Null:
+            break;
+        default:
+            //LOG(Warning, "Invalid animation update result type {0}", result.Type.ToString());
+            break;
         }
-        animResult = (AnimGraphImpulse*)result.AsPointer;
         if (animResult == nullptr)
             animResult = GetEmptyNodes();
     }
-    Transform* nodesTransformations = animResult->Nodes.Get();
+    if (data.ActiveEvents.Count() != 0)
+    {
+        ANIM_GRAPH_PROFILE_EVENT("Events");
+        for (int32 i = data.ActiveEvents.Count() - 1; i >= 0; i--)
+        {
+            const auto& e = data.ActiveEvents[i];
+            if (!e.Hit)
+            {
+                // Remove active event that was not hit during this frame (eg. animation using it was not used in blending)
+                data.OutgoingEvents.Add(e.End((AnimatedModel*)context.Data->Object));
+                data.ActiveEvents.RemoveAt(i);
+            }
+        }
+    }
+#if !BUILD_RELEASE
+    {
+        // Perform sanity check on nodes pose to prevent crashes due to NaNs
+        bool anyInvalid = animResult->RootMotion.IsNanOrInfinity();
+        for (int32 i = 0; i < animResult->Nodes.Count(); i++)
+            anyInvalid |= animResult->Nodes.Get()[i].IsNanOrInfinity();
+        if (anyInvalid)
+        {
+            LOG(Error, "Animated Model pose contains NaNs due to animations sampling/blending bug.");
+            context.Data = nullptr;
+            return;
+        }
+    }
+#endif
+    SkeletonData* animResultSkeleton = &skeleton;
+
+    // Retarget animation when using output pose from other skeleton
+    AnimGraphImpulse retargetNodes;
+    if (_graph.BaseModel != data.NodesSkeleton)
+    {
+        ANIM_GRAPH_PROFILE_EVENT("Retarget");
+
+        // Init nodes for the target skeleton
+        auto& targetSkeleton = data.NodesSkeleton->Skeleton;
+        retargetNodes = *animResult;
+        retargetNodes.Nodes.Resize(targetSkeleton.Nodes.Count());
+        Transform* targetNodes = retargetNodes.Nodes.Get();
+        for (int32 i = 0; i < retargetNodes.Nodes.Count(); i++)
+            targetNodes[i] = targetSkeleton.Nodes[i].LocalTransform;
+
+        // Use skeleton mapping
+        const SkinnedModel::SkeletonMapping mapping = data.NodesSkeleton->GetSkeletonMapping(_graph.BaseModel);
+        if (mapping.NodesMapping.IsValid())
+        {
+            const auto& sourceSkeleton = _graph.BaseModel->Skeleton;
+            Transform* sourceNodes = animResult->Nodes.Get();
+            for (int32 i = 0; i < retargetNodes.Nodes.Count(); i++)
+            {
+                const int32 nodeToNode = mapping.NodesMapping[i];
+                if (nodeToNode != -1)
+                {
+                    Transform node = sourceNodes[nodeToNode];
+                    RetargetSkeletonNode(sourceSkeleton, targetSkeleton, mapping, node, i);
+                    targetNodes[i] = node;
+                }
+            }
+        }
+
+        animResult = &retargetNodes;
+        animResultSkeleton = &targetSkeleton;
+    }
+
+    // Allow for external override of the local pose (eg. by the ragdoll)
+    data.LocalPoseOverride(animResult);
 
     // Calculate the global poses for the skeleton nodes
     {
         ANIM_GRAPH_PROFILE_EVENT("Global Pose");
 
-        data.NodesPose.Resize(_skeletonNodesCount, false);
+        ASSERT(animResultSkeleton->Nodes.Count() == animResult->Nodes.Count());
+        data.NodesPose.Resize(animResultSkeleton->Nodes.Count(), false);
+        Transform* nodesTransformations = animResult->Nodes.Get();
 
         // Note: this assumes that nodes are sorted (parents first)
-        for (int32 nodeIndex = 0; nodeIndex < _skeletonNodesCount; nodeIndex++)
+        for (int32 nodeIndex = 0; nodeIndex < animResultSkeleton->Nodes.Count(); nodeIndex++)
         {
-            const int32 parentIndex = skeleton.Nodes[nodeIndex].ParentIndex;
+            const int32 parentIndex = animResultSkeleton->Nodes[nodeIndex].ParentIndex;
             if (parentIndex != -1)
             {
-                nodesTransformations[nodeIndex] = nodesTransformations[parentIndex].LocalToWorld(nodesTransformations[nodeIndex]);
+                nodesTransformations[parentIndex].LocalToWorld(nodesTransformations[nodeIndex], nodesTransformations[nodeIndex]);
             }
             nodesTransformations[nodeIndex].GetWorld(data.NodesPose[nodeIndex]);
         }
@@ -295,6 +367,9 @@ void AnimGraphExecutor::Update(AnimGraphInstanceData& data, float dt)
         data.RootTransform = nodesTransformations[0];
         data.RootMotion = animResult->RootMotion;
     }
+
+    // Invoke any async anim events
+    context.Data->InvokeAnimEvents();
 
     // Cleanup
     context.Data = nullptr;
@@ -307,12 +382,12 @@ void AnimGraphExecutor::GetInputValue(Box* box, Value& result)
 
 AnimGraphImpulse* AnimGraphExecutor::GetEmptyNodes()
 {
-    return &Context.Get().EmptyNodes;
+    return &Context.Get()->EmptyNodes;
 }
 
 void AnimGraphExecutor::InitNodes(AnimGraphImpulse* nodes) const
 {
-    const auto& emptyNodes = Context.Get().EmptyNodes;
+    const auto& emptyNodes = Context.Get()->EmptyNodes;
     Platform::MemoryCopy(nodes->Nodes.Get(), emptyNodes.Nodes.Get(), sizeof(Transform) * _skeletonNodesCount);
     nodes->RootMotion = emptyNodes.RootMotion;
     nodes->Position = emptyNodes.Position;
@@ -334,12 +409,15 @@ void AnimGraphExecutor::ResetBuckets(AnimGraphContext& context, AnimGraphBase* g
 
 VisjectExecutor::Value AnimGraphExecutor::eatBox(Node* caller, Box* box)
 {
-    auto& context = Context.Get();
+    auto& context = *Context.Get();
 
     // Check if graph is looped or is too deep
+    if (context.StackOverFlow)
+        return Value::Zero;
     if (context.CallStack.Count() >= ANIM_GRAPH_MAX_CALL_STACK)
     {
         OnError(caller, box, TEXT("Graph is looped or too deep!"));
+        context.StackOverFlow = true;
         return Value::Zero;
     }
 #if !BUILD_RELEASE
@@ -354,7 +432,15 @@ VisjectExecutor::Value AnimGraphExecutor::eatBox(Node* caller, Box* box)
     context.CallStack.Add(caller);
 
 #if USE_EDITOR
-    Animations::DebugFlow(_graph._owner, context.Data->Object, box->GetParent<Node>()->ID, box->ID);
+    Animations::DebugFlowInfo flowInfo;
+    flowInfo.Asset = _graph._owner;
+    flowInfo.Instance = context.Data->Object;
+    flowInfo.NodeId = box->GetParent<Node>()->ID;
+    flowInfo.BoxId = box->ID;
+    const auto* nodePath = context.NodePath.Get();
+    for (int32 i = 0; i < context.NodePath.Count(); i++)
+        flowInfo.NodePath[i] = nodePath[i];
+    Animations::DebugFlow(flowInfo);
 #endif
 
     // Call per group custom processing event
@@ -371,6 +457,6 @@ VisjectExecutor::Value AnimGraphExecutor::eatBox(Node* caller, Box* box)
 
 VisjectExecutor::Graph* AnimGraphExecutor::GetCurrentGraph() const
 {
-    auto& context = Context.Get();
+    auto& context = *Context.Get();
     return context.GraphStack.Peek();
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,10 +8,37 @@ using FlaxEditor.Scripting;
 using FlaxEditor.Surface.Elements;
 using FlaxEditor.Utilities;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 using Utils = FlaxEditor.Utilities.Utils;
 
 namespace FlaxEditor.Surface
 {
+    /// <summary>
+    /// Types of surface actions.
+    /// </summary>
+    public enum SurfaceNodeActions
+    {
+        /// <summary>
+        /// Node has been created by surface load.
+        /// </summary>
+        Load,
+
+        /// <summary>
+        /// Node has been created/deleted by user action.
+        /// </summary>
+        User,
+
+        /// <summary>
+        /// Node has been created/deleted via undo.
+        /// </summary>
+        Undo,
+
+        /// <summary>
+        /// Node has been pasted.
+        /// </summary>
+        Paste,
+    }
+
     /// <summary>
     /// The missing node. Cached the node group, type and stored values information.
     /// </summary>
@@ -26,7 +53,7 @@ namespace FlaxEditor.Surface
             Title = "Missing Node :(",
             Description = ":(",
             Flags = NodeFlags.AllGraphs,
-            Size = new Vector2(200, 70),
+            Size = new Float2(200, 70),
             Elements = new NodeElementArchetype[0],
             DefaultValues = new object[32],
         }, new GroupArchetype
@@ -77,7 +104,8 @@ namespace FlaxEditor.Surface
         /// <returns>True if failed, otherwise false.</returns>
         public bool Load()
         {
-            Surface._isUpdatingBoxTypes++;
+            if (_surface != null)
+                _surface._isUpdatingBoxTypes++;
 
             try
             {
@@ -110,7 +138,7 @@ namespace FlaxEditor.Surface
                 else
                 {
                     // Reset view
-                    CachedSurfaceMeta.ViewCenterPosition = Vector2.Zero;
+                    CachedSurfaceMeta.ViewCenterPosition = Float2.Zero;
                     CachedSurfaceMeta.Scale = 1.0f;
                 }
 
@@ -133,7 +161,7 @@ namespace FlaxEditor.Surface
                             if (comment == null)
                                 throw new InvalidOperationException("Failed to create comment.");
 
-                            OnControlLoaded(comment);
+                            OnControlLoaded(comment, SurfaceNodeActions.Load);
                         }
                     }
                 }
@@ -142,7 +170,7 @@ namespace FlaxEditor.Surface
                 for (int i = 0; i < RootControl.Children.Count; i++)
                 {
                     if (RootControl.Children[i] is SurfaceControl control)
-                        control.OnSurfaceLoaded();
+                        control.OnSurfaceLoaded(SurfaceNodeActions.Load);
                 }
 
                 RootControl.UnlockChildrenRecursive();
@@ -178,7 +206,8 @@ namespace FlaxEditor.Surface
             }
             finally
             {
-                Surface._isUpdatingBoxTypes--;
+                if (_surface != null)
+                    _surface._isUpdatingBoxTypes--;
             }
 
             return false;
@@ -308,9 +337,9 @@ namespace FlaxEditor.Surface
             case GraphParamType_Deprecated.Bool: return typeof(bool);
             case GraphParamType_Deprecated.Integer: return typeof(int);
             case GraphParamType_Deprecated.Float: return typeof(float);
-            case GraphParamType_Deprecated.Vector2: return typeof(Vector2);
-            case GraphParamType_Deprecated.Vector3: return typeof(Vector3);
-            case GraphParamType_Deprecated.Vector4: return typeof(Vector4);
+            case GraphParamType_Deprecated.Vector2: return typeof(Float2);
+            case GraphParamType_Deprecated.Vector3: return typeof(Float3);
+            case GraphParamType_Deprecated.Vector4: return typeof(Float4);
             case GraphParamType_Deprecated.Color: return typeof(Color);
             case GraphParamType_Deprecated.Texture: return typeof(Texture);
             case GraphParamType_Deprecated.NormalMap: return typeof(Texture);
@@ -342,9 +371,9 @@ namespace FlaxEditor.Surface
             case GraphConnectionType_Deprecated.Bool: return typeof(bool);
             case GraphConnectionType_Deprecated.Integer: return typeof(int);
             case GraphConnectionType_Deprecated.Float: return typeof(float);
-            case GraphConnectionType_Deprecated.Vector2: return typeof(Vector2);
-            case GraphConnectionType_Deprecated.Vector3: return typeof(Vector3);
-            case GraphConnectionType_Deprecated.Vector4: return typeof(Vector4);
+            case GraphConnectionType_Deprecated.Vector2: return typeof(Float2);
+            case GraphConnectionType_Deprecated.Vector3: return typeof(Float3);
+            case GraphConnectionType_Deprecated.Vector4: return typeof(Float4);
             case GraphConnectionType_Deprecated.String: return typeof(string);
             case GraphConnectionType_Deprecated.Object: return typeof(FlaxEngine.Object);
             case GraphConnectionType_Deprecated.Rotation: return typeof(Quaternion);
@@ -445,6 +474,9 @@ namespace FlaxEditor.Surface
         {
             // IMPORTANT! This must match C++ Graph format
 
+            var nodeArchetypes = _surface?.NodeArchetypes ?? NodeFactory.DefaultGroups;
+            var customNodes = _surface?.GetCustomNodes();
+
             // Magic Code
             int tmp = stream.ReadInt32();
             if (tmp != 1963542358)
@@ -489,7 +521,7 @@ namespace FlaxEditor.Surface
                     if (groupId == Archetypes.Custom.GroupID)
                         node = new DummyCustomNode(id, this);
                     else
-                        node = NodeFactory.CreateNode(_surface.NodeArchetypes, id, this, groupId, typeId);
+                        node = NodeFactory.CreateNode(nodeArchetypes, id, this, groupId, typeId);
                     if (node == null)
                         node = new MissingNode(id, this, groupId, typeId);
                     Nodes.Add(node);
@@ -550,7 +582,6 @@ namespace FlaxEditor.Surface
                         string typeName = typeNameValue as string ?? string.Empty;
 
                         // Find custom node archetype that matches this node type (it must be unique)
-                        var customNodes = _surface.GetCustomNodes();
                         if (customNodes?.Archetypes != null && typeName.Length != 0)
                         {
                             NodeArchetype arch = null;
@@ -645,7 +676,7 @@ namespace FlaxEditor.Surface
                     // Meta
                     node.Meta.Load(stream);
 
-                    OnControlLoaded(node);
+                    OnControlLoaded(node, SurfaceNodeActions.Load);
                 }
             }
             else if (version == 7000)
@@ -674,7 +705,7 @@ namespace FlaxEditor.Surface
                     if (groupId == Archetypes.Custom.GroupID)
                         node = new DummyCustomNode(id, this);
                     else
-                        node = NodeFactory.CreateNode(_surface.NodeArchetypes, id, this, groupId, typeId);
+                        node = NodeFactory.CreateNode(nodeArchetypes, id, this, groupId, typeId);
                     if (node == null)
                         node = new MissingNode(id, this, groupId, typeId);
                     Nodes.Add(node);
@@ -722,7 +753,6 @@ namespace FlaxEditor.Surface
                         string typeName = typeNameValue as string ?? string.Empty;
 
                         // Find custom node archetype that matches this node type (it must be unique)
-                        var customNodes = _surface.GetCustomNodes();
                         if (customNodes?.Archetypes != null && typeName.Length != 0)
                         {
                             NodeArchetype arch = null;
@@ -809,7 +839,7 @@ namespace FlaxEditor.Surface
                     // Meta
                     node.Meta.Load(stream);
 
-                    OnControlLoaded(node);
+                    OnControlLoaded(node, SurfaceNodeActions.Load);
                 }
             }
             else
@@ -852,11 +882,12 @@ namespace FlaxEditor.Surface
         /// Called when control gets added to the surface as spawn operation (eg. add new comment or add new node).
         /// </summary>
         /// <param name="control">The control.</param>
-        public virtual void OnControlSpawned(SurfaceControl control)
+        /// <param name="action">The action node.</param>
+        public virtual void OnControlSpawned(SurfaceControl control, SurfaceNodeActions action)
         {
-            control.OnSpawned();
+            control.OnSpawned(action);
             ControlSpawned?.Invoke(control);
-            if (control is SurfaceNode node)
+            if (Surface != null && control is SurfaceNode node)
                 Surface.OnNodeSpawned(node);
         }
 
@@ -864,10 +895,11 @@ namespace FlaxEditor.Surface
         /// Called when control gets removed from the surface as delete/cut operation (eg. remove comment or cut node).
         /// </summary>
         /// <param name="control">The control.</param>
-        public virtual void OnControlDeleted(SurfaceControl control)
+        /// <param name="action">The action node.</param>
+        public virtual void OnControlDeleted(SurfaceControl control, SurfaceNodeActions action)
         {
             ControlDeleted?.Invoke(control);
-            control.OnDeleted();
+            control.OnDeleted(action);
             if (control is SurfaceNode node)
                 Surface.OnNodeDeleted(node);
         }
@@ -876,30 +908,26 @@ namespace FlaxEditor.Surface
         /// Called when control gets loaded and should be added to the surface. Handles surface nodes initialization.
         /// </summary>
         /// <param name="control">The control.</param>
-        public virtual void OnControlLoaded(SurfaceControl control)
+        /// <param name="action">The action node.</param>
+        public virtual void OnControlLoaded(SurfaceControl control, SurfaceNodeActions action)
         {
             if (control is SurfaceNode node)
             {
                 // Initialize node
-                OnNodeLoaded(node);
+                OnNodeLoaded(node, action);
             }
 
             // Link control
-            control.OnLoaded();
+            control.OnLoaded(action);
             control.Parent = RootControl;
-
-            if (control is SurfaceComment)
-            {
-                // Move comments to the background
-                control.IndexInParent = 0;
-            }
         }
 
         /// <summary>
         /// Called when node gets loaded and should be added to the surface. Creates node elements from the archetype.
         /// </summary>
         /// <param name="node">The node.</param>
-        public virtual void OnNodeLoaded(SurfaceNode node)
+        /// <param name="action">The action node.</param>
+        public virtual void OnNodeLoaded(SurfaceNode node, SurfaceNodeActions action)
         {
             // Create child elements of the node based on it's archetype
             int elementsCount = node.Archetype.Elements?.Length ?? 0;

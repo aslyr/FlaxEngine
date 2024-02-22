@@ -1,9 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Script.h"
 #include "Engine/Core/Log.h"
 #if USE_EDITOR
-#include "StdTypesContainer.h"
+#include "Internal/StdTypesContainer.h"
 #include "ManagedCLR/MClass.h"
 #include "Editor/Editor.h"
 #endif
@@ -26,6 +26,8 @@ Script::Script(const SpawnParams& params)
     , _tickFixedUpdate(false)
     , _tickUpdate(false)
     , _tickLateUpdate(false)
+    , _tickLateFixedUpdate(false)
+    , _wasAwakeCalled(false)
     , _wasStartCalled(false)
     , _wasEnableCalled(false)
 {
@@ -85,7 +87,7 @@ void Script::SetParent(Actor* value, bool canBreakPrefabLink)
     // Unlink from the old one
     if (_parent)
     {
-        if (!value && _parent->IsDuringPlay() && _parent->IsActiveInHierarchy() && GetEnabled())
+        if (!value && _parent->IsDuringPlay() && _parent->IsActiveInHierarchy() && GetEnabled() && _wasEnableCalled)
         {
             // Call disable when script is removed from actor (new actor is null)
             Disable();
@@ -114,7 +116,7 @@ void Script::SetParent(Actor* value, bool canBreakPrefabLink)
     if (value && value->IsDuringPlay() && !IsDuringPlay())
     {
         // Prepare for gameplay
-        PostSpawn();
+        Initialize();
         {
             SceneBeginData beginData;
             BeginPlay(&beginData);
@@ -122,10 +124,6 @@ void Script::SetParent(Actor* value, bool canBreakPrefabLink)
         }
 
         // Fire events for scripting
-        CHECK_EXECUTE_IN_EDITOR
-        {
-            OnAwake();
-        }
         if (GetEnabled())
         {
             Start();
@@ -185,6 +183,7 @@ void Script::SetupType()
             _tickUpdate |= type.Script.ScriptVTable[8] != nullptr;
             _tickLateUpdate |= type.Script.ScriptVTable[9] != nullptr;
             _tickFixedUpdate |= type.Script.ScriptVTable[10] != nullptr;
+            _tickLateFixedUpdate |= type.Script.ScriptVTable[11] != nullptr;
         }
         typeHandle = type.GetBaseType();
     }
@@ -243,18 +242,30 @@ String Script::ToString() const
 
 void Script::OnDeleteObject()
 {
-    // Ensure to unlink from the parent (it will call Disable event if required)
-    SetParent(nullptr);
-
-    // Check if remove object from game
-    if (IsDuringPlay())
+    // Call OnDisable
+    if (_wasEnableCalled)
     {
+        Disable();
+    }
+
+    // Call OnDestroy
+    if (_wasAwakeCalled)
+    {
+        _wasAwakeCalled = false;
         CHECK_EXECUTE_IN_EDITOR
         {
             OnDestroy();
         }
+    }
+
+    // End play
+    if (IsDuringPlay())
+    {
         EndPlay();
     }
+
+    // Unlink from parent
+    SetParent(nullptr);
 
     // Base
     SceneObject::OnDeleteObject();
@@ -265,24 +276,26 @@ const Guid& Script::GetSceneObjectId() const
     return GetID();
 }
 
-void Script::PostLoad()
+void Script::Initialize()
 {
-    if (Flags & ObjectFlags::IsManagedType || Flags & ObjectFlags::IsCustomScriptingType)
+    ASSERT(!IsDuringPlay());
+
+    if (EnumHasAnyFlags(Flags, ObjectFlags::IsManagedType | ObjectFlags::IsCustomScriptingType))
         SetupType();
 
     // Use lazy creation for the managed instance, just register the object
     if (!IsRegistered())
         RegisterObject();
-}
 
-void Script::PostSpawn()
-{
-    if (Flags & ObjectFlags::IsManagedType || Flags & ObjectFlags::IsCustomScriptingType)
-        SetupType();
-
-    // Create managed object
-    if (!HasManagedInstance())
-        CreateManaged();
+    // Call OnAwake
+    if (!_wasAwakeCalled)
+    {
+        _wasAwakeCalled = true;
+        CHECK_EXECUTE_IN_EDITOR
+        {
+            OnAwake();
+        }
+    }
 }
 
 void Script::BeginPlay(SceneBeginData* data)

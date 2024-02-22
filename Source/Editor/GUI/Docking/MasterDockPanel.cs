@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEngine;
@@ -78,7 +78,7 @@ namespace FlaxEditor.GUI.Docking
         /// <param name="position">Screen space position to test.</param>
         /// <param name="excluded">Floating window to omit during searching (and all docked to that one).</param>
         /// <returns>Dock panel that has been hit or null if nothing found.</returns>
-        public DockPanel HitTest(ref Vector2 position, FloatWindowDockPanel excluded)
+        public DockPanel HitTest(ref Float2 position, FloatWindowDockPanel excluded)
         {
             // Check all floating windows
             // TODO: gather windows order and take it into account when performing test
@@ -132,7 +132,7 @@ namespace FlaxEditor.GUI.Docking
         public override DockState TryGetDockState(out float splitterValue)
         {
             splitterValue = 0.5f;
-            return DockState.Unknown;
+            return DockState.DockFill;
         }
     }
 }

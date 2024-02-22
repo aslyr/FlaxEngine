@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEditor.GUI;
@@ -23,6 +23,16 @@ namespace FlaxEditor.Content
         /// The folder.
         /// </summary>
         protected ContentFolder _folder;
+
+        /// <summary>
+        /// Whether this node can be deleted.
+        /// </summary>
+        public virtual bool CanDelete => true;
+        
+        /// <summary>
+        /// Whether this node can be duplicated.
+        /// </summary>
+        public virtual bool CanDuplicate => true;
 
         /// <summary>
         /// Gets the content folder item.
@@ -86,6 +96,7 @@ namespace FlaxEditor.Content
                 Folder.ParentFolder = parent.Folder;
                 Parent = parent;
             }
+            IconColor = Style.Current.Foreground;
         }
 
         /// <summary>
@@ -97,9 +108,15 @@ namespace FlaxEditor.Content
                 return;
 
             // Start renaming the folder
-            var dialog = RenamePopup.Show(this, HeaderRect, _folder.ShortName, false);
+            Editor.Instance.Windows.ContentWin.ScrollingOnTreeView(false);
+            var dialog = RenamePopup.Show(this, TextRect, _folder.ShortName, false);
             dialog.Tag = _folder;
-            dialog.Renamed += popup => Editor.Instance.Windows.ContentWin.Rename((ContentFolder)popup.Tag, popup.Text);
+            dialog.Renamed += popup =>
+            {
+                Editor.Instance.Windows.ContentWin.Rename((ContentFolder)popup.Tag, popup.Text);
+                Editor.Instance.Windows.ContentWin.ScrollingOnTreeView(true);
+            };
+            dialog.Closed += popup => { Editor.Instance.Windows.ContentWin.ScrollingOnTreeView(true); };
         }
 
         /// <summary>
@@ -294,7 +311,7 @@ namespace FlaxEditor.Content
                     StartRenaming();
                     return true;
                 case KeyboardKeys.Delete:
-                    if (Folder.Exists)
+                    if (Folder.Exists && CanDelete)
                         Editor.Instance.Windows.ContentWin.Delete(Folder);
                     return true;
                 }
@@ -303,7 +320,7 @@ namespace FlaxEditor.Content
                     switch (key)
                     {
                     case KeyboardKeys.D:
-                        if (Folder.Exists)
+                        if (Folder.Exists && CanDuplicate)
                             Editor.Instance.Windows.ContentWin.Duplicate(Folder);
                         return true;
                     }

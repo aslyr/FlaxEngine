@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -75,6 +75,7 @@ public:
         {
             struct
             {
+                bool SupportDX12;
                 bool SupportDX11;
                 bool SupportDX10;
                 bool SupportVulkan;
@@ -96,6 +97,9 @@ public:
                 bool ShadersNoOptimize;
                 bool ShadersGenerateDebugData;
                 Guid StreamingSettingsAssetId;
+                int32 ShadersVersion;
+                int32 MaterialGraphVersion;
+                int32 ParticleGraphVersion;
             } Global;
         } Settings;
 
@@ -140,7 +144,7 @@ public:
         /// <summary>
         /// Removes all cached entries for assets that contain a texture. This forces rebuild for them.
         /// </summary>
-        void InvalidateTextures();
+        void InvalidateCachePerType(const StringView& typeName);
 
         /// <summary>
         /// Loads the cache for the given cooking data.

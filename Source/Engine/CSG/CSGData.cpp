@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "CSGData.h"
 #include "Brush.h"
@@ -88,9 +88,9 @@ void RawData::AddSurface(Brush* brush, int32 brushSurfaceIndex, const Guid& surf
     for (int32 i = 0; i < vertexCount;)
     {
         auto& triangle = triangles[i / 3];
-        triangle.V0 = firstVertex[i++].Position;
-        triangle.V1 = firstVertex[i++].Position;
-        triangle.V2 = firstVertex[i++].Position;
+        triangle.V[0] = firstVertex[i++].Position;
+        triangle.V[1] = firstVertex[i++].Position;
+        triangle.V[2] = firstVertex[i++].Position;
     }
 }
 

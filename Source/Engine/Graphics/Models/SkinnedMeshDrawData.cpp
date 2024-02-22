@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SkinnedMeshDrawData.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Animations/Config.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Matrix.h"
 #include "Engine/Core/Math/Matrix3x4.h"
 
@@ -83,13 +84,4 @@ void SkinnedMeshDrawData::OnDataChanged(bool dropHistory)
 
     _isDirty = true;
     _hasValidData = true;
-}
-
-void SkinnedMeshDrawData::Flush(GPUContext* context)
-{
-    if (_isDirty)
-    {
-        _isDirty = false;
-        context->UpdateBuffer(BoneMatrices, Data.Get(), Data.Count());
-    }
 }

@@ -1,6 +1,7 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Screenshot.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Platform/FileSystem.h"
@@ -9,7 +10,6 @@
 #include "Engine/Graphics/GPUResourceProperty.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUSwapChain.h"
-#include "Engine/Engine/Engine.h"
 #include "Engine/Threading/ThreadPoolTask.h"
 #include "Engine/Engine/Globals.h"
 #if COMPILE_WITH_TEXTURE_TOOL
@@ -24,7 +24,6 @@ class CaptureScreenshot : public ThreadPoolTask
 {
     friend Screenshot;
 private:
-
     TextureData _data;
     GPUTextureReference _texture;
     ScriptingObjectReference<RenderTask> _renderTask;
@@ -32,7 +31,6 @@ private:
     DateTime _startTime;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="CaptureScreenshot"/> class.
     /// </summary>
@@ -60,7 +58,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the texture data container.
     /// </summary>
@@ -71,7 +68,6 @@ public:
     }
 
 protected:
-
     // [ThreadPoolTask]
     bool Run() override;
     void OnFail() override;

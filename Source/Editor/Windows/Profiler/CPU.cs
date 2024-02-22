@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -19,21 +19,17 @@ namespace FlaxEngine
             {
                 get
                 {
-                    fixed (char* name = &Name0)
-                    {
-                        return new string(name);
-                    }
+                    fixed (short* name = Name0)
+                        return new string((char*)name);
                 }
             }
 
             internal unsafe bool NameStartsWith(string prefix)
             {
-                fixed (char* name = &Name0)
+                fixed (short* name = Name0)
                 {
                     fixed (char* p = prefix)
-                    {
                         return Utils.MemoryCompare(new IntPtr(name), new IntPtr(p), (ulong)(prefix.Length * 2)) == 0;
-                    }
                 }
             }
         }
@@ -92,7 +88,9 @@ namespace FlaxEditor.Windows.Profiler
             };
 
             // Table
-            var headerColor = Style.Current.LightBackground;
+            var style = Style.Current;
+            var headerColor = style.LightBackground;
+            var textColor = style.Foreground;
             _table = new Table
             {
                 Columns = new[]
@@ -103,36 +101,42 @@ namespace FlaxEditor.Windows.Profiler
                         CellAlignment = TextAlignment.Near,
                         Title = "Event",
                         TitleBackgroundColor = headerColor,
+                        TitleColor = textColor,
                     },
                     new ColumnDefinition
                     {
                         Title = "Total",
                         TitleBackgroundColor = headerColor,
                         FormatValue = FormatCellPercentage,
+                        TitleColor = textColor,
                     },
                     new ColumnDefinition
                     {
                         Title = "Self",
                         TitleBackgroundColor = headerColor,
                         FormatValue = FormatCellPercentage,
+                        TitleColor = textColor,
                     },
                     new ColumnDefinition
                     {
                         Title = "Time ms",
                         TitleBackgroundColor = headerColor,
                         FormatValue = FormatCellMs,
+                        TitleColor = textColor,
                     },
                     new ColumnDefinition
                     {
                         Title = "Self ms",
                         TitleBackgroundColor = headerColor,
                         FormatValue = FormatCellMs,
+                        TitleColor = textColor,
                     },
                     new ColumnDefinition
                     {
                         Title = "Memory",
                         TitleBackgroundColor = headerColor,
                         FormatValue = FormatCellBytes,
+                        TitleColor = textColor,
                     },
                 },
                 Parent = layout,
@@ -197,7 +201,7 @@ namespace FlaxEditor.Windows.Profiler
             if (_tableRowsCache == null)
                 _tableRowsCache = new List<Row>();
 
-            var viewRange = GetEventsViewRange();
+            var viewRange = _showOnlyLastUpdateEvents ? GetMainThreadUpdateRange() : ViewRange.Full;
             UpdateTimeline(ref viewRange);
             UpdateTable(ref viewRange);
         }
@@ -205,7 +209,6 @@ namespace FlaxEditor.Windows.Profiler
         /// <inheritdoc />
         public override void OnDestroy()
         {
-            Clear();
             _timelineLabelsCache?.Clear();
             _timelineEventsCache?.Clear();
             _tableRowsCache?.Clear();
@@ -236,36 +239,27 @@ namespace FlaxEditor.Windows.Profiler
             }
         }
 
-        private ViewRange GetEventsViewRange()
+        private ViewRange GetMainThreadUpdateRange()
         {
-            if (_showOnlyLastUpdateEvents)
+            if (_events != null && _events.Count != 0)
             {
-                // Find root event named 'Update' and use it as a view range
-                if (_events != null && _events.Count != 0)
+                var threads = _events.Get(_mainChart.SelectedSampleIndex);
+                if (threads != null)
                 {
-                    var data = _events.Get(_mainChart.SelectedSampleIndex);
-                    if (data != null)
+                    for (int j = 0; j < threads.Length; j++)
                     {
-                        for (int j = 0; j < data.Length; j++)
+                        var thread = threads[j];
+                        if (thread.Name != "Main" || thread.Events == null)
+                            continue;
+                        for (int i = 0; i < thread.Events.Length; i++)
                         {
-                            var events = data[j].Events;
-                            if (events == null)
-                                continue;
-
-                            for (int i = 0; i < events.Length; i++)
-                            {
-                                var e = events[i];
-
-                                if (e.Depth == 0 && e.Name == "Update")
-                                {
-                                    return new ViewRange(ref e);
-                                }
-                            }
+                            ref var e = ref thread.Events[i];
+                            if (e.Depth == 0 && e.Name == "Update")
+                                return new ViewRange(ref e);
                         }
                     }
                 }
             }
-
             return ViewRange.Full;
         }
 
@@ -353,13 +347,28 @@ namespace FlaxEditor.Windows.Profiler
 
             // Find the first event start time (for the timeline start time)
             double startTime = double.MaxValue;
-            for (int i = 0; i < data.Length; i++)
+            if (viewRange.Start > 0)
             {
-                if (data[i].Events != null && data[i].Events.Length != 0)
-                    startTime = Math.Min(startTime, data[i].Events[0].Start);
+                startTime = viewRange.Start;
             }
-            if (startTime >= double.MaxValue)
-                return 0;
+            else
+            {
+                var r = GetMainThreadUpdateRange();
+                if (r.Start > 0)
+                {
+                    startTime = r.Start;
+                }
+                else
+                {
+                    for (int i = 0; i < data.Length; i++)
+                    {
+                        if (data[i].Events != null && data[i].Events.Length != 0)
+                            startTime = Math.Min(startTime, data[i].Events[0].Start);
+                    }
+                    if (startTime >= double.MaxValue)
+                        return 0;
+                }
+            }
 
             var container = _timeline.EventsContainer;
 
@@ -424,21 +433,8 @@ namespace FlaxEditor.Windows.Profiler
         private void UpdateTable(ref ViewRange viewRange)
         {
             _table.IsLayoutLocked = true;
-            int idx = 0;
-            while (_table.Children.Count > idx)
-            {
-                var child = _table.Children[idx];
-                if (child is Row row)
-                {
-                    _tableRowsCache.Add(row);
-                    child.Parent = null;
-                }
-                else
-                {
-                    idx++;
-                }
-            }
 
+            RecycleTableRows(_table, _tableRowsCache);
             UpdateTableInner(ref viewRange);
 
             _table.UnlockChildrenRecursive();
@@ -452,7 +448,6 @@ namespace FlaxEditor.Windows.Profiler
             var data = _events.Get(_mainChart.SelectedSampleIndex);
             if (data == null || data.Length == 0)
                 return;
-
             float totalTimeMs = _mainChart.SelectedSample;
 
             // Add rows
@@ -501,17 +496,24 @@ namespace FlaxEditor.Windows.Profiler
                         row = new Row
                         {
                             Values = new object[6],
+                            BackgroundColors = new Color[6],
                         };
+                        for (int k = 0; k < row.BackgroundColors.Length; k++)
+                            row.BackgroundColors[k] = Color.Transparent;
                     }
                     {
                         // Event
                         row.Values[0] = name;
 
                         // Total (%)
-                        row.Values[1] = (int)(time / totalTimeMs * 1000.0f) / 10.0f;
+                        float rowTotalTimePerc = (float)(time / totalTimeMs);
+                        row.Values[1] = (int)(rowTotalTimePerc * 1000.0f) / 10.0f;
+                        row.BackgroundColors[1] = Color.Red.AlphaMultiplied(Mathf.Min(1, rowTotalTimePerc) * 0.5f);
 
                         // Self (%)
-                        row.Values[2] = (int)((time - subEventsTimeTotal) / time * 1000.0f) / 10.0f;
+                        float rowSelfTimePerc = (float)((time - subEventsTimeTotal) / totalTimeMs);
+                        row.Values[2] = (int)(rowSelfTimePerc * 1000.0f) / 10.0f;
+                        row.BackgroundColors[2] = Color.Red.AlphaMultiplied(Mathf.Min(1, rowSelfTimePerc) * 0.5f);
 
                         // Time ms
                         row.Values[3] = (float)((time * 10000.0f) / 10000.0f);

@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2022 Wojciech Figat. All rights reserved.
 
 #include "ShaderAssetBase.h"
 #include "ShaderStorage.h"
 #include "ShaderCacheManager.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
@@ -113,22 +114,20 @@ bool ShaderAssetBase::Save()
 
 bool IsValidShaderCache(DataContainer<byte>& shaderCache, Array<String>& includes)
 {
+    if (shaderCache.Length() == 0)
+        return false;
     MemoryReadStream stream(shaderCache.Get(), shaderCache.Length());
 
     // Read cache format version
     int32 version;
     stream.ReadInt32(&version);
     if (version != GPU_SHADER_CACHE_VERSION)
-    {
         return false;
-    }
 
     // Read the location of additional data that contains list of included source files
     int32 additionalDataStart;
     stream.ReadInt32(&additionalDataStart);
     stream.SetPosition(additionalDataStart);
-
-    bool result = true;
 
     // Read all includes
     int32 includesCount;
@@ -138,28 +137,16 @@ bool IsValidShaderCache(DataContainer<byte>& shaderCache, Array<String>& include
     {
         String& include = includes.AddOne();
         stream.ReadString(&include, 11);
+        include  = ShadersCompilation::ResolveShaderPath(include);
         DateTime lastEditTime;
-        stream.Read(&lastEditTime);
+        stream.Read(lastEditTime);
 
         // Check if included file exists locally and has been modified since last compilation
         if (FileSystem::FileExists(include) && FileSystem::GetFileLastEditTime(include) > lastEditTime)
-        {
-            result = false;
-        }
+            return false;
     }
 
-#if 0
-    // Check duplicates
-    for (int32 i = 0; i < includes.Count(); i++)
-    {
-        if (includes.FindLast(includes[i]) != i)
-        {
-            CRASH;
-        }
-    }
-#endif
-
-    return result;
+    return true;
 }
 
 #endif
@@ -270,20 +257,29 @@ bool ShaderAssetBase::LoadShaderCache(ShaderCacheResult& result)
         platformDefine.Name = "PLATFORM_WINDOWS";
 #elif PLATFORM_LINUX
         platformDefine.Name = "PLATFORM_LINUX";
+#elif PLATFORM_MAC
+        platformDefine.Name = "PLATFORM_MAC";
 #else
 #error "Unknown platform."
 #endif
-        platformDefine.Definition = nullptr;
+        platformDefine.Definition = "1";
+#if USE_EDITOR
+        auto& editorDefine = options.Macros.AddOne();
+        editorDefine.Name = "USE_EDITOR";
+        editorDefine.Definition = "1";
+#endif
         InitCompilationOptions(options);
-        if (ShadersCompilation::Compile(options))
+        const bool failed = ShadersCompilation::Compile(options);
+
+        // Encrypt source code
+        Encryption::EncryptBytes(reinterpret_cast<byte*>(source), sourceLength);
+
+        if (failed)
         {
             LOG(Error, "Failed to compile shader '{0}'", parent->ToString());
             return true;
         }
         LOG(Info, "Shader '{0}' compiled! Cache size: {1} bytes", parent->ToString(), cacheStream.GetPosition());
-
-        // Encrypt source code
-        Encryption::EncryptBytes(reinterpret_cast<byte*>(source), sourceLength);
 
         // Save compilation result (based on current caching policy)
         if (cachingMode == ShaderStorage::CachingMode::AssetInternal)
@@ -338,7 +334,7 @@ bool ShaderAssetBase::LoadShaderCache(ShaderCacheResult& result)
         result.Data.Link(cacheChunk->Data);
     }
 #if COMPILE_WITH_SHADER_CACHE_MANAGER
-        // Check if has cached shader
+    // Check if has cached shader
     else if (cachedEntry.IsValid() || ShaderCacheManager::TryGetEntry(shaderProfile, parent->GetID(), cachedEntry))
     {
         // Load results from cache

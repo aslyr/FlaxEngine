@@ -1,18 +1,52 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #if PLATFORM_ANDROID || USE_EDITOR
 
 #include "Engine/Core/Config/PlatformSettingsBase.h"
+#include "Engine/Scripting/SoftObjectReference.h"
+
+class Texture;
 
 /// <summary>
 /// Android platform settings.
 /// </summary>
 API_CLASS(sealed, Namespace="FlaxEditor.Content.Settings") class FLAXENGINE_API AndroidPlatformSettings : public SettingsBase
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(AndroidPlatformSettings);
-public:
+    DECLARE_SCRIPTING_TYPE_MINIMAL(AndroidPlatformSettings);
+    API_AUTO_SERIALIZATION();
+
+    /// <summary>
+    /// Android screen orientation options.
+    /// </summary>
+    API_ENUM() enum class FLAXENGINE_API ScreenOrientation
+    {
+        /// <summary>
+        /// "portrait" mode
+        /// </summary>
+        Portrait,
+
+        /// <summary>
+        /// "reversePortrait" mode
+        /// </summary>
+        PortraitReverse,
+
+        /// <summary>
+        /// "landscape" mode
+        /// </summary>
+        LandscapeRight,
+
+        /// <summary>
+        /// "reverseLandscape" mode
+        /// </summary>
+        LandscapeLeft,
+
+        /// <summary>
+        /// "fullSensor" mode
+        /// </summary>
+        AutoRotation,
+    };
 
     /// <summary>
     /// The application package name (eg. com.company.product). Custom tokens: ${PROJECT_NAME}, ${COMPANY_NAME}.
@@ -27,25 +61,21 @@ public:
     Array<String> Permissions;
 
     /// <summary>
-    /// Custom icon texture (asset id) to use for the application (overrides the default one).
+    /// The default screen orientation.
     /// </summary>
-    API_FIELD(Attributes="EditorOrder(1030), CustomEditorAlias(\"FlaxEditor.CustomEditors.Editors.AssetRefEditor\"), AssetReference(typeof(Texture)), EditorDisplay(\"Other\")")
-    Guid OverrideIcon;
+    API_FIELD(Attributes = "EditorOrder(110), EditorDisplay(\"General\")")
+    ScreenOrientation DefaultOrientation = ScreenOrientation::AutoRotation;
 
-public:
+    /// <summary>
+    /// Custom icon texture to use for the application (overrides the default one).
+    /// </summary>
+    API_FIELD(Attributes="EditorOrder(1030), EditorDisplay(\"Other\")")
+    SoftObjectReference<Texture> OverrideIcon;
 
     /// <summary>
     /// Gets the instance of the settings asset (default value if missing). Object returned by this method is always loaded with valid data to use.
     /// </summary>
     static AndroidPlatformSettings* Get();
-
-    // [SettingsBase]
-    void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) final override
-    {
-        DESERIALIZE(PackageName);
-        DESERIALIZE(Permissions);
-        DESERIALIZE(OverrideIcon);
-    }
 };
 
 #if PLATFORM_ANDROID

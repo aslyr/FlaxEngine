@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -28,6 +28,7 @@ public class mono : DepsModule
         base.Setup(options);
 
         var depsRoot = options.DepsFolder;
+        options.PublicIncludePaths.Add(Path.Combine(Globals.EngineRoot, @"Source\ThirdParty\mono-2.0"));
 
         switch (options.Platform.Target)
         {
@@ -76,6 +77,7 @@ public class mono : DepsModule
             options.Libraries.Add(Path.Combine(depsRoot, "libmonosgen-2.0.so"));
             break;
         case TargetPlatform.PS4:
+        case TargetPlatform.PS5:
             options.OutputFiles.Add(Path.Combine(depsRoot, "libmono.a"));
             options.OutputFiles.Add(Path.Combine(depsRoot, "libmonoruntime.a"));
             options.OutputFiles.Add(Path.Combine(depsRoot, "libmonoutils.a"));
@@ -89,11 +91,13 @@ public class mono : DepsModule
         case TargetPlatform.Switch:
             options.OutputFiles.Add(Path.Combine(depsRoot, "libmonosgen-2.0.a"));
             break;
+        case TargetPlatform.Mac:
+            options.PublicDefinitions.Add("USE_MONO_DYNAMIC_LIB");
+            options.DependencyFiles.Add(Path.Combine(depsRoot, "libmonosgen-2.0.1.dylib"));
+            options.Libraries.Add(Path.Combine(depsRoot, "libmonosgen-2.0.1.dylib"));
+            break;
         default: throw new InvalidPlatformException(options.Platform.Target);
         }
-
-        // TODO: remove hardcoded include path for all modules and use this public thing to pass include only to modules that use it
-        //options.PublicIncludePaths.Add(Path.Combine(Globals.EngineRoot, @"Source\ThirdParty\mono-2.0"));
     }
 
     /// <inheritdoc />

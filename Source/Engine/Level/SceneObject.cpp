@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SceneObject.h"
 #include "Engine/Core/Log.h"
@@ -6,7 +6,7 @@
 #include "Engine/Content/Content.h"
 #include "Engine/Level/Prefabs/Prefab.h"
 #include "Engine/Scripting/BinaryModule.h"
-#include "Engine/Scripting/ManagedSerialization.h"
+#include "Engine/Scripting/Internal/ManagedSerialization.h"
 #include "Engine/Serialization/ISerializeModifier.h"
 #include "Engine/Serialization/Serialization.h"
 
@@ -117,8 +117,9 @@ void SceneObject::Serialize(SerializeStream& stream, const void* otherObj)
         stream.Guid(_parent->GetID());
     }
 
+#if !COMPILE_WITHOUT_CSHARP
     // Handle C# objects data serialization
-    if (Flags & ObjectFlags::IsManagedType)
+    if (EnumHasAnyFlags(Flags, ObjectFlags::IsManagedType))
     {
         stream.JKEY("V");
         if (other)
@@ -130,9 +131,10 @@ void SceneObject::Serialize(SerializeStream& stream, const void* otherObj)
             ManagedSerialization::Serialize(stream, GetOrCreateManagedInstance());
         }
     }
+#endif
 
     // Handle custom scripting objects data serialization
-    if (Flags & ObjectFlags::IsCustomScriptingType)
+    if (EnumHasAnyFlags(Flags, ObjectFlags::IsCustomScriptingType))
     {
         stream.JKEY("D");
         _type.Module->SerializeObject(stream, this, other);
@@ -146,8 +148,9 @@ void SceneObject::Deserialize(DeserializeStream& stream, ISerializeModifier* mod
     // _prefabID is deserialized by Actor/Script impl
     DESERIALIZE_MEMBER(PrefabObjectID, _prefabObjectID);
 
+#if !COMPILE_WITHOUT_CSHARP
     // Handle C# objects data serialization
-    if (Flags & ObjectFlags::IsManagedType)
+    if (EnumHasAnyFlags(Flags, ObjectFlags::IsManagedType))
     {
         auto* const v = SERIALIZE_FIND_MEMBER(stream, "V");
         if (v != stream.MemberEnd() && v->value.IsObject() && v->value.MemberCount() != 0)
@@ -155,9 +158,10 @@ void SceneObject::Deserialize(DeserializeStream& stream, ISerializeModifier* mod
             ManagedSerialization::Deserialize(v->value, GetOrCreateManagedInstance());
         }
     }
+#endif
 
     // Handle custom scripting objects data serialization
-    if (Flags & ObjectFlags::IsCustomScriptingType)
+    if (EnumHasAnyFlags(Flags, ObjectFlags::IsCustomScriptingType))
     {
         auto* const v = SERIALIZE_FIND_MEMBER(stream, "D");
         if (v != stream.MemberEnd() && v->value.IsObject() && v->value.MemberCount() != 0)

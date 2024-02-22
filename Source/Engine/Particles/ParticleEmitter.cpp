@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticleEmitter.h"
 #include "ParticleSystem.h"
@@ -16,8 +16,10 @@
 #if USE_EDITOR
 #include "ParticleEmitterFunction.h"
 #include "Engine/ShadersCompilation/Config.h"
+#include "Engine/Particles/Graph/GPU/ParticleEmitterGraph.GPU.h"
 #if BUILD_DEBUG
 #include "Engine/Engine/Globals.h"
+#include "Engine/Scripting/BinaryModule.h"
 #endif
 #endif
 #if COMPILE_WITH_GPU_PARTICLES
@@ -26,7 +28,6 @@
 #include "Engine/Graphics/Shaders/Cache/ShaderStorage.h"
 #endif
 #if COMPILE_WITH_PARTICLE_GPU_GRAPH && COMPILE_WITH_SHADER_COMPILER
-#include "Engine/Particles/Graph/GPU/ParticleEmitterGraph.GPU.h"
 #include "Engine/Utilities/Encryption.h"
 #endif
 
@@ -43,7 +44,7 @@ ParticleEffect* ParticleEmitter::Spawn(Actor* parent, const Transform& transform
     CHECK_RETURN(!WaitForLoaded(), nullptr);
     auto system = Content::CreateVirtualAsset<ParticleSystem>();
     CHECK_RETURN(system, nullptr);
-    system->Init(this, duration);
+    system->Init(this, duration < MAX_float ? duration : 3600.0f);
 
     auto effect = New<ParticleEffect>();
     effect->SetTransform(transform);
@@ -185,7 +186,9 @@ Asset::LoadResult ParticleEmitter::load()
 
 #if BUILD_DEBUG && USE_EDITOR
         // Dump generated shader source to the temporary file
+        BinaryModule::Locker.Lock();
         source.SaveToFile(Globals::ProjectCacheFolder / TEXT("particle_emitter.txt"));
+        BinaryModule::Locker.Unlock();
 #endif
 
         // Encrypt source code
@@ -335,6 +338,8 @@ void ParticleEmitter::InitCompilationOptions(ShaderCompilationOptions& options)
 BytesContainer ParticleEmitter::LoadSurface(bool createDefaultIfMissing)
 {
     BytesContainer result;
+    if (WaitForLoaded() && !LastLoadFailed())
+        return result;
     ScopeLock lock(Locker);
 
     // Check if has that chunk

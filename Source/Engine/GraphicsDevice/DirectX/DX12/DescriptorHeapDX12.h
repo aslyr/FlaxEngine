@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -87,7 +87,7 @@ public:
 public:
 
     // [GPUResourceDX12]
-    ResourceType GetResourceType() const final override;
+    GPUResourceType GetResourceType() const final override;
 
 protected:
 
@@ -170,9 +170,9 @@ public:
 public:
 
     // [GPUResourceDX12]
-    ResourceType GetResourceType() const final override
+    GPUResourceType GetResourceType() const final override
     {
-        return ResourceType::Descriptor;
+        return GPUResourceType::Descriptor;
     }
 
 protected:

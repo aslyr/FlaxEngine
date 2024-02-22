@@ -1,24 +1,29 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 using FlaxEditor.Content;
-using FlaxEditor.Content.Import;
 using FlaxEditor.Content.Settings;
 using FlaxEditor.Content.Thumbnails;
 using FlaxEditor.Modules;
 using FlaxEditor.Modules.SourceCodeEditing;
 using FlaxEditor.Options;
+using FlaxEditor.SceneGraph.Actors;
 using FlaxEditor.States;
 using FlaxEditor.Windows;
 using FlaxEditor.Windows.Assets;
 using FlaxEngine;
 using FlaxEngine.Assertions;
 using FlaxEngine.GUI;
+using FlaxEngine.Interop;
 using FlaxEngine.Json;
+
+#pragma warning disable CS1591
 
 namespace FlaxEditor
 {
@@ -46,6 +51,9 @@ namespace FlaxEditor
         private bool _isAfterInit, _areModulesInited, _areModulesAfterInitEnd, _isHeadlessMode;
         private string _projectToOpen;
         private float _lastAutoSaveTimer;
+        private Button _saveNowButton;
+        private Button _cancelSaveButton;
+        private bool _autoSaveNow;
         private Guid _startupSceneCmdLine;
 
         private const string ProjectDataLastScene = "LastScene";
@@ -59,17 +67,20 @@ namespace FlaxEditor
         /// <summary>
         /// Gets a value indicating whether this Editor is running a dev instance of the engine.
         /// </summary>
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool IsDevInstance();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_IsDevInstance", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool IsDevInstance();
 
         /// <summary>
         /// Gets a value indicating whether this Editor is running as official build (distributed via Flax services).
         /// </summary>
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool IsOfficialBuild();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_IsOfficialBuild", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool IsOfficialBuild();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_IsPlayMode();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_IsPlayMode", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_IsPlayMode();
 
         /// <summary>
         /// True if the editor is running now in a play mode. Assigned by the managed editor instance.
@@ -84,92 +95,97 @@ namespace FlaxEditor
         /// <summary>
         /// The windows module.
         /// </summary>
-        public readonly WindowsModule Windows;
+        public WindowsModule Windows;
 
         /// <summary>
         /// The UI module.
         /// </summary>
-        public readonly UIModule UI;
+        public UIModule UI;
 
         /// <summary>
         /// The thumbnails module.
         /// </summary>
-        public readonly ThumbnailsModule Thumbnails;
+        public ThumbnailsModule Thumbnails;
 
         /// <summary>
         /// The simulation module.
         /// </summary>
-        public readonly SimulationModule Simulation;
+        public SimulationModule Simulation;
 
         /// <summary>
         /// The scene module.
         /// </summary>
-        public readonly SceneModule Scene;
+        public SceneModule Scene;
 
         /// <summary>
         /// The prefabs module.
         /// </summary>
-        public readonly PrefabsModule Prefabs;
+        public PrefabsModule Prefabs;
 
         /// <summary>
         /// The scene editing module.
         /// </summary>
-        public readonly SceneEditingModule SceneEditing;
+        public SceneEditingModule SceneEditing;
 
         /// <summary>
         /// The progress reporting module.
         /// </summary>
-        public readonly ProgressReportingModule ProgressReporting;
+        public ProgressReportingModule ProgressReporting;
 
         /// <summary>
         /// The content editing module.
         /// </summary>
-        public readonly ContentEditingModule ContentEditing;
+        public ContentEditingModule ContentEditing;
 
         /// <summary>
         /// The content database module.
         /// </summary>
-        public readonly ContentDatabaseModule ContentDatabase;
+        public ContentDatabaseModule ContentDatabase;
 
         /// <summary>
         /// The content importing module.
         /// </summary>
-        public readonly ContentImportingModule ContentImporting;
+        public ContentImportingModule ContentImporting;
 
         /// <summary>
         /// The content finder module.
         /// </summary>
-        public readonly ContentFindingModule ContentFinding;
+        public ContentFindingModule ContentFinding;
 
         /// <summary>
-        /// The content editing
+        /// The scripts editing.
         /// </summary>
-        public readonly CodeEditingModule CodeEditing;
+        public CodeEditingModule CodeEditing;
+
+        /// <summary>
+        /// The scripts documentation.
+        /// </summary>
+        public CodeDocsModule CodeDocs;
 
         /// <summary>
         /// The editor state machine.
         /// </summary>
-        public readonly EditorStateMachine StateMachine;
+        public EditorStateMachine StateMachine;
 
         /// <summary>
         /// The editor options manager.
         /// </summary>
-        public readonly OptionsModule Options;
+        public OptionsModule Options;
 
         /// <summary>
         /// The editor per-project cache manager.
         /// </summary>
-        public readonly ProjectCacheModule ProjectCache;
+        public ProjectCacheModule ProjectCache;
 
         /// <summary>
-        /// The undo/redo
+        /// The undo/redo.
         /// </summary>
-        public readonly EditorUndo Undo;
+        public EditorUndo Undo;
 
         /// <summary>
         /// The icons container.
         /// </summary>
-        public readonly EditorIcons Icons;
+        public EditorIcons Icons;
 
         /// <summary>
         /// Gets the main transform gizmo used by the <see cref="SceneEditorWindow"/>.
@@ -204,26 +220,56 @@ namespace FlaxEditor
         /// <summary>
         /// The game project info.
         /// </summary>
-        public readonly ProjectInfo GameProject;
+        public ProjectInfo GameProject;
 
         /// <summary>
         /// The engine project info.
         /// </summary>
-        public readonly ProjectInfo EngineProject;
+        public ProjectInfo EngineProject;
+
+        /// <summary>
+        /// Occurs when play mode is beginning (before entering play mode).
+        /// </summary>
+        public event Action PlayModeBeginning;
+
+        /// <summary>
+        /// Occurs when play mode begins (after entering play mode).
+        /// </summary>
+        public event Action PlayModeBegin;
+
+        /// <summary>
+        /// Occurs when play mode is ending (before leaving play mode).
+        /// </summary>
+        public event Action PlayModeEnding;
+
+        /// <summary>
+        /// Occurs when play mode ends (after leaving play mode).
+        /// </summary>
+        public event Action PlayModeEnd;
 
         internal Editor()
         {
             Instance = this;
+        }
 
+        internal void Init(bool isHeadless, bool skipCompile, bool newProject, Guid startupScene)
+        {
             Log("Setting up C# Editor...");
+            _isHeadlessMode = isHeadless;
+            _startupSceneCmdLine = startupScene;
 
+            Profiler.BeginEvent("Projects");
             EngineProject = ProjectInfo.Load(StringUtils.CombinePaths(Globals.StartupFolder, "Flax.flaxproj"));
             GameProject = ProjectInfo.Load(Internal_GetProjectPath());
+            Profiler.EndEvent();
 
+            Profiler.BeginEvent("Icons");
             Icons = new EditorIcons();
             Icons.LoadIcons();
+            Profiler.EndEvent();
 
             // Create common editor modules
+            Profiler.BeginEvent("Modules");
             RegisterModule(Options = new OptionsModule(this));
             RegisterModule(ProjectCache = new ProjectCacheModule(this));
             RegisterModule(Scene = new SceneModule(this));
@@ -237,24 +283,95 @@ namespace FlaxEditor
             RegisterModule(ContentDatabase = new ContentDatabaseModule(this));
             RegisterModule(ContentImporting = new ContentImportingModule(this));
             RegisterModule(CodeEditing = new CodeEditingModule(this));
+            RegisterModule(CodeDocs = new CodeDocsModule(this));
             RegisterModule(ProgressReporting = new ProgressReportingModule(this));
             RegisterModule(ContentFinding = new ContentFindingModule(this));
+            Profiler.EndEvent();
 
             StateMachine = new EditorStateMachine(this);
             Undo = new EditorUndo(this);
-
             UIControl.FallbackParentGetDelegate += OnUIControlFallbackParentGet;
+
+            if (newProject)
+                InitProject();
+            EnsureState<LoadingState>();
+            Log("Editor init");
+            if (isHeadless)
+                Log("Running in headless mode");
+
+            // Note: we don't sort modules before Init (optimized)
+            _modules.Sort((a, b) => a.InitOrder - b.InitOrder);
+            _isAfterInit = true;
+
+            // Initialize modules (from front to back)
+            for (int i = 0; i < _modules.Count; i++)
+            {
+                var module = _modules[i];
+                Profiler.BeginEvent(module.GetType().Name);
+                module.OnInit();
+                Profiler.EndEvent();
+            }
+            _areModulesInited = true;
+
+            // Preload initial scene asset
+            try
+            {
+                var startupSceneMode = Options.Options.General.StartupSceneMode;
+                if (startupSceneMode == GeneralOptions.StartupSceneModes.LastOpened && !ProjectCache.HasCustomData(ProjectDataLastScene))
+                    startupSceneMode = GeneralOptions.StartupSceneModes.ProjectDefault;
+                switch (startupSceneMode)
+                {
+                case GeneralOptions.StartupSceneModes.ProjectDefault:
+                {
+                    if (string.IsNullOrEmpty(GameProject.DefaultScene))
+                        break;
+                    JsonSerializer.ParseID(GameProject.DefaultScene, out var defaultSceneId);
+                    Internal_LoadAsset(ref defaultSceneId);
+                    break;
+                }
+                case GeneralOptions.StartupSceneModes.LastOpened:
+                {
+                    if (ProjectCache.TryGetCustomData(ProjectDataLastScene, out var lastSceneIdName))
+                    {
+                        var lastScenes = JsonSerializer.Deserialize<Guid[]>(lastSceneIdName);
+                        foreach (var scene in lastScenes)
+                        {
+                            var lastScene = scene;
+                            Internal_LoadAsset(ref lastScene);
+                        }
+                    }
+                    break;
+                }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore errors
+            }
+
+            InitializationStart?.Invoke();
+
+            // Start Editor initialization ending phrase (will wait for scripts compilation result)
+            StateMachine.LoadingState.StartInitEnding(skipCompile);
         }
 
         private ContainerControl OnUIControlFallbackParentGet(UIControl control)
         {
             // Check if prefab root control is this UIControl
             var loadingPreview = Viewport.Previews.PrefabPreview.LoadingPreview;
-            if (loadingPreview != null)
+            var activePreviews = Viewport.Previews.PrefabPreview.ActivePreviews;
+            if (activePreviews != null)
             {
-                // Link it to the prefab preview to see it in the editor
-                loadingPreview.customControlLinked = control;
-                return loadingPreview;
+                foreach (var preview in activePreviews)
+                {
+                    if (preview == loadingPreview ||
+                        (preview.Instance != null && (preview.Instance == control || preview.Instance.HasActorInHierarchy(control))))
+                    {
+                        // Link it to the prefab preview to see it in the editor
+                        preview.customControlLinked = control;
+                        return preview;
+                    }
+                }
             }
             return null;
         }
@@ -272,58 +389,6 @@ namespace FlaxEditor
                 module.OnEndInit();
         }
 
-        internal void Init(bool isHeadless, bool skipCompile, bool newProject, Guid startupScene)
-        {
-            if (newProject)
-                InitProject();
-            EnsureState<LoadingState>();
-            _isHeadlessMode = isHeadless;
-            _startupSceneCmdLine = startupScene;
-            Log("Editor init");
-            if (isHeadless)
-                Log("Running in headless mode");
-
-            // Note: we don't sort modules before Init (optimized)
-            _modules.Sort((a, b) => a.InitOrder - b.InitOrder);
-            _isAfterInit = true;
-
-            // Initialize modules (from front to back)
-            for (int i = 0; i < _modules.Count; i++)
-            {
-                _modules[i].OnInit();
-            }
-            _areModulesInited = true;
-
-            // Preload initial scene asset
-            {
-                var startupSceneMode = Options.Options.General.StartupSceneMode;
-                if (startupSceneMode == GeneralOptions.StartupSceneModes.LastOpened && !ProjectCache.HasCustomData(ProjectDataLastScene))
-                    startupSceneMode = GeneralOptions.StartupSceneModes.ProjectDefault;
-                switch (startupSceneMode)
-                {
-                case GeneralOptions.StartupSceneModes.ProjectDefault:
-                {
-                    if (string.IsNullOrEmpty(GameProject.DefaultScene))
-                        break;
-                    JsonSerializer.ParseID(GameProject.DefaultScene, out var defaultSceneId);
-                    Internal_LoadAsset(ref defaultSceneId);
-                    break;
-                }
-                case GeneralOptions.StartupSceneModes.LastOpened:
-                {
-                    if (ProjectCache.TryGetCustomData(ProjectDataLastScene, out var lastSceneIdName) && Guid.TryParse(lastSceneIdName, out var lastSceneId))
-                        Internal_LoadAsset(ref lastSceneId);
-                    break;
-                }
-                }
-            }
-
-            InitializationStart?.Invoke();
-
-            // Start Editor initialization ending phrase (will wait for scripts compilation result)
-            StateMachine.LoadingState.StartInitEnding(skipCompile);
-        }
-
         internal void EndInit()
         {
             EnsureState<LoadingState>();
@@ -337,7 +402,10 @@ namespace FlaxEditor
             {
                 try
                 {
-                    _modules[i].OnEndInit();
+                    var module = _modules[i];
+                    Profiler.BeginEvent(module.GetType().Name);
+                    module.OnEndInit();
+                    Profiler.EndEvent();
                 }
                 catch (Exception ex)
                 {
@@ -360,58 +428,69 @@ namespace FlaxEditor
             }
 
             // Load scene
-
-            // scene cmd line argument
-            var scene = ContentDatabase.Find(_startupSceneCmdLine);
-            if (scene is SceneItem)
+            try
             {
-                Editor.Log("Loading scene specified in command line");
-                Scene.OpenScene(_startupSceneCmdLine);
-                return;
-            }
-
-            // if no scene cmd line argument is provided
-            var startupSceneMode = Options.Options.General.StartupSceneMode;
-            if (startupSceneMode == GeneralOptions.StartupSceneModes.LastOpened && !ProjectCache.HasCustomData(ProjectDataLastScene))
-            {
-                // Fallback to default project scene if nothing saved in the cache
-                startupSceneMode = GeneralOptions.StartupSceneModes.ProjectDefault;
-            }
-            switch (startupSceneMode)
-            {
-            case GeneralOptions.StartupSceneModes.ProjectDefault:
-            {
-                if (string.IsNullOrEmpty(GameProject.DefaultScene))
-                    break;
-                JsonSerializer.ParseID(GameProject.DefaultScene, out var defaultSceneId);
-                var defaultScene = ContentDatabase.Find(defaultSceneId);
-                if (defaultScene is SceneItem)
+                // Scene cmd line argument
+                var scene = ContentDatabase.Find(_startupSceneCmdLine);
+                if (scene is SceneItem)
                 {
-                    Editor.Log("Loading default project scene");
-                    Scene.OpenScene(defaultSceneId);
-
-                    // Use spawn point
-                    Windows.EditWin.Viewport.ViewRay = GameProject.DefaultSceneSpawn;
+                    Editor.Log("Loading scene specified in command line");
+                    Scene.OpenScene(_startupSceneCmdLine);
+                    return;
                 }
-                break;
-            }
-            case GeneralOptions.StartupSceneModes.LastOpened:
-            {
-                if (ProjectCache.TryGetCustomData(ProjectDataLastScene, out var lastSceneIdName) && Guid.TryParse(lastSceneIdName, out var lastSceneId))
+                var startupSceneMode = Options.Options.General.StartupSceneMode;
+                if (startupSceneMode == GeneralOptions.StartupSceneModes.LastOpened && !ProjectCache.HasCustomData(ProjectDataLastScene))
                 {
-                    var lastScene = ContentDatabase.Find(lastSceneId);
-                    if (lastScene is SceneItem)
+                    // Fallback to default project scene if nothing saved in the cache
+                    startupSceneMode = GeneralOptions.StartupSceneModes.ProjectDefault;
+                }
+                switch (startupSceneMode)
+                {
+                case GeneralOptions.StartupSceneModes.ProjectDefault:
+                {
+                    if (string.IsNullOrEmpty(GameProject.DefaultScene))
+                        break;
+                    JsonSerializer.ParseID(GameProject.DefaultScene, out var defaultSceneId);
+                    var defaultScene = ContentDatabase.Find(defaultSceneId);
+                    if (defaultScene is SceneItem)
                     {
-                        Editor.Log("Loading last opened scene");
-                        Scene.OpenScene(lastSceneId);
+                        Editor.Log("Loading default project scene");
+                        Scene.OpenScene(defaultSceneId);
+
+                        // Use spawn point
+                        Windows.EditWin.Viewport.ViewRay = GameProject.DefaultSceneSpawn;
+                    }
+                    break;
+                }
+                case GeneralOptions.StartupSceneModes.LastOpened:
+                {
+                    if (ProjectCache.TryGetCustomData(ProjectDataLastScene, out var lastSceneIdName))
+                    {
+                        var lastScenes = JsonSerializer.Deserialize<Guid[]>(lastSceneIdName);
+                        foreach (var sceneId in lastScenes)
+                        {
+                            var lastScene = ContentDatabase.Find(sceneId);
+                            if (!(lastScene is SceneItem))
+                                continue;
+
+                            Editor.Log($"Loading last opened scene: {lastScene.ShortName}");
+                            if (sceneId == lastScenes[0])
+                                Scene.OpenScene(sceneId);
+                            else
+                                Level.LoadSceneAsync(sceneId);
+                        }
 
                         // Restore view
                         if (ProjectCache.TryGetCustomData(ProjectDataLastSceneSpawn, out var lastSceneSpawnName))
                             Windows.EditWin.Viewport.ViewRay = JsonSerializer.Deserialize<Ray>(lastSceneSpawnName);
                     }
+                    break;
                 }
-                break;
+                }
             }
+            catch (Exception)
+            {
+                // Ignore errors
             }
         }
 
@@ -452,9 +531,8 @@ namespace FlaxEditor
             {
                 var timeSinceLastSave = Time.UnscaledGameTime - _lastAutoSaveTimer;
                 var timeToNextSave = options.AutoSaveFrequency * 60.0f - timeSinceLastSave;
-                var countDownDuration = 4.0f;
 
-                if (timeToNextSave <= 0.0f)
+                if (timeToNextSave <= 0.0f || _autoSaveNow)
                 {
                     Log("Auto save");
                     _lastAutoSaveTimer = Time.UnscaledGameTime;
@@ -462,16 +540,91 @@ namespace FlaxEditor
                         Scene.SaveScenes();
                     if (options.AutoSaveContent)
                         SaveContent();
+
+                    _autoSaveNow = false;
+
+                    // Hide save now and cancel save buttons
+                    if (_saveNowButton != null && _cancelSaveButton != null)
+                    {
+                        _saveNowButton.Visible = false;
+                        _cancelSaveButton.Visible = false;
+                    }
                 }
-                else if (timeToNextSave < countDownDuration)
+                else if (timeToNextSave <= options.AutoSaveReminderTime)
                 {
                     msg = string.Format("Auto save in {0}s...", Mathf.CeilToInt(timeToNextSave));
+
+                    // Create save now and cancel save buttons if needed
+                    if (_saveNowButton == null)
+                    {
+                        _saveNowButton = new Button
+                        {
+                            Parent = UI.StatusBar,
+                            Height = 14,
+                            Width = 60,
+                            AnchorPreset = AnchorPresets.MiddleLeft,
+                            BackgroundColor = Color.Transparent,
+                            BorderColor = Color.Transparent,
+                            BackgroundColorHighlighted = Color.Transparent,
+                            BackgroundColorSelected = Color.Transparent,
+                            BorderColorHighlighted = Color.Transparent,
+                            Text = "Save Now",
+                            TooltipText = "Saves now and restarts the auto save timer."
+                        };
+                        _saveNowButton.LocalX += 120;
+                        _saveNowButton.Clicked += () => _autoSaveNow = true;
+                        _saveNowButton.HoverBegin += () => _saveNowButton.TextColor = Style.Current.BackgroundHighlighted;
+                        _saveNowButton.HoverEnd += () => _saveNowButton.TextColor = UI.StatusBar.TextColor;
+                    }
+
+                    if (_cancelSaveButton == null)
+                    {
+                        _cancelSaveButton = new Button
+                        {
+                            Parent = UI.StatusBar,
+                            Height = 14,
+                            Width = 70,
+                            AnchorPreset = AnchorPresets.MiddleLeft,
+                            BackgroundColor = Color.Transparent,
+                            BorderColor = Color.Transparent,
+                            BackgroundColorHighlighted = Color.Transparent,
+                            BackgroundColorSelected = Color.Transparent,
+                            BorderColorHighlighted = Color.Transparent,
+                            Text = "Cancel",
+                            TooltipText = "Cancels this auto save."
+                        };
+                        _cancelSaveButton.LocalX += 180;
+                        _cancelSaveButton.Clicked += () =>
+                        {
+                            Log("Auto save canceled");
+                            _saveNowButton.Visible = false;
+                            _cancelSaveButton.Visible = false;
+                            _lastAutoSaveTimer = Time.UnscaledGameTime; // Reset timer
+                        };
+                        _cancelSaveButton.HoverBegin += () => _cancelSaveButton.TextColor = Style.Current.BackgroundHighlighted;
+                        _cancelSaveButton.HoverEnd += () => _cancelSaveButton.TextColor = UI.StatusBar.TextColor;
+                    }
+
+                    // Show save now and cancel save buttons
+                    if (!_saveNowButton.Visible || !_cancelSaveButton.Visible)
+                    {
+                        _saveNowButton.Visible = true;
+                        _cancelSaveButton.Visible = true;
+                    }
                 }
             }
             if (StateMachine.EditingSceneState.AutoSaveStatus != msg)
             {
                 StateMachine.EditingSceneState.AutoSaveStatus = msg;
                 UI.UpdateStatusBar();
+            }
+
+            if (UI?.StatusBar?.Text != null && !UI.StatusBar.Text.Contains("Auto") &&
+                _saveNowButton != null && _cancelSaveButton != null &&
+                (_saveNowButton.Visible || _cancelSaveButton.Visible))
+            {
+                _saveNowButton.Visible = false;
+                _cancelSaveButton.Visible = false;
             }
         }
 
@@ -492,6 +645,7 @@ namespace FlaxEditor
             GameSettings.Save(new LayersAndTagsSettings());
             GameSettings.Save(new InputSettings());
             GameSettings.Save(new GraphicsSettings());
+            GameSettings.Save(new NetworkSettings());
             GameSettings.Save(new NavigationSettings());
             GameSettings.Save(new LocalizationSettings());
             GameSettings.Save(new BuildSettings());
@@ -506,16 +660,25 @@ namespace FlaxEditor
         {
             for (int i = 0; i < _modules.Count; i++)
                 _modules[i].OnPlayBeginning();
+            PlayModeBeginning?.Invoke();
         }
 
         internal void OnPlayBegin()
         {
             for (int i = 0; i < _modules.Count; i++)
                 _modules[i].OnPlayBegin();
+            PlayModeBegin?.Invoke();
+        }
+
+        internal void OnPlayEnding()
+        {
+            FlaxEngine.Networking.NetworkManager.Stop(); // Shutdown any multiplayer from playmode
+            PlayModeEnding?.Invoke();
         }
 
         internal void OnPlayEnd()
         {
+            PlayModeEnd?.Invoke();
             for (int i = 0; i < _modules.Count; i++)
                 _modules[i].OnPlayEnd();
         }
@@ -524,14 +687,27 @@ namespace FlaxEditor
         {
             Log("Editor exit");
 
+            // Deinitialize Editor Plugins
+            foreach (var plugin in PluginManager.EditorPlugins)
+            {
+                if (plugin is EditorPlugin editorPlugin && editorPlugin._isEditorInitialized)
+                {
+                    editorPlugin._isEditorInitialized = false;
+                    editorPlugin.DeinitializeEditor();
+                }
+            }
+
             // Start exit
             StateMachine.GoToState<ClosingState>();
 
-            // Cache last opened scene
+            // Cache last opened scenes
             {
-                var lastSceneId = Level.ScenesCount > 0 ? Level.Scenes[0].ID : Guid.Empty;
+                var lastScenes = Level.Scenes;
+                var lastSceneIds = new Guid[lastScenes.Length];
+                for (int i = 0; i < lastScenes.Length; i++)
+                    lastSceneIds[i] = lastScenes[i].ID;
                 var lastSceneSpawn = Windows.EditWin.Viewport.ViewRay;
-                ProjectCache.SetCustomData(ProjectDataLastScene, lastSceneId.ToString());
+                ProjectCache.SetCustomData(ProjectDataLastScene, JsonSerializer.Serialize(lastSceneIds));
                 ProjectCache.SetCustomData(ProjectDataLastSceneSpawn, JsonSerializer.Serialize(lastSceneSpawn));
             }
 
@@ -541,21 +717,31 @@ namespace FlaxEditor
             // Release modules (from back to front)
             for (int i = _modules.Count - 1; i >= 0; i--)
             {
-                _modules[i].OnExit();
+                var module = _modules[i];
+                Profiler.BeginEvent(module.GetType().Name);
+                module.OnExit();
+                Profiler.EndEvent();
             }
 
             // Cleanup
             Undo.Dispose();
-            Surface.VisualScriptSurface.NodesCache.Clear();
-            Surface.AnimGraphSurface.NodesCache.Clear();
+            foreach (var cache in Surface.VisjectSurface.NodesCache.Caches.ToArray())
+                cache.Clear();
             Instance = null;
 
             // Invoke new instance if need to open a project
             if (!string.IsNullOrEmpty(_projectToOpen))
             {
-                string args = string.Format("-project \"{0}\"", _projectToOpen);
+                var procSettings = new CreateProcessSettings
+                {
+                    FileName = Platform.ExecutableFilePath,
+                    Arguments = string.Format("-project \"{0}\"", _projectToOpen),
+                    ShellExecute = true,
+                    WaitForEnd = false,
+                    HiddenWindow = false,
+                };
                 _projectToOpen = null;
-                Platform.StartProcess(Platform.ExecutableFilePath, args, null);
+                Platform.CreateProcess(ref procSettings);
             }
         }
 
@@ -585,6 +771,7 @@ namespace FlaxEditor
             Windows.SaveCurrentLayout();
             Scene.SaveScenes();
             SaveContent();
+            UI.AddStatusMessage("Saved!");
         }
 
         /// <summary>
@@ -609,7 +796,6 @@ namespace FlaxEditor
         {
             if (projectFilePath == null || !File.Exists(projectFilePath))
             {
-                // Error
                 MessageBox.Show("Missing project");
                 return;
             }
@@ -683,7 +869,9 @@ namespace FlaxEditor
 
         /// <summary>
         /// New asset types allowed to create.
+        /// [Deprecated in v1.8]
         /// </summary>
+        [Obsolete("Use CreateAsset with named tag.")]
         public enum NewAssetType
         {
             /// <summary>
@@ -740,62 +928,16 @@ namespace FlaxEditor
             /// The <see cref="FlaxEngine.AnimationGraphFunction"/>.
             /// </summary>
             AnimationGraphFunction = 10,
-        }
 
-        /// <summary>
-        /// Imports the asset file to the target location.
-        /// </summary>
-        /// <param name="inputPath">The source file path.</param>
-        /// <param name="outputPath">The result asset file path.</param>
-        /// <returns>True if importing failed, otherwise false.</returns>
-        public static bool Import(string inputPath, string outputPath)
-        {
-            return Internal_Import(inputPath, outputPath, IntPtr.Zero);
-        }
+            /// <summary>
+            /// The <see cref="FlaxEngine.Animation"/>.
+            /// </summary>
+            Animation = 11,
 
-        /// <summary>
-        /// Imports the texture asset file to the target location.
-        /// </summary>
-        /// <param name="inputPath">The source file path.</param>
-        /// <param name="outputPath">The result asset file path.</param>
-        /// <param name="settings">The settings.</param>
-        /// <returns>True if importing failed, otherwise false.</returns>
-        public static bool Import(string inputPath, string outputPath, TextureImportSettings settings)
-        {
-            if (settings == null)
-                throw new ArgumentNullException();
-            settings.ToInternal(out var internalOptions);
-            return Internal_ImportTexture(inputPath, outputPath, ref internalOptions);
-        }
-
-        /// <summary>
-        /// Imports the model asset file to the target location.
-        /// </summary>
-        /// <param name="inputPath">The source file path.</param>
-        /// <param name="outputPath">The result asset file path.</param>
-        /// <param name="settings">The settings.</param>
-        /// <returns>True if importing failed, otherwise false.</returns>
-        public static bool Import(string inputPath, string outputPath, ModelImportSettings settings)
-        {
-            if (settings == null)
-                throw new ArgumentNullException();
-            settings.ToInternal(out var internalOptions);
-            return Internal_ImportModel(inputPath, outputPath, ref internalOptions);
-        }
-
-        /// <summary>
-        /// Imports the audio asset file to the target location.
-        /// </summary>
-        /// <param name="inputPath">The source file path.</param>
-        /// <param name="outputPath">The result asset file path.</param>
-        /// <param name="settings">The settings.</param>
-        /// <returns>True if importing failed, otherwise false.</returns>
-        public static bool Import(string inputPath, string outputPath, AudioImportSettings settings)
-        {
-            if (settings == null)
-                throw new ArgumentNullException();
-            settings.ToInternal(out var internalOptions);
-            return Internal_ImportAudio(inputPath, outputPath, ref internalOptions);
+            /// <summary>
+            /// The <see cref="FlaxEngine.BehaviorTree"/>.
+            /// </summary>
+            BehaviorTree = 12,
         }
 
         /// <summary>
@@ -870,10 +1012,10 @@ namespace FlaxEditor
             if (asset == null)
                 throw new ArgumentNullException(nameof(asset));
             if (asset.WaitForLoaded())
-                throw new FlaxException("Failed to load asset.");
+                throw new Exception("Failed to load asset.");
             var source = Internal_GetShaderAssetSourceCode(FlaxEngine.Object.GetUnmanagedPtr(asset));
             if (source == null)
-                throw new FlaxException("Failed to get source code.");
+                throw new Exception("Failed to get source code.");
             return source;
         }
 
@@ -897,23 +1039,6 @@ namespace FlaxEditor
         }
 
         /// <summary>
-        /// Gets the actor bounding box (including child actors).
-        /// </summary>
-        /// <param name="actor">The actor.</param>
-        /// <param name="box">The bounding box.</param>
-        public static void GetActorEditorBox(Actor actor, out BoundingBox box)
-        {
-            if (actor)
-            {
-                Internal_GetEditorBoxWithChildren(FlaxEngine.Object.GetUnmanagedPtr(actor), out box);
-            }
-            else
-            {
-                box = BoundingBox.Zero;
-            }
-        }
-
-        /// <summary>
         /// Closes editor splash screen popup window.
         /// </summary>
         public static void CloseSplashScreen()
@@ -923,12 +1048,59 @@ namespace FlaxEditor
 
         /// <summary>
         /// Creates new asset at the target location.
+        /// [Deprecated in v1.8]
         /// </summary>
         /// <param name="type">New asset type.</param>
         /// <param name="outputPath">Output asset path.</param>
+        [Obsolete("Use CreateAsset with named tag.")]
         public static bool CreateAsset(NewAssetType type, string outputPath)
         {
-            return Internal_CreateAsset(type, outputPath);
+            // [Deprecated on 18.02.2024, expires on 18.02.2025]
+            string tag;
+            switch (type)
+            {
+            case NewAssetType.Material:
+                tag = "Material";
+                break;
+            case NewAssetType.MaterialInstance:
+                tag = "MaterialInstance";
+                break;
+            case NewAssetType.CollisionData:
+                tag = "CollisionData";
+                break;
+            case NewAssetType.AnimationGraph:
+                tag = "AnimationGraph";
+                break;
+            case NewAssetType.SkeletonMask:
+                tag = "SkeletonMask";
+                break;
+            case NewAssetType.ParticleEmitter:
+                tag = "ParticleEmitter";
+                break;
+            case NewAssetType.ParticleSystem:
+                tag = "ParticleSystem";
+                break;
+            case NewAssetType.SceneAnimation:
+                tag = "SceneAnimation";
+                break;
+            case NewAssetType.MaterialFunction:
+                tag = "MaterialFunction";
+                break;
+            case NewAssetType.ParticleEmitterFunction:
+                tag = "ParticleEmitterFunction";
+                break;
+            case NewAssetType.AnimationGraphFunction:
+                tag = "AnimationGraphFunction";
+                break;
+            case NewAssetType.Animation:
+                tag = "Animation";
+                break;
+            case NewAssetType.BehaviorTree:
+                tag = "BehaviorTree";
+                break;
+            default: return true;
+            }
+            return CreateAsset(tag, outputPath);
         }
 
         /// <summary>
@@ -1105,7 +1277,11 @@ namespace FlaxEditor
         /// </summary>
         public void BuildScenesOrCancel()
         {
-            if (StateMachine.BuildingScenesState.IsActive)
+            var isActive = StateMachine.BuildingScenesState.IsActive;
+            var msg = isActive ? "Cancel baking scenes data?" : "Start baking scenes data?";
+            if (MessageBox.Show(msg, "Scene Data building", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                return;
+            if (isActive)
                 StateMachine.BuildingScenesState.Cancel();
             else
                 StateMachine.GoToState<BuildingScenesState>();
@@ -1137,6 +1313,69 @@ namespace FlaxEditor
             Scene.MarkSceneEdited(scenes);
         }
 
+        /// <summary>
+        /// Bakes all environmental probes in the scene.
+        /// </summary>
+        public void BakeAllEnvProbes()
+        {
+            Scene.ExecuteOnGraph(node =>
+            {
+                if (node is EnvironmentProbeNode envProbeNode && envProbeNode.IsActive)
+                {
+                    ((EnvironmentProbe)envProbeNode.Actor).Bake();
+                    node.ParentScene.IsEdited = true;
+                }
+                else if (node is SkyLightNode skyLightNode && skyLightNode.IsActive && skyLightNode.Actor is SkyLight skyLight && skyLight.Mode == SkyLight.Modes.CaptureScene)
+                {
+                    skyLight.Bake();
+                    node.ParentScene.IsEdited = true;
+                }
+
+                return node.IsActive;
+            });
+        }
+
+        /// <summary>
+        /// Builds CSG for all open scenes.
+        /// </summary>
+        public void BuildCSG()
+        {
+            var scenes = Level.Scenes;
+            scenes.ToList().ForEach(x => x.BuildCSG(0));
+            Scene.MarkSceneEdited(scenes);
+        }
+
+        /// <summary>
+        /// Builds Nav mesh for all open scenes.
+        /// </summary>
+        public void BuildNavMesh()
+        {
+            var scenes = Level.Scenes;
+            scenes.ToList().ForEach(x => Navigation.BuildNavMesh(x, 0));
+            Scene.MarkSceneEdited(scenes);
+        }
+
+        /// <summary>
+        /// Builds SDF for all static models in the scene.
+        /// </summary>
+        public void BuildAllMeshesSDF()
+        {
+            // TODO: async maybe with progress reporting?
+            Scene.ExecuteOnGraph(node =>
+            {
+                if (node is StaticModelNode staticModelNode && staticModelNode.Actor is StaticModel staticModel)
+                {
+                    if (staticModel.DrawModes.HasFlag(DrawPass.GlobalSDF) && staticModel.Model != null && !staticModel.Model.IsVirtual && staticModel.Model.SDF.Texture == null)
+                    {
+                        Log("Generating SDF for " + staticModel.Model);
+                        if (!staticModel.Model.GenerateSDF())
+                            staticModel.Model.Save();
+                    }
+                }
+                return true;
+            });
+        }
+
         #endregion
 
         #region Internal Calls
@@ -1146,33 +1385,17 @@ namespace FlaxEditor
         {
             public byte AutoReloadScriptsOnMainWindowFocus;
             public byte ForceScriptCompilationOnStartup;
+            public byte UseAssetImportPathRelative;
             public byte AutoRebuildCSG;
             public float AutoRebuildCSGTimeoutMs;
             public byte AutoRebuildNavMesh;
             public float AutoRebuildNavMeshTimeoutMs;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct VisualScriptLocal
-        {
-            public string Value;
-            public string ValueTypeName;
-            public uint NodeId;
-            public int BoxId;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct VisualScriptStackFrame
-        {
-            public VisualScript Script;
-            public uint NodeId;
-            public int BoxId;
-        }
-
         internal void BuildCommand(string arg)
         {
             if (TryBuildCommand(arg))
-                Engine.RequestExit();
+                Engine.RequestExit(1);
         }
 
         private bool TryBuildCommand(string arg)
@@ -1260,43 +1483,40 @@ namespace FlaxEditor
             return false;
         }
 
-        internal void Internal_ScreenToGameViewport(ref Vector2 pos)
+        internal void Internal_FocusGameViewport()
         {
-            if (Windows.GameWin != null && Windows.GameWin.ContainsFocus)
+            if (Windows.GameWin != null)
             {
-                var win = Windows.GameWin.Root;
-                if (win?.RootWindow is WindowRootControl root && root.Window && root.Window.IsFocused)
+                if (StateMachine.IsPlayMode && !StateMachine.PlayingState.IsPaused)
                 {
-                    pos = Vector2.Round(Windows.GameWin.Viewport.PointFromScreen(pos) * root.DpiScale);
+                    Windows.GameWin.FocusGameViewport();
                 }
-                else
-                {
-                    pos = Vector2.Minimum;
-                }
-            }
-            else
-            {
-                pos = Vector2.Minimum;
             }
         }
 
-        internal void Internal_GameViewportToScreen(ref Vector2 pos)
+        internal void Internal_ScreenToGameViewport(ref Float2 pos)
         {
-            if (Windows.GameWin != null && Windows.GameWin.ContainsFocus)
+            var win = Windows.GameWin?.Root;
+            if (win?.RootWindow is WindowRootControl root)
             {
-                var win = Windows.GameWin.Root;
-                if (win?.RootWindow is WindowRootControl root && root.Window && root.Window.IsFocused)
-                {
-                    pos = Vector2.Round(Windows.GameWin.Viewport.PointToScreen(pos / root.DpiScale));
-                }
-                else
-                {
-                    pos = Vector2.Minimum;
-                }
+                pos = Float2.Round(Windows.GameWin.Viewport.PointFromScreen(pos) * root.DpiScale);
             }
             else
             {
-                pos = Vector2.Minimum;
+                pos = Float2.Minimum;
+            }
+        }
+
+        internal void Internal_GameViewportToScreen(ref Float2 pos)
+        {
+            var win = Windows.GameWin?.Root;
+            if (win?.RootWindow is WindowRootControl root)
+            {
+                pos = Float2.Round(Windows.GameWin.Viewport.PointToScreen(pos / root.DpiScale));
+            }
+            else
+            {
+                pos = Float2.Minimum;
             }
         }
 
@@ -1311,24 +1531,20 @@ namespace FlaxEditor
             }
         }
 
-        internal void Internal_GetGameWindowSize(out Vector2 resultAsRef)
+        internal void Internal_GetGameWindowSize(out Float2 result)
         {
-            resultAsRef = Vector2.Zero;
+            result = new Float2(1280, 720);
             var gameWin = Windows.GameWin;
-            if (gameWin != null)
+            if (gameWin?.Root?.RootWindow is WindowRootControl root)
             {
-                var win = gameWin.Root;
-                if (win != null && win.RootWindow is WindowRootControl root)
-                {
-                    // Handle case when Game window is not selected in tab view
-                    var dockedTo = gameWin.ParentDockPanel;
-                    if (dockedTo != null && dockedTo.SelectedTab != gameWin && dockedTo.SelectedTab != null)
-                        resultAsRef = dockedTo.SelectedTab.Size * root.DpiScale;
-                    else
-                        resultAsRef = gameWin.Size * root.DpiScale;
+                // Handle case when Game window is not selected in tab view
+                var dockedTo = gameWin.ParentDockPanel;
+                if (dockedTo != null && dockedTo.SelectedTab != gameWin && dockedTo.SelectedTab != null)
+                    result = dockedTo.SelectedTab.Size * root.DpiScale;
+                else
+                    result = gameWin.Viewport.Size * root.DpiScale;
 
-                    resultAsRef = Vector2.Round(resultAsRef);
-                }
+                result = Float2.Round(result);
             }
         }
 
@@ -1363,7 +1579,7 @@ namespace FlaxEditor
         private static void RequestStartPlayOnEditMode()
         {
             if (Instance.StateMachine.IsEditMode)
-                Instance.Simulation.RequestStartPlay();
+                Instance.Simulation.RequestStartPlayScenes();
             if (Instance.StateMachine.IsPlayMode)
                 Instance.StateMachine.StateChanged -= RequestStartPlayOnEditMode;
         }
@@ -1373,116 +1589,98 @@ namespace FlaxEditor
             Instance.StateMachine.StateChanged += RequestStartPlayOnEditMode;
         }
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern int Internal_ReadOutputLogs(string[] outMessages, byte[] outLogTypes, long[] outLogTimes);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_ReadOutputLogs", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(FlaxEngine.Interop.StringMarshaller))]
+        internal static partial int Internal_ReadOutputLogs([MarshalUsing(typeof(FlaxEngine.Interop.ArrayMarshaller<,>), CountElementName = "outCapacity")] ref string[] outMessages, [MarshalUsing(typeof(FlaxEngine.Interop.ArrayMarshaller<,>), CountElementName = "outCapacity")] ref byte[] outLogTypes, [MarshalUsing(typeof(FlaxEngine.Interop.ArrayMarshaller<,>), CountElementName = "outCapacity")] ref long[] outLogTimes, int outCapacity);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_SetPlayMode(bool value);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_SetPlayMode", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(FlaxEngine.Interop.StringMarshaller))]
+        internal static partial void Internal_SetPlayMode([MarshalAs(UnmanagedType.U1)] bool value);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern string Internal_GetProjectPath();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetProjectPath", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial string Internal_GetProjectPath();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CloneAssetFile(string dstPath, string srcPath, ref Guid dstId);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CloneAssetFile", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_CloneAssetFile(string dstPath, string srcPath, ref Guid dstId);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_Import(string inputPath, string outputPath, IntPtr arg);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetAudioClipMetadata", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_GetAudioClipMetadata(IntPtr obj, out int originalSize, out int importedSize);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_ImportTexture(string inputPath, string outputPath, ref TextureImportSettings.InternalOptions options);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_SaveJsonAsset", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_SaveJsonAsset(string outputPath, string data, string typename);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_ImportModel(string inputPath, string outputPath, ref ModelImportSettings.InternalOptions options);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CopyCache", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_CopyCache(ref Guid dstId, ref Guid srcId);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_ImportAudio(string inputPath, string outputPath, ref AudioImportSettings.InternalOptions options);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_BakeLightmaps", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_BakeLightmaps([MarshalAs(UnmanagedType.U1)] bool cancel);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_GetAudioClipMetadata(IntPtr obj, out int originalSize, out int importedSize);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetShaderAssetSourceCode", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial string Internal_GetShaderAssetSourceCode(IntPtr obj);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_SaveJsonAsset(string outputPath, string data, string typename);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CookMeshCollision", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_CookMeshCollision(string path, CollisionDataType type, IntPtr model, int modelLodIndex, uint materialSlotsMask, ConvexMeshGenerationFlags convexFlags, int convexVertexLimit);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_CopyCache(ref Guid dstId, ref Guid srcId);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetCollisionWires", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_GetCollisionWires(IntPtr collisionData, [MarshalUsing(typeof(FlaxEngine.Interop.ArrayMarshaller<,>), CountElementName = "trianglesCount")] out Float3[] triangles, [MarshalUsing(typeof(FlaxEngine.Interop.ArrayMarshaller<,>), CountElementName = "indicesCount")] out int[] indices, out int trianglesCount, out int indicesCount);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_BakeLightmaps(bool cancel);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetEditorBoxWithChildren", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_GetEditorBoxWithChildren(IntPtr obj, out BoundingBox resultAsRef);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern string Internal_GetShaderAssetSourceCode(IntPtr obj);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_SetOptions", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_SetOptions(ref InternalOptions options);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CookMeshCollision(string path, CollisionDataType type, IntPtr model, int modelLodIndex, uint materialSlotsMask, ConvexMeshGenerationFlags convexFlags, int convexVertexLimit);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_DrawNavMesh", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_DrawNavMesh();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_GetCollisionWires(IntPtr collisionData, out Vector3[] triangles, out int[] indices);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CloseSplashScreen", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_CloseSplashScreen();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_GetEditorBoxWithChildren(IntPtr obj, out BoundingBox resultAsRef);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CreateVisualScript", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_CreateVisualScript(string outputPath, string baseTypename);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_SetOptions(ref InternalOptions options);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CanImport", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial string Internal_CanImport(string extension);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_DrawNavMesh();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CanExport", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_CanExport(string path);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_CloseSplashScreen();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_Export", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_Export(string inputPath, string outputFolder);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CreateAsset(NewAssetType type, string outputPath);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetIsEveryAssemblyLoaded", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_GetIsEveryAssemblyLoaded();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CreateVisualScript(string outputPath, string baseTypename);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetLastProjectOpenedEngineBuild", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial int Internal_GetLastProjectOpenedEngineBuild();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern string Internal_CanImport(string extension);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetIsCSGActive", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_GetIsCSGActive();
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CanExport(string path);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_RunVisualScriptBreakpointLoopTick", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_RunVisualScriptBreakpointLoopTick(float deltaTime);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_Export(string inputPath, string outputFolder);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_DeserializeSceneObject", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_DeserializeSceneObject(IntPtr sceneObject, string json);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_GetIsEveryAssemblyLoaded();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_LoadAsset", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_LoadAsset(ref Guid id);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern int Internal_GetLastProjectOpenedEngineBuild();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CanSetToRoot", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static partial bool Internal_CanSetToRoot(IntPtr prefab, IntPtr newRoot);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_GetIsCSGActive();
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetAnimationTime", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial float Internal_GetAnimationTime(IntPtr animatedModel);
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_RunVisualScriptBreakpointLoopTick(float deltaTime);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern VisualScriptLocal[] Internal_GetVisualScriptLocals();
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern VisualScriptStackFrame[] Internal_GetVisualScriptStackFrames();
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern VisualScriptStackFrame Internal_GetVisualScriptPreviousScopeFrame();
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_EvaluateVisualScriptLocal(IntPtr script, ref VisualScriptLocal local);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_DeserializeSceneObject(IntPtr sceneObject, string json);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_LoadAsset(ref Guid id);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern bool Internal_CanSetToRoot(IntPtr prefab, IntPtr newRoot);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern float Internal_GetAnimationTime(IntPtr animatedModel);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern void Internal_SetAnimationTime(IntPtr animatedModel, float time);
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_SetAnimationTime", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_SetAnimationTime(IntPtr animatedModel, float time);
 
         #endregion
     }

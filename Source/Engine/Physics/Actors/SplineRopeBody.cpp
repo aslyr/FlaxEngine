@@ -1,9 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SplineRopeBody.h"
 #include "Engine/Level/Actors/Spline.h"
 #include "Engine/Level/Scene/Scene.h"
 #include "Engine/Physics/Physics.h"
+#include "Engine/Physics/PhysicsScene.h"
 #include "Engine/Engine/Time.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Serialization/Serialization.h"
@@ -20,7 +21,7 @@ void SplineRopeBody::Tick()
     PROFILE_CPU();
 
     // Cache data
-    const Vector3 gravity = Physics::GetGravity() * GravityScale;
+    const Vector3 gravity = GetPhysicsScene()->GetGravity() * GravityScale;
     auto& keyframes = _spline->Curve.GetKeyframes();
     const Transform splineTransform = _spline->GetTransform();
     const int32 keyframesCount = keyframes.Count();
@@ -94,8 +95,8 @@ void SplineRopeBody::Tick()
             auto& massA = _masses[i - 1];
             auto& massB = _masses[i];
             Vector3 offset = massB.Position - massA.Position;
-            const float distance = offset.Length();
-            const float scale = (distance - massB.SegmentLength) / Math::Max(distance, ZeroTolerance);
+            const Real distance = offset.Length();
+            const Real scale = (distance - massB.SegmentLength) / Math::Max<Real>(distance, ZeroTolerance);
             if (massA.Unconstrained && massB.Unconstrained)
             {
                 offset *= scale * 0.5f;
@@ -120,8 +121,8 @@ void SplineRopeBody::Tick()
                 auto& massA = _masses[i - 2];
                 auto& massB = _masses[i];
                 Vector3 offset = massB.Position - massA.Position;
-                const float distance = offset.Length();
-                const float scale = (distance - massB.SegmentLength * 2.0f) / Math::Max(distance, ZeroTolerance);
+                const Real distance = offset.Length();
+                const Real scale = (distance - massB.SegmentLength * 2.0f) / Math::Max<Real>(distance, ZeroTolerance);
                 if (massA.Unconstrained && massB.Unconstrained)
                 {
                     offset *= scale * 0.5f;

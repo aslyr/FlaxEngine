@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -27,7 +27,7 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the text wrapping within the control bounds.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The text wrapping within the control bounds.")]
+        [EditorDisplay("Text Style"), EditorOrder(2023), Tooltip("The text wrapping within the control bounds.")]
         public TextWrapping Wrapping
         {
             get => _layout.TextWrapping;
@@ -37,31 +37,31 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the font.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Text Style"), EditorOrder(2024)]
         public FontReference Font { get; set; }
 
         /// <summary>
         /// Gets or sets the custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("Custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
+        [EditorDisplay("Text Style"), EditorOrder(2025), Tooltip("Custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
         public MaterialBase TextMaterial { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color of the text.")]
+        [EditorDisplay("Text Style"), EditorOrder(2020), Tooltip("The color of the text."), ExpandGroups]
         public Color TextColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color of the watermark text.")]
+        [EditorDisplay("Text Style"), EditorOrder(2021), Tooltip("The color of the watermark text.")]
         public Color WatermarkTextColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the selection (Transparent if not used).
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color of the selection (Transparent if not used).")]
+        [EditorDisplay("Text Style"), EditorOrder(2022), Tooltip("The color of the selection (Transparent if not used).")]
         public Color SelectionColor { get; set; }
 
         /// <summary>
@@ -95,25 +95,25 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override Vector2 GetTextSize()
+        public override Float2 GetTextSize()
         {
             var font = Font.GetFont();
             if (font == null)
             {
-                return Vector2.Zero;
+                return Float2.Zero;
             }
 
             return font.MeasureText(_text, ref _layout);
         }
 
         /// <inheritdoc />
-        public override Vector2 GetCharPosition(int index, out float height)
+        public override Float2 GetCharPosition(int index, out float height)
         {
             var font = Font.GetFont();
             if (font == null)
             {
                 height = Height;
-                return Vector2.Zero;
+                return Float2.Zero;
             }
 
             height = font.Height / DpiScale;
@@ -121,7 +121,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override int HitTestText(Vector2 location)
+        public override int HitTestText(Float2 location)
         {
             var font = Font.GetFont();
             if (font == null)
@@ -144,7 +144,7 @@ namespace FlaxEngine.GUI
         public override void DrawSelf()
         {
             // Cache data
-            var rect = new Rectangle(Vector2.Zero, Size);
+            var rect = new Rectangle(Float2.Zero, Size);
             bool enabled = EnabledInHierarchy;
             var font = Font.GetFont();
             if (!font)
@@ -152,13 +152,15 @@ namespace FlaxEngine.GUI
 
             // Background
             Color backColor = BackgroundColor;
-            if (IsMouseOver)
+            if (IsMouseOver || IsNavFocused)
                 backColor = BackgroundSelectedColor;
             Render2D.FillRectangle(rect, backColor);
-            Render2D.DrawRectangle(rect, IsFocused ? BorderSelectedColor : BorderColor);
+            if (HasBorder)
+                Render2D.DrawRectangle(rect, IsFocused ? BorderSelectedColor : BorderColor, BorderThickness);
 
             // Apply view offset and clip mask
-            Render2D.PushClip(TextClipRectangle);
+            if (ClipText)
+                Render2D.PushClip(TextClipRectangle);
             bool useViewOffset = !_viewOffset.IsZero;
             if (useViewOffset)
                 Render2D.PushTransform(Matrix3x3.Translation2D(-_viewOffset));
@@ -166,8 +168,8 @@ namespace FlaxEngine.GUI
             // Check if sth is selected to draw selection
             if (HasSelection)
             {
-                Vector2 leftEdge = font.GetCharPosition(_text, SelectionLeft, ref _layout);
-                Vector2 rightEdge = font.GetCharPosition(_text, SelectionRight, ref _layout);
+                var leftEdge = font.GetCharPosition(_text, SelectionLeft, ref _layout);
+                var rightEdge = font.GetCharPosition(_text, SelectionRight, ref _layout);
                 float fontHeight = font.Height / DpiScale;
 
                 // Draw selection background
@@ -226,13 +228,17 @@ namespace FlaxEngine.GUI
             // Restore rendering state
             if (useViewOffset)
                 Render2D.PopTransform();
-            Render2D.PopClip();
+            if (ClipText)
+                Render2D.PopClip();
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
-            SelectAll();
+            if (IsSelectable)
+            {
+                SelectAll();
+            }
             return base.OnMouseDoubleClick(location, button);
         }
 

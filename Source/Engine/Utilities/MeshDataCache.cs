@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Threading;
@@ -39,10 +39,15 @@ namespace FlaxEngine.Utilities
         public MeshData[][] MeshDatas => _meshDatasInProgress ? null : _meshDatas;
 
         /// <summary>
+        /// Occurs when mesh data gets downloaded (called on async thread).
+        /// </summary>
+        public event Action Finished;
+
+        /// <summary>
         /// Requests the mesh data.
         /// </summary>
         /// <param name="model">The model to get it's data.</param>
-        /// <returns>True if ahs valid data to access, otherwise false if it's during downloading.</returns>
+        /// <returns>True if has valid data to access, otherwise false if it's during downloading.</returns>
         public bool RequestMeshData(Model model)
         {
             if (model == null)
@@ -96,13 +101,15 @@ namespace FlaxEngine.Utilities
 
         private void DownloadMeshData()
         {
+            var success = false;
+
             try
             {
                 if (!_model)
-                {
-                    _meshDatasInProgress = false;
                     return;
-                }
+                if (_model.WaitForLoaded())
+                    throw new Exception("WaitForLoaded failed");
+
                 var lods = _model.LODs;
                 _meshDatas = new MeshData[lods.Length][];
 
@@ -122,6 +129,7 @@ namespace FlaxEngine.Utilities
                         };
                     }
                 }
+                success = true;
             }
             catch (Exception ex)
             {
@@ -132,6 +140,11 @@ namespace FlaxEngine.Utilities
             finally
             {
                 _meshDatasInProgress = false;
+
+                if (success)
+                {
+                    Finished?.Invoke();
+                }
             }
         }
     }

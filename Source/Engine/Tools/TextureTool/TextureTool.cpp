@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_TEXTURE_TOOL
 
@@ -8,10 +8,11 @@
 #include "Engine/Core/Types/TimeSpan.h"
 #include "Engine/Core/Math/Packed.h"
 #include "Engine/Core/Math/Color32.h"
-#include "Engine/Core/Math/Int2.h"
+#include "Engine/Core/Math/Vector2.h"
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Serialization/JsonWriter.h"
 #include "Engine/Serialization/JsonTools.h"
+#include "Engine/Scripting/Enums.h"
 #include "Engine/Graphics/Textures/TextureData.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
 
@@ -23,36 +24,17 @@ namespace
 }
 #endif
 
-TextureTool::Options::Options()
-{
-    Type = TextureFormatType::ColorRGB;
-    IsAtlas = false;
-    NeverStream = false;
-    Compress = true;
-    IndependentChannels = false;
-    sRGB = false;
-    GenerateMipMaps = true;
-    FlipY = false;
-    Resize = false;
-    PreserveAlphaCoverage = false;
-    PreserveAlphaCoverageReference = 0.5f;
-    TextureGroup = -1;
-    Scale = 1.0f;
-    SizeX = 1024;
-    SizeY = 1024;
-    MaxSize = GPU_MAX_TEXTURE_SIZE;
-}
-
 String TextureTool::Options::ToString() const
 {
-    return String::Format(TEXT("Type: {}, IsAtlas: {}, NeverStream: {}, IndependentChannels: {}, sRGB: {}, GenerateMipMaps: {}, FlipY: {}, Scale: {}, MaxSize: {}, Resize: {}, PreserveAlphaCoverage: {}, PreserveAlphaCoverageReference: {}, SizeX: {}, SizeY: {}"),
-                          ::ToString(Type),
+    return String::Format(TEXT("Type: {}, IsAtlas: {}, NeverStream: {}, IndependentChannels: {}, sRGB: {}, GenerateMipMaps: {}, FlipY: {}, InvertGreen: {} Scale: {}, MaxSize: {}, Resize: {}, PreserveAlphaCoverage: {}, PreserveAlphaCoverageReference: {}, SizeX: {}, SizeY: {}"),
+                          ScriptingEnum::ToString(Type),
                           IsAtlas,
                           NeverStream,
                           IndependentChannels,
                           sRGB,
                           GenerateMipMaps,
                           FlipY,
+                          InvertGreenChannel,
                           Scale,
                           MaxSize,
                           MaxSize,
@@ -90,6 +72,9 @@ void TextureTool::Options::Serialize(SerializeStream& stream, const void* otherO
     stream.JKEY("FlipY");
     stream.Bool(FlipY);
 
+    stream.JKEY("InvertGreenChannel");
+    stream.Bool(InvertGreenChannel);
+
     stream.JKEY("Resize");
     stream.Bool(Resize);
 
@@ -123,10 +108,10 @@ void TextureTool::Options::Serialize(SerializeStream& stream, const void* otherO
         stream.StartObject();
 
         stream.JKEY("Position");
-        stream.Vector2(s.Area.Location);
+        stream.Float2(s.Area.Location);
 
         stream.JKEY("Size");
-        stream.Vector2(s.Area.Size);
+        stream.Float2(s.Area.Size);
 
         stream.JKEY("Name");
         stream.String(s.Name);
@@ -147,6 +132,7 @@ void TextureTool::Options::Deserialize(DeserializeStream& stream, ISerializeModi
     sRGB = JsonTools::GetBool(stream, "sRGB", sRGB);
     GenerateMipMaps = JsonTools::GetBool(stream, "GenerateMipMaps", GenerateMipMaps);
     FlipY = JsonTools::GetBool(stream, "FlipY", FlipY);
+    InvertGreenChannel = JsonTools::GetBool(stream, "InvertGreenChannel", InvertGreenChannel);
     Resize = JsonTools::GetBool(stream, "Resize", Resize);
     PreserveAlphaCoverage = JsonTools::GetBool(stream, "PreserveAlphaCoverage", PreserveAlphaCoverage);
     PreserveAlphaCoverageReference = JsonTools::GetFloat(stream, "PreserveAlphaCoverageReference", PreserveAlphaCoverageReference);
@@ -170,8 +156,8 @@ void TextureTool::Options::Deserialize(DeserializeStream& stream, ISerializeModi
             Sprite s;
             auto& stData = spritesArray[i];
 
-            s.Area.Location = JsonTools::GetVector2(stData, "Position", Vector2::Zero);
-            s.Area.Size = JsonTools::GetVector2(stData, "Size", Vector2::One);
+            s.Area.Location = JsonTools::GetFloat2(stData, "Position", Float2::Zero);
+            s.Area.Size = JsonTools::GetFloat2(stData, "Size", Float2::One);
             s.Name = JsonTools::GetString(stData, "Name");
 
             Sprites.Add(s);
@@ -377,26 +363,26 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
 {
     {
         PixelFormat::R32G32B32A32_Float,
-        sizeof(Vector4),
+        sizeof(Float4),
         [](const void* ptr)
         {
-            return Color(*(Vector4*)ptr);
+            return Color(*(Float4*)ptr);
         },
         [](const void* ptr, const Color& color)
         {
-            *(Vector4*)ptr = color.ToVector4();
+            *(Float4*)ptr = color.ToFloat4();
         },
     },
     {
         PixelFormat::R32G32B32_Float,
-        sizeof(Vector3),
+        sizeof(Float3),
         [](const void* ptr)
         {
-            return Color(*(Vector3*)ptr, 1.0f);
+            return Color(*(Float3*)ptr, 1.0f);
         },
         [](const void* ptr, const Color& color)
         {
-            *(Vector3*)ptr = color.ToVector3();
+            *(Float3*)ptr = color.ToFloat3();
         },
     },
     {
@@ -404,7 +390,7 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
         sizeof(Half4),
         [](const void* ptr)
         {
-            return Color(((Half4*)ptr)->ToVector4());
+            return Color(((Half4*)ptr)->ToFloat4());
         },
         [](const void* ptr, const Color& color)
         {
@@ -416,7 +402,7 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
         sizeof(RGBA16UNorm),
         [](const void* ptr)
         {
-            return Color(((RGBA16UNorm*)ptr)->ToVector4());
+            return Color(((RGBA16UNorm*)ptr)->ToFloat4());
         },
         [](const void* ptr, const Color& color)
         {
@@ -425,14 +411,14 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
     },
     {
         PixelFormat::R32G32_Float,
-        sizeof(Vector2),
+        sizeof(Float2),
         [](const void* ptr)
         {
-            return Color(((Vector2*)ptr)->X, ((Vector2*)ptr)->Y, 1.0f);
+            return Color(((Float2*)ptr)->X, ((Float2*)ptr)->Y, 1.0f);
         },
         [](const void* ptr, const Color& color)
         {
-            *(Vector2*)ptr = Vector2(color.R, color.G);
+            *(Float2*)ptr = Float2(color.R, color.G);
         },
     },
     {
@@ -461,11 +447,26 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
         },
     },
     {
+        PixelFormat::R8G8_UNorm,
+        sizeof(uint16),
+        [](const void* ptr)
+        {
+            const uint8* rg = (const uint8*)ptr;
+            return Color((float)rg[0] / MAX_uint8, (float)rg[1] / MAX_uint8, 0, 1);
+        },
+        [](const void* ptr, const Color& color)
+        {
+            uint8* rg = (uint8*)ptr;
+            rg[0] = (uint8)(color.R * MAX_uint8);
+            rg[1] = (uint8)(color.G * MAX_uint8);
+        },
+    },
+    {
         PixelFormat::R16G16_Float,
         sizeof(Half2),
         [](const void* ptr)
         {
-            const Vector2 rg = ((Half2*)ptr)->ToVector2();
+            const Float2 rg = ((Half2*)ptr)->ToFloat2();
             return Color(rg.X, rg.Y, 0, 1);
         },
         [](const void* ptr, const Color& color)
@@ -478,7 +479,7 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
         sizeof(RG16UNorm),
         [](const void* ptr)
         {
-            const Vector2 rg = ((RG16UNorm*)ptr)->ToVector2();
+            const Float2 rg = ((RG16UNorm*)ptr)->ToFloat2();
             return Color(rg.X, rg.Y, 0, 1);
         },
         [](const void* ptr, const Color& color)
@@ -605,12 +606,25 @@ TextureTool::PixelFormatSampler PixelFormatSamplers[] =
         sizeof(FloatR11G11B10),
         [](const void* ptr)
         {
-            const Vector3 rgb = ((FloatR11G11B10*)ptr)->ToVector3();
+            const Float3 rgb = ((FloatR11G11B10*)ptr)->ToFloat3();
             return Color(rgb.X, rgb.Y, rgb.Z);
         },
         [](const void* ptr, const Color& color)
         {
-            *(FloatR11G11B10*)ptr = Float1010102(color.R, color.G, color.B, color.A);
+            *(FloatR11G11B10*)ptr = FloatR11G11B10(color.R, color.G, color.B);
+        },
+    },
+    {
+        PixelFormat::R10G10B10A2_UNorm,
+        sizeof(Float1010102),
+        [](const void* ptr)
+        {
+            const Float3 rgb = ((Float1010102*)ptr)->ToFloat3();
+            return Color(rgb.X, rgb.Y, rgb.Z);
+        },
+        [](const void* ptr, const Color& color)
+        {
+            *(Float1010102*)ptr = Float1010102(color.R, color.G, color.B, color.A);
         },
     },
 };
@@ -632,7 +646,7 @@ void TextureTool::Store(const PixelFormatSampler* sampler, int32 x, int32 y, con
     sampler->Store((byte*)data + rowPitch * y + sampler->PixelSize * x, color);
 }
 
-Color TextureTool::SamplePoint(const PixelFormatSampler* sampler, const Vector2& uv, const void* data, const Int2& size, int32 rowPitch)
+Color TextureTool::SamplePoint(const PixelFormatSampler* sampler, const Float2& uv, const void* data, const Int2& size, int32 rowPitch)
 {
     ASSERT_LOW_LAYER(sampler);
 
@@ -648,14 +662,14 @@ Color TextureTool::SamplePoint(const PixelFormatSampler* sampler, int32 x, int32
     return sampler->Sample((byte*)data + rowPitch * y + sampler->PixelSize * x);
 }
 
-Color TextureTool::SampleLinear(const PixelFormatSampler* sampler, const Vector2& uv, const void* data, const Int2& size, int32 rowPitch)
+Color TextureTool::SampleLinear(const PixelFormatSampler* sampler, const Float2& uv, const void* data, const Int2& size, int32 rowPitch)
 {
     ASSERT_LOW_LAYER(sampler);
 
     const Int2 end = size - 1;
     const Int2 uvFloor(Math::Min(Math::FloorToInt(uv.X * size.X), end.X), Math::Min(Math::FloorToInt(uv.Y * size.Y), end.Y));
     const Int2 uvNext(Math::Min(uvFloor.X + 1, end.X), Math::Min(uvFloor.Y + 1, end.Y));
-    const Vector2 uvFraction(uv.X * size.Y - uvFloor.X, uv.Y * size.Y - uvFloor.Y);
+    const Float2 uvFraction(uv.X * size.Y - uvFloor.X, uv.Y * size.Y - uvFloor.Y);
 
     const Color v00 = sampler->Sample((byte*)data + rowPitch * uvFloor.Y + sampler->PixelSize * uvFloor.X);
     const Color v01 = sampler->Sample((byte*)data + rowPitch * uvFloor.Y + sampler->PixelSize * uvNext.X);
@@ -663,6 +677,54 @@ Color TextureTool::SampleLinear(const PixelFormatSampler* sampler, const Vector2
     const Color v11 = sampler->Sample((byte*)data + rowPitch * uvNext.Y + sampler->PixelSize * uvNext.X);
 
     return Color::Lerp(Color::Lerp(v00, v01, uvFraction.X), Color::Lerp(v10, v11, uvFraction.X), uvFraction.Y);
+}
+
+PixelFormat TextureTool::ToPixelFormat(TextureFormatType format, int32 width, int32 height, bool canCompress)
+{
+    const bool canUseBlockCompression = width % 4 == 0 && height % 4 == 0;
+    if (canCompress && canUseBlockCompression)
+    {
+        switch (format)
+        {
+        case TextureFormatType::ColorRGB:
+            return PixelFormat::BC1_UNorm;
+        case TextureFormatType::ColorRGBA:
+            return PixelFormat::BC3_UNorm;
+        case TextureFormatType::NormalMap:
+            return PixelFormat::BC5_UNorm;
+        case TextureFormatType::GrayScale:
+            return PixelFormat::BC4_UNorm;
+        case TextureFormatType::HdrRGBA:
+            return PixelFormat::BC7_UNorm;
+        case TextureFormatType::HdrRGB:
+#if PLATFORM_LINUX
+            // TODO: support BC6H compression for Linux Editor
+            return PixelFormat::BC7_UNorm;
+#else
+            return PixelFormat::BC6H_Uf16;
+#endif
+        default:
+            return PixelFormat::Unknown;
+        }
+    }
+
+    switch (format)
+    {
+    case TextureFormatType::ColorRGB:
+        return PixelFormat::R8G8B8A8_UNorm;
+    case TextureFormatType::ColorRGBA:
+        return PixelFormat::R8G8B8A8_UNorm;
+    case TextureFormatType::NormalMap:
+        return PixelFormat::R16G16_UNorm;
+    case TextureFormatType::GrayScale:
+        return PixelFormat::R8_UNorm;
+    case TextureFormatType::HdrRGBA:
+        return PixelFormat::R16G16B16A16_Float;
+    case TextureFormatType::HdrRGB:
+        return PixelFormat::R11G11B10_Float;
+    default:
+        return PixelFormat::Unknown;
+    }
 }
 
 bool TextureTool::GetImageType(const StringView& path, ImageType& type)

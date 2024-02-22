@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,16 +10,14 @@
 /// </summary>
 API_CLASS(Static) class FLAXENGINE_API PixelFormatExtensions
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(PixelFormatExtensions);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(PixelFormatExtensions);
 public:
-
     /// <summary>
     /// Initializes cache.
     /// </summary>
     static void Init();
 
 public:
-
     /// <summary>
     /// Calculates the size of a <see cref="PixelFormat"/> in bytes.
     /// </summary>
@@ -176,6 +174,13 @@ public:
     API_FUNCTION() static int ComputeComponentsCount(PixelFormat format);
 
     /// <summary>
+    /// Computes the amount of pixels per-axis stored in the a single block of the format (eg. 4 for BC-family). Returns 1 for uncompressed formats.
+    /// </summary>
+    /// <param name="format">The <see cref="PixelFormat"/>.</param>
+    /// <returns>The block pixels count.</returns>
+    API_FUNCTION() static int32 ComputeBlockSize(PixelFormat format);
+
+    /// <summary>
     /// Finds the equivalent sRGB format to the provided format.
     /// </summary>
     /// <param name="format">The non sRGB format.</param>
@@ -211,7 +216,6 @@ public:
     API_FUNCTION() static PixelFormat MakeTypelessUNorm(PixelFormat format);
 
 public:
-
     static PixelFormat FindShaderResourceFormat(PixelFormat format, bool bSRGB);
     static PixelFormat FindUnorderedAccessFormat(PixelFormat format);
     static PixelFormat FindDepthStencilFormat(PixelFormat format);

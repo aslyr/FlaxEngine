@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "LightPass.h"
 #include "ShadowsPass.h"
@@ -9,6 +9,7 @@
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Content/Assets/CubeTexture.h"
 #include "Engine/Content/Content.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/RenderTask.h"
 
 PACK_STRUCT(struct PerLight{
@@ -19,14 +20,6 @@ PACK_STRUCT(struct PerLight{
 PACK_STRUCT(struct PerFrame{
     GBufferData GBuffer;
     });
-
-LightPass::LightPass()
-    : _shader(nullptr)
-    , _psLightSkyNormal(nullptr)
-    , _psLightSkyInverted(nullptr)
-    , _sphereModel(nullptr)
-{
-}
 
 String LightPass::ToString() const
 {
@@ -57,7 +50,7 @@ bool LightPass::Init()
 #endif
 
     auto format = PixelFormat::R8G8_UNorm;
-    if (FORMAT_FEATURES_ARE_NOT_SUPPORTED(GPUDevice::Instance->GetFormatFeatures(format).Support, (FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D)))
+    if (EnumHasNoneFlags(GPUDevice::Instance->GetFormatFeatures(format).Support, (FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D)))
     {
         format = PixelFormat::B8G8R8A8_UNorm;
     }
@@ -105,7 +98,7 @@ bool LightPass::setupResources()
         if (_psLightPointInverted.Create(psDesc, shader, "PS_Point"))
             return true;
         psDesc.CullMode = CullMode::Normal;
-        psDesc.DepthTestEnable = true;
+        psDesc.DepthEnable = true;
         if (_psLightPointNormal.Create(psDesc, shader, "PS_Point"))
             return true;
     }
@@ -119,7 +112,7 @@ bool LightPass::setupResources()
         if (_psLightSpotInverted.Create(psDesc, shader, "PS_Spot"))
             return true;
         psDesc.CullMode = CullMode::Normal;
-        psDesc.DepthTestEnable = true;
+        psDesc.DepthEnable = true;
         if (_psLightSpotNormal.Create(psDesc, shader, "PS_Spot"))
             return true;
     }
@@ -141,27 +134,6 @@ bool LightPass::setupResources()
     return false;
 }
 
-template<typename T>
-bool CanRenderShadow(RenderView& view, const T& light)
-{
-    bool result = false;
-    switch ((ShadowsCastingMode)light.ShadowsMode)
-    {
-    case ShadowsCastingMode::StaticOnly:
-        result = view.IsOfflinePass;
-        break;
-    case ShadowsCastingMode::DynamicOnly:
-        result = !view.IsOfflinePass;
-        break;
-    case ShadowsCastingMode::All:
-        result = true;
-        break;
-    default:
-        break;
-    }
-    return result && light.ShadowsStrength > ZeroTolerance;
-}
-
 void LightPass::Dispose()
 {
     // Base
@@ -175,10 +147,11 @@ void LightPass::Dispose()
     _psLightSpotInverted.Delete();
     SAFE_DELETE_GPU_RESOURCE(_psLightSkyNormal);
     SAFE_DELETE_GPU_RESOURCE(_psLightSkyInverted);
+    SAFE_DELETE_GPU_RESOURCE(_psClearDiffuse);
     _sphereModel = nullptr;
 }
 
-void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightBuffer)
+void LightPass::RenderLight(RenderContextBatch& renderContextBatch, GPUTextureView* lightBuffer)
 {
     const float sphereModelScale = 3.0f;
 
@@ -194,11 +167,42 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     // Cache data
     auto device = GPUDevice::Instance;
     auto context = device->GetMainContext();
+    auto& renderContext = renderContextBatch.Contexts[0];
     auto& view = renderContext.View;
     auto mainCache = renderContext.List;
     const auto lightShader = _shader->GetShader();
-    const bool useShadows = ShadowsPass::Instance()->IsReady() && ((view.Flags & ViewFlags::Shadows) != 0);
-    const bool disableSpecular = (view.Flags & ViewFlags::SpecularLight) == 0;
+    const bool useShadows = ShadowsPass::Instance()->IsReady() && EnumHasAnyFlags(view.Flags, ViewFlags::Shadows);
+    const bool disableSpecular = (view.Flags & ViewFlags::SpecularLight) == ViewFlags::None;
+
+    // Check if debug lights
+    if (renderContext.View.Mode == ViewMode::LightBuffer)
+    {
+        // Clear diffuse
+        if (!_psClearDiffuse)
+            _psClearDiffuse = GPUDevice::Instance->CreatePipelineState();
+        auto quadShader = Content::LoadAsyncInternal<Shader>(TEXT("Shaders/Quad"));
+        if (!_psClearDiffuse->IsValid() && quadShader)
+        {
+            auto psDesc = GPUPipelineState::Description::DefaultFullscreenTriangle;
+            psDesc.BlendMode.RenderTargetWriteMask = BlendingMode::ColorWrite::RGB; // Leave AO in Alpha channel unmodified
+            psDesc.PS = quadShader->GetShader()->GetPS("PS_Clear");
+            _psClearDiffuse->Init(psDesc);
+        }
+        if (_psClearDiffuse->IsValid())
+        {
+            context->SetRenderTarget(renderContext.Buffers->GBuffer0->View());
+            auto cb = quadShader->GetShader()->GetCB(0);
+            context->UpdateCB(cb, &Color::White);
+            context->BindCB(0, cb);
+            context->SetState(_psClearDiffuse);
+            context->DrawFullscreenTriangle();
+            context->ResetRenderTarget();
+        }
+        else
+        {
+            context->Clear(renderContext.Buffers->GBuffer0->View(), Color::White);
+        }
+    }
 
     // Temporary data
     PerLight perLight;
@@ -206,7 +210,7 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
 
     // Bind output
     GPUTexture* depthBuffer = renderContext.Buffers->DepthBuffer;
-    const bool depthBufferReadOnly = (depthBuffer->GetDescription().Flags & GPUTextureFlags::ReadOnlyDepthView) != 0;
+    const bool depthBufferReadOnly = EnumHasAnyFlags(depthBuffer->Flags(), GPUTextureFlags::ReadOnlyDepthView);
     GPUTextureView* depthBufferRTV = depthBufferReadOnly ? depthBuffer->ViewReadOnlyDepth() : nullptr;
     GPUTextureView* depthBufferSRV = depthBufferReadOnly ? depthBuffer->ViewReadOnlyDepth() : depthBuffer->View();
     context->SetRenderTarget(depthBufferRTV, lightBuffer);
@@ -217,12 +221,6 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     auto cb1 = lightShader->GetCB(1);
     context->UpdateCB(cb1, &perFrame);
 
-    // Prepare shadows rendering (is will be used)
-    if (useShadows)
-    {
-        ShadowsPass::Instance()->Prepare(renderContext, context);
-    }
-
     // Bind inputs
     context->BindSR(0, renderContext.Buffers->GBuffer0);
     context->BindSR(1, renderContext.Buffers->GBuffer1);
@@ -230,32 +228,26 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     context->BindSR(3, depthBufferSRV);
     context->BindSR(4, renderContext.Buffers->GBuffer3);
 
-    // Check if debug lights
-    if (renderContext.View.Mode == ViewMode::LightBuffer)
-    {
-        // Clear diffuse
-        context->Clear(renderContext.Buffers->GBuffer0->View(), Color::White);
-    }
-
     // Fullscreen shadow mask buffer
     GPUTexture* shadowMask = nullptr;
 #define GET_SHADOW_MASK() \
     if (!shadowMask) { \
         auto rtDesc = GPUTextureDescription::New2D(renderContext.Buffers->GetWidth(), renderContext.Buffers->GetHeight(), _shadowMaskFormat); \
         shadowMask = RenderTargetPool::Get(rtDesc); \
+        RENDER_TARGET_POOL_SET_NAME(shadowMask, "ShadowMask"); \
     } \
     auto shadowMaskView = shadowMask->View()
 
     // Render all point lights
     for (int32 lightIndex = 0; lightIndex < mainCache->PointLights.Count(); lightIndex++)
     {
-        PROFILE_GPU_CPU("Point Light");
+        PROFILE_GPU_CPU_NAMED("Point Light");
 
         // Cache data
         auto& light = mainCache->PointLights[lightIndex];
         float lightRadius = light.Radius;
-        Vector3 lightPosition = light.Position;
-        const bool renderShadow = useShadows && CanRenderShadow(view, light) && ShadowsPass::Instance()->CanRenderShadow(renderContext, light);
+        Float3 lightPosition = light.Position;
+        const bool renderShadow = useShadows && light.ShadowDataIndex != -1;
         bool useIES = light.IESTexture != nullptr;
 
         // Get distance from view center to light center less radius (check if view is inside a sphere)
@@ -273,7 +265,7 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
         if (renderShadow)
         {
             GET_SHADOW_MASK();
-            ShadowsPass::Instance()->RenderShadow(renderContext, light, shadowMaskView);
+            ShadowsPass::Instance()->RenderShadow(renderContextBatch, light, shadowMaskView);
 
             // Bind output
             context->SetRenderTarget(depthBufferRTV, lightBuffer);
@@ -281,9 +273,11 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
             // Set shadow mask
             context->BindSR(5, shadowMaskView);
         }
+        else
+            context->UnBindSR(5);
 
         // Pack light properties buffer
-        light.SetupLightData(&perLight.Light, view, renderShadow);
+        light.SetupLightData(&perLight.Light, renderShadow);
         Matrix::Transpose(wvp, perLight.WVP);
         if (useIES)
         {
@@ -304,13 +298,13 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     // Render all spot lights
     for (int32 lightIndex = 0; lightIndex < mainCache->SpotLights.Count(); lightIndex++)
     {
-        PROFILE_GPU_CPU("Spot Light");
+        PROFILE_GPU_CPU_NAMED("Spot Light");
 
         // Cache data
         auto& light = mainCache->SpotLights[lightIndex];
         float lightRadius = light.Radius;
-        Vector3 lightPosition = light.Position;
-        const bool renderShadow = useShadows && CanRenderShadow(view, light) && ShadowsPass::Instance()->CanRenderShadow(renderContext, light);
+        Float3 lightPosition = light.Position;
+        const bool renderShadow = useShadows && light.ShadowDataIndex != -1;
         bool useIES = light.IESTexture != nullptr;
 
         // Get distance from view center to light center less radius (check if view is inside a sphere)
@@ -328,7 +322,7 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
         if (renderShadow)
         {
             GET_SHADOW_MASK();
-            ShadowsPass::Instance()->RenderShadow(renderContext, light, shadowMaskView);
+            ShadowsPass::Instance()->RenderShadow(renderContextBatch, light, shadowMaskView);
 
             // Bind output
             context->SetRenderTarget(depthBufferRTV, lightBuffer);
@@ -336,9 +330,11 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
             // Set shadow mask
             context->BindSR(5, shadowMaskView);
         }
+        else
+            context->UnBindSR(5);
 
         // Pack light properties buffer
-        light.SetupLightData(&perLight.Light, view, renderShadow);
+        light.SetupLightData(&perLight.Light, renderShadow);
         Matrix::Transpose(wvp, perLight.WVP);
         if (useIES)
         {
@@ -359,17 +355,17 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     // Render all directional lights
     for (int32 lightIndex = 0; lightIndex < mainCache->DirectionalLights.Count(); lightIndex++)
     {
-        PROFILE_GPU_CPU("Directional Light");
+        PROFILE_GPU_CPU_NAMED("Directional Light");
 
         // Cache data
         auto& light = mainCache->DirectionalLights[lightIndex];
-        const bool renderShadow = useShadows && CanRenderShadow(view, light) && ShadowsPass::Instance()->CanRenderShadow(renderContext, light);
+        const bool renderShadow = useShadows && light.ShadowDataIndex != -1;
 
         // Check if render shadow
         if (renderShadow)
         {
             GET_SHADOW_MASK();
-            ShadowsPass::Instance()->RenderShadow(renderContext, light, lightIndex, shadowMaskView);
+            ShadowsPass::Instance()->RenderShadow(renderContextBatch, light, lightIndex, shadowMaskView);
 
             // Bind output
             context->SetRenderTarget(depthBufferRTV, lightBuffer);
@@ -377,9 +373,11 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
             // Set shadow mask
             context->BindSR(5, shadowMaskView);
         }
+        else
+            context->UnBindSR(5);
 
         // Pack light properties buffer
-        light.SetupLightData(&perLight.Light, view, renderShadow);
+        light.SetupLightData(&perLight.Light, renderShadow);
 
         // Calculate lighting
         context->UpdateCB(cb0, &perLight);
@@ -394,12 +392,12 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
     // Render all sky lights
     for (int32 lightIndex = 0; lightIndex < mainCache->SkyLights.Count(); lightIndex++)
     {
-        PROFILE_GPU_CPU("Sky Light");
+        PROFILE_GPU_CPU_NAMED("Sky Light");
 
         // Cache data
         auto& light = mainCache->SkyLights[lightIndex];
         float lightRadius = light.Radius;
-        Vector3 lightPosition = light.Position;
+        Float3 lightPosition = light.Position;
 
         // Get distance from view center to light center less radius (check if view is inside a sphere)
         float distance = ViewToCenterLessRadius(view, lightPosition, lightRadius * sphereModelScale);
@@ -413,7 +411,7 @@ void LightPass::RenderLight(RenderContext& renderContext, GPUTextureView* lightB
         Matrix::Multiply(world, view.ViewProjection(), wvp);
 
         // Pack light properties buffer
-        light.SetupLightData(&perLight.Light, view, false);
+        light.SetupLightData(&perLight.Light, false);
         Matrix::Transpose(wvp, perLight.WVP);
 
         // Bind source image

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -6,7 +6,9 @@ using System.Linq;
 using FlaxEditor.Options;
 using FlaxEditor.SceneGraph.Actors;
 using FlaxEngine;
+using FlaxEditor.Utilities;
 using FlaxEngine.Utilities;
+using Utils = FlaxEngine.Utils;
 
 namespace FlaxEditor.States
 {

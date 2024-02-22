@@ -1,10 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "JsonAsset.h"
-#include "Engine/Threading/Threading.h"
 #if USE_EDITOR
 #include "Engine/Platform/File.h"
 #include "Engine/Core/Types/DataContainer.h"
+#include "Engine/Level/Level.h"
 #else
 #include "Storage/ContentStorageManager.h"
 #endif
@@ -12,14 +12,18 @@
 #include "FlaxEngine.Gen.h"
 #include "Cache/AssetsCache.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Config/Settings.h"
 #include "Engine/Serialization/JsonTools.h"
+#include "Engine/Serialization/JsonWriters.h"
 #include "Engine/Content/Factories/JsonAssetFactory.h"
 #include "Engine/Core/Cache.h"
-#include "Engine/Core/Config/GameSettings.h"
 #include "Engine/Debug/Exceptions/JsonParseException.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Scripting/Scripting.h"
+#include "Engine/Scripting/ManagedCLR/MClass.h"
+#include "Engine/Scripting/ManagedCLR/MField.h"
 #include "Engine/Utilities/StringConverter.h"
+#include "Engine/Threading/Threading.h"
 
 JsonAssetBase::JsonAssetBase(const SpawnParams& params, const AssetInfo* info)
     : Asset(params, info)
@@ -34,13 +38,52 @@ String JsonAssetBase::GetData() const
     if (Data == nullptr)
         return String::Empty;
     PROFILE_CPU_NAMED("JsonAsset.GetData");
-
-    // Get serialized data
     rapidjson_flax::StringBuffer buffer;
-    rapidjson_flax::Writer<rapidjson_flax::StringBuffer> writer(buffer);
-    Data->Accept(writer);
-
+    OnGetData(buffer);
     return String((const char*)buffer.GetString(), (int32)buffer.GetSize());
+}
+
+void JsonAssetBase::SetData(const StringView& value)
+{
+    if (!IsLoaded())
+        return;
+    PROFILE_CPU_NAMED("JsonAsset.SetData");
+    const StringAnsi dataJson(value);
+    ScopeLock lock(Locker);
+    const StringView dataTypeName = DataTypeName;
+    if (Init(dataTypeName, dataJson))
+    {
+        LOG(Error, "Failed to set Json asset data.");
+    }
+}
+
+bool JsonAssetBase::Init(const StringView& dataTypeName, const StringAnsiView& dataJson)
+{
+    unload(true);
+    DataTypeName = dataTypeName;
+    DataEngineBuild = FLAXENGINE_VERSION_BUILD;
+
+    // Parse json document
+    {
+        PROFILE_CPU_NAMED("Json.Parse");
+        Document.Parse(dataJson.Get(), dataJson.Length());
+    }
+    if (Document.HasParseError())
+    {
+        Log::JsonParseException(Document.GetParseError(), Document.GetErrorOffset());
+        return true;
+    }
+    Data = &Document;
+    _isVirtualDocument = true;
+
+    // Load asset-specific data
+    return loadAsset() != LoadResult::Ok;
+}
+
+void JsonAssetBase::OnGetData(rapidjson_flax::StringBuffer& buffer) const
+{
+    PrettyJsonWriter writerObj(buffer);
+    Data->Accept(writerObj.GetWriter());
 }
 
 const String& JsonAssetBase::GetPath() const
@@ -51,6 +94,17 @@ const String& JsonAssetBase::GetPath() const
     // In build all assets are packed into packages so use ID for original path lookup
     return Content::GetRegistry()->GetEditorAssetPath(_id);
 #endif
+}
+
+uint64 JsonAssetBase::GetMemoryUsage() const
+{
+    Locker.Lock();
+    uint64 result = Asset::GetMemoryUsage();
+    result += sizeof(JsonAssetBase) - sizeof(Asset);
+    if (Data)
+        result += Document.GetAllocator().Capacity();
+    Locker.Unlock();
+    return result;
 }
 
 #if USE_EDITOR
@@ -73,8 +127,7 @@ void FindIds(ISerializable::DeserializeStream& node, Array<Guid>& output)
     }
     else if (node.IsString())
     {
-        const auto length = node.GetStringLength();
-        if (length == 32)
+        if (node.GetStringLength() == 32)
         {
             // Try parse as Guid in format `N` (32 hex chars)
             Guid id;
@@ -82,6 +135,76 @@ void FindIds(ISerializable::DeserializeStream& node, Array<Guid>& output)
                 output.Add(id);
         }
     }
+}
+
+void JsonAssetBase::GetReferences(const StringAnsiView& json, Array<Guid>& output)
+{
+    ISerializable::SerializeDocument document;
+    document.Parse(json.Get(), json.Length());
+    if (document.HasParseError())
+        return;
+    FindIds(document, output);
+}
+
+bool JsonAssetBase::Save(const StringView& path) const
+{
+    // Validate state
+    if (WaitForLoaded())
+    {
+        LOG(Error, "Asset loading failed. Cannot save it.");
+        return true;
+    }
+    if (IsVirtual() && path.IsEmpty())
+    {
+        LOG(Error, "To save virtual asset asset you need to specify the target asset path location.");
+        return true;
+    }
+    ScopeLock lock(Locker);
+
+    // Serialize to json to the buffer
+    rapidjson_flax::StringBuffer buffer;
+    PrettyJsonWriter writerObj(buffer);
+    Save(writerObj);
+
+    // Save json to file
+    if (File::WriteAllBytes(path.HasChars() ? path : StringView(GetPath()), (byte*)buffer.GetString(), (int32)buffer.GetSize()))
+    {
+        LOG(Error, "Cannot save \'{0}\'", ToString());
+        return true;
+    }
+
+    return false;
+}
+
+bool JsonAssetBase::Save(JsonWriter& writer) const
+{
+    // Validate state
+    if (WaitForLoaded())
+    {
+        LOG(Error, "Asset loading failed. Cannot save it.");
+        return true;
+    }
+    ScopeLock lock(Locker);
+
+    writer.StartObject();
+    {
+        // Json resource header
+        writer.JKEY("ID");
+        writer.Guid(GetID());
+        writer.JKEY("TypeName");
+        writer.String(DataTypeName);
+        writer.JKEY("EngineBuild");
+        writer.Int(FLAXENGINE_VERSION_BUILD);
+
+        // Json resource data
+        rapidjson_flax::StringBuffer dataBuffer;
+        OnGetData(dataBuffer);
+        writer.JKEY("Data");
+        writer.RawValue(dataBuffer.GetString(), (int32)dataBuffer.GetSize());
+    }
+    writer.EndObject();
+
+    return false;
 }
 
 void JsonAssetBase::GetReferences(Array<Guid>& output) const
@@ -103,6 +226,9 @@ void JsonAssetBase::GetReferences(Array<Guid>& output) const
 
 Asset::LoadResult JsonAssetBase::loadAsset()
 {
+    if (IsVirtual() || _isVirtualDocument)
+        return LoadResult::Ok;
+
     // Load data (raw json file in editor, cooked asset in build game)
 #if USE_EDITOR
     BytesContainer data;
@@ -173,6 +299,7 @@ void JsonAssetBase::unload(bool isReloading)
     Data = nullptr;
     DataTypeName.Clear();
     DataEngineBuild = 0;
+    _isVirtualDocument = false;
 }
 
 #if USE_EDITOR
@@ -195,12 +322,70 @@ JsonAsset::JsonAsset(const SpawnParams& params, const AssetInfo* info)
 {
 }
 
+uint64 JsonAsset::GetMemoryUsage() const
+{
+    Locker.Lock();
+    uint64 result = JsonAssetBase::GetMemoryUsage();
+    result += sizeof(JsonAsset) - sizeof(JsonAssetBase);
+    if (Instance && InstanceType)
+        result += InstanceType.GetType().Size;
+    Locker.Unlock();
+    return result;
+}
+
 Asset::LoadResult JsonAsset::loadAsset()
 {
-    // Base
-    auto result = JsonAssetBase::loadAsset();
+    const auto result = JsonAssetBase::loadAsset();
     if (result != LoadResult::Ok || IsInternalType())
         return result;
+
+    if (CreateInstance())
+        return LoadResult::Failed;
+
+#if USE_EDITOR
+    // Reload instance when module with this type gets reloaded
+    Level::ScriptsReloadStart.Bind<JsonAsset, &JsonAsset::OnScriptsReloadStart>(this);
+    Level::ScriptsReloaded.Bind<JsonAsset, &JsonAsset::OnScriptsReloaded>(this);
+#endif
+
+    // Destroy instance on scripting shutdown (eg. asset from scripts)
+    Scripting::ScriptsUnload.Bind<JsonAsset, &JsonAsset::DeleteInstance>(this);
+
+    return LoadResult::Ok;
+}
+
+void JsonAsset::unload(bool isReloading)
+{
+#if USE_EDITOR
+    Level::ScriptsReloadStart.Unbind<JsonAsset, &JsonAsset::OnScriptsReloadStart>(this);
+    Level::ScriptsReloaded.Unbind<JsonAsset, &JsonAsset::OnScriptsReloaded>(this);
+#endif
+    Scripting::ScriptsUnload.Unbind<JsonAsset, &JsonAsset::DeleteInstance>(this);
+    DeleteInstance();
+    _isAfterReload |= isReloading;
+
+    JsonAssetBase::unload(isReloading);
+}
+
+void JsonAsset::onLoaded_MainThread()
+{
+    JsonAssetBase::onLoaded_MainThread();
+
+    // Special case for Settings assets to flush them after edited and saved in Editor
+    const StringAsANSI<> dataTypeNameAnsi(DataTypeName.Get(), DataTypeName.Length());
+    const auto typeHandle = Scripting::FindScriptingType(StringAnsiView(dataTypeNameAnsi.Get(), DataTypeName.Length()));
+    if (Instance && typeHandle && typeHandle.IsSubclassOf(SettingsBase::TypeInitializer) && _isAfterReload)
+    {
+        _isAfterReload = false;
+        ((SettingsBase*)Instance)->Apply();
+    }
+}
+
+bool JsonAsset::CreateInstance()
+{
+    ScopeLock lock(Locker);
+    if (Instance)
+        return false;
 
     // Try to scripting type for this data
     const StringAsANSI<> dataTypeNameAnsi(DataTypeName.Get(), DataTypeName.Length());
@@ -208,52 +393,106 @@ Asset::LoadResult JsonAsset::loadAsset()
     if (typeHandle)
     {
         auto& type = typeHandle.GetType();
+
+        // Ensure that object can deserialized
+        const ScriptingType::InterfaceImplementation* interface = type.GetInterface(ISerializable::TypeInitializer);
+        if (!interface)
+        {
+            LOG(Warning, "Cannot deserialize {0} from Json Asset because it doesn't implement ISerializable interface.", type.ToString());
+            return false;
+        }
+        auto modifier = Cache::ISerializeModifier.Get();
+        modifier->EngineBuild = DataEngineBuild;
+
+        // Create object
         switch (type.Type)
         {
         case ScriptingTypes::Class:
+        case ScriptingTypes::Structure:
         {
-            // Ensure that object can deserialized
-            const ScriptingType::InterfaceImplementation* interfaces = type.GetInterface(&ISerializable::TypeInitializer);
-            if (!interfaces)
-            {
-                LOG(Warning, "Cannot deserialize {0} from Json Asset because it doesn't implement ISerializable interface.", type.ToString());
-                break;
-            }
-
-            // Allocate object
             const auto instance = Allocator::Allocate(type.Size);
             if (!instance)
-                return LoadResult::Failed;
+                return true;
             Instance = instance;
-            InstanceType = typeHandle;
-            _dtor = type.Class.Dtor;
-            type.Class.Ctor(instance);
+            if (type.Type == ScriptingTypes::Class)
+            {
+                _dtor = type.Class.Dtor;
+                type.Class.Ctor(instance);
+            }
+            else
+            {
+                _dtor = type.Struct.Dtor;
+                type.Struct.Ctor(instance);
+            }
 
             // Deserialize object
-            auto modifier = Cache::ISerializeModifier.Get();
-            modifier->EngineBuild = DataEngineBuild;
-            ((ISerializable*)((byte*)instance + interfaces->VTableOffset))->Deserialize(*Data, modifier.Value);
-            // TODO: delete object when containing BinaryModule gets unloaded
+            ((ISerializable*)((byte*)instance + interface->VTableOffset))->Deserialize(*Data, modifier.Value);
             break;
         }
-        default: ;
+        case ScriptingTypes::Script:
+        {
+            const ScriptingObjectSpawnParams params(Guid::New(), typeHandle);
+            const auto instance = type.Script.Spawn(params);
+            if (!instance)
+                return true;
+            Instance = instance;
+            _dtor = nullptr;
+
+            // Deserialize object
+            ToInterface<ISerializable>(instance)->Deserialize(*Data, modifier.Value);
+            break;
         }
+        }
+        InstanceType = typeHandle;
     }
 
-    return result;
+    return false;
 }
 
-void JsonAsset::unload(bool isReloading)
+void JsonAsset::DeleteInstance()
 {
-    // Base
-    JsonAssetBase::unload(isReloading);
+    ScopeLock lock(Locker);
 
-    if (Instance)
+    // C# instance
+    MObject* object = GetManagedInstance();
+    MClass* klass = GetClass();
+    if (object && klass)
     {
-        InstanceType = ScriptingTypeHandle();
+        const MField* field = klass->GetField("_instance");
+        if (field)
+            field->SetValue(object, nullptr);
+    }
+
+    // C++ instance
+    if (!Instance)
+        return;
+    if (_dtor)
+    {
         _dtor(Instance);
-        Allocator::Free(Instance);
-        Instance = nullptr;
         _dtor = nullptr;
+        Allocator::Free(Instance);
+    }
+    else
+    {
+        Delete((ScriptingObject*)Instance);
+    }
+    InstanceType = ScriptingTypeHandle();
+    Instance = nullptr;
+}
+
+#if USE_EDITOR
+
+void JsonAsset::OnScriptsReloadStart()
+{
+    DeleteInstance();
+}
+
+void JsonAsset::OnScriptsReloaded()
+{
+    if (CreateInstance())
+    {
+        LOG(Warning, "Failed to reload {0} instance {1}.", ToString(), DataTypeName);
     }
 }
+
+#endif

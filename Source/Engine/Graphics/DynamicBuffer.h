@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,6 @@
 class FLAXENGINE_API DynamicBuffer
 {
 protected:
-
     GPUBuffer* _buffer;
     String _name;
     uint32 _stride;
@@ -33,7 +32,6 @@ public:
     virtual ~DynamicBuffer();
 
 public:
-
     /// <summary>
     /// The data container (raw bytes storage).
     /// </summary>
@@ -76,6 +74,27 @@ public:
     }
 
     /// <summary>
+    /// Allocates bytes in the buffer by resizing the buffer for new memory and returns the pointer to the start of the allocated space.
+    /// </summary>
+    /// <param name="size">Amount of data to allocate (in bytes)</param>
+    FORCE_INLINE byte* WriteReserve(int32 size)
+    {
+        const int32 start = Data.Count();
+        Data.AddUninitialized(size);
+        return Data.Get() + start;
+    }
+
+    /// <summary>
+    /// Allocates bytes in the buffer by resizing the buffer for new memory and returns the pointer to the start of the allocated space.
+    /// </summary>
+    /// <param name="count">Amount of items to allocate</param>
+    template<typename T>
+    FORCE_INLINE T* WriteReserve(int32 count)
+    {
+        return (T*)WriteReserve(count * sizeof(T));
+    }
+
+    /// <summary>
     /// Unlock buffer and flush data with a buffer (it will be ready for an immediate draw).
     /// </summary>
     void Flush();
@@ -92,7 +111,6 @@ public:
     void Dispose();
 
 protected:
-
     virtual void InitDesc(GPUBufferDescription& desc, int32 numElements) = 0;
 };
 
@@ -102,7 +120,6 @@ protected:
 class FLAXENGINE_API DynamicVertexBuffer : public DynamicBuffer
 {
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -115,7 +132,6 @@ public:
     }
 
 protected:
-
     // [DynamicBuffer]
     void InitDesc(GPUBufferDescription& desc, int32 numElements) override
     {
@@ -129,7 +145,6 @@ protected:
 class FLAXENGINE_API DynamicIndexBuffer : public DynamicBuffer
 {
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -142,10 +157,60 @@ public:
     }
 
 protected:
-
     // [DynamicBuffer]
     void InitDesc(GPUBufferDescription& desc, int32 numElements) override
     {
         desc = GPUBufferDescription::Index(_stride, numElements, GPUResourceUsage::Dynamic);
     }
+};
+
+/// <summary>
+/// Dynamic structured buffer that allows to upload data to the GPU from CPU (supports dynamic resizing).
+/// </summary>
+class FLAXENGINE_API DynamicStructuredBuffer : public DynamicBuffer
+{
+private:
+    bool _isUnorderedAccess;
+
+public:
+    /// <summary>
+    /// Init
+    /// </summary>
+    /// <param name="initialCapacity">Initial capacity of the buffer (in bytes).</param>
+    /// <param name="stride">Stride in bytes.</param>
+    /// <param name="isUnorderedAccess">True if unordered access usage.</param>
+    /// <param name="name">Buffer name.</param>
+    DynamicStructuredBuffer(uint32 initialCapacity, uint32 stride, bool isUnorderedAccess = false, const String& name = String::Empty)
+        : DynamicBuffer(initialCapacity, stride, name)
+        , _isUnorderedAccess(isUnorderedAccess)
+    {
+    }
+
+protected:
+    // [DynamicBuffer]
+    void InitDesc(GPUBufferDescription& desc, int32 numElements) override;
+};
+
+/// <summary>
+/// Dynamic Typed buffer that allows to upload data to the GPU from CPU (supports dynamic resizing).
+/// </summary>
+class FLAXENGINE_API DynamicTypedBuffer : public DynamicBuffer
+{
+private:
+    PixelFormat _format;
+    bool _isUnorderedAccess;
+
+public:
+    /// <summary>
+    /// Init
+    /// </summary>
+    /// <param name="initialCapacity">Initial capacity of the buffer (in bytes).</param>
+    /// <param name="format">Format of the data.</param>
+    /// <param name="isUnorderedAccess">True if unordered access usage.</param>
+    /// <param name="name">Buffer name.</param>
+    DynamicTypedBuffer(uint32 initialCapacity, PixelFormat format, bool isUnorderedAccess = false, const String& name = String::Empty);
+
+protected:
+    // [DynamicBuffer]
+    void InitDesc(GPUBufferDescription& desc, int32 numElements) override;
 };

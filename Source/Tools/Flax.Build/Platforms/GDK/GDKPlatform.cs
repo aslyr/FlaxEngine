@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Linq;
 using Flax.Build.Projects.VisualStudio;
@@ -30,7 +30,8 @@ namespace Flax.Build.Platforms
             // v141 toolset or newer required
             var toolsets = GetToolsets();
             if (!toolsets.ContainsKey(WindowsPlatformToolset.v141) &&
-                !toolsets.ContainsKey(WindowsPlatformToolset.v142))
+                !toolsets.ContainsKey(WindowsPlatformToolset.v142) &&
+                !toolsets.ContainsKey(WindowsPlatformToolset.v143))
                 _hasRequiredSDKsInstalled = false;
         }
     }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -9,7 +9,14 @@
 /// </summary>
 API_CLASS(Static) class FLAXENGINE_API JobSystem
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(JobSystem);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(JobSystem);
+
+    /// <summary>
+    /// Executes the job (utility to call dispatch and wait for the end).
+    /// </summary>
+    /// <param name="job">The job. Argument is an index of the job execution.</param>
+    /// <param name="jobCount">The job executions count.</param>
+    API_FUNCTION() static void Execute(const Function<void(int32)>& job, int32 jobCount = 1);
 
     /// <summary>
     /// Dispatches the job for the execution.
@@ -34,4 +41,9 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(JobSystem);
     /// Sets whether automatically start jobs execution on Dispatch. If disabled jobs won't be executed until it gets re-enabled. Can be used to optimize execution of multiple dispatches that should overlap.
     /// </summary>
     API_FUNCTION() static void SetJobStartingOnDispatch(bool value);
+
+    /// <summary>
+    /// Gets the amount of job system threads.
+    /// </summary>
+    API_PROPERTY() static int32 GetThreadsCount();
 };

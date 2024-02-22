@@ -1,14 +1,16 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Core/Types/String.h"
+#include "Engine/Scripting/Types.h"
 
 class Asset;
-class ScriptingObject;
-struct ScriptingType;
 struct Transform;
 struct CommonValue;
+template<typename T>
+class AssetReference;
+struct ScriptingTypeHandle;
 
 /// <summary>
 /// Represents an object type that can be interpreted as more than one type.
@@ -36,9 +38,9 @@ API_STRUCT(InBuild) struct FLAXENGINE_API VariantType
         Blob,
         Enum,
 
-        Vector2,
-        Vector3,
-        Vector4,
+        Float2,
+        Float3,
+        Float4,
         Color,
         Guid,
         BoundingBox,
@@ -61,11 +63,23 @@ API_STRUCT(InBuild) struct FLAXENGINE_API VariantType
         Int16,
         Uint16,
 
-        MAX
+        Double2,
+        Double3,
+        Double4,
+
+        MAX,
+#if USE_LARGE_WORLDS
+        Vector2 = Double2,
+        Vector3 = Double3,
+        Vector4 = Double4,
+#else
+        Vector2 = Float2,
+        Vector3 = Float3,
+        Vector4 = Float4,
+#endif
     };
 
 public:
-
     /// <summary>
     /// The type of the variant.
     /// </summary>
@@ -77,7 +91,6 @@ public:
     char* TypeName;
 
 public:
-
     FORCE_INLINE VariantType()
     {
         Type = Null;
@@ -92,7 +105,8 @@ public:
 
     explicit VariantType(Types type, const StringView& typeName);
     explicit VariantType(Types type, const StringAnsiView& typeName);
-    explicit VariantType(Types type, struct _MonoClass* klass);
+    explicit VariantType(Types type, MClass* klass);
+    explicit VariantType(const StringAnsiView& typeName);
     VariantType(const VariantType& other);
     VariantType(VariantType&& other) noexcept;
 
@@ -102,12 +116,12 @@ public:
     }
 
 public:
-
     VariantType& operator=(const Types& type);
     VariantType& operator=(VariantType&& other);
     VariantType& operator=(const VariantType& other);
     bool operator==(const Types& type) const;
     bool operator==(const VariantType& other) const;
+    bool operator==(const ScriptingTypeHandle& type) const;
 
     FORCE_INLINE bool operator!=(const VariantType& other) const
     {
@@ -115,10 +129,10 @@ public:
     }
 
 public:
-
     void SetTypeName(const StringView& typeName);
     void SetTypeName(const StringAnsiView& typeName);
     const char* GetTypeName() const;
+    VariantType GetElementType() const;
     ::String ToString() const;
 };
 
@@ -160,11 +174,10 @@ API_STRUCT(InBuild) struct FLAXENGINE_API Variant
 
         Dictionary<Variant, Variant, HeapAllocation>* AsDictionary;
 
-        byte AsData[16];
+        byte AsData[24];
     };
 
 public:
-
     // 0.0f (floating-point value type)
     static const Variant Zero;
 
@@ -181,7 +194,6 @@ public:
     static const Variant True;
 
 public:
-
     FORCE_INLINE Variant()
     {
     }
@@ -189,6 +201,9 @@ public:
     Variant(const Variant& other);
     Variant(Variant&& other) noexcept;
 
+    explicit Variant(decltype(nullptr));
+    explicit Variant(const VariantType& type);
+    explicit Variant(VariantType&& type);
     Variant(bool v);
     Variant(int16 v);
     Variant(uint16 v);
@@ -201,15 +216,18 @@ public:
     Variant(void* v);
     Variant(ScriptingObject* v);
     Variant(Asset* v);
-    Variant(struct _MonoObject* v);
+    Variant(MObject* v);
     Variant(const StringView& v);
     Variant(const StringAnsiView& v);
     Variant(const Char* v);
     Variant(const char* v);
     Variant(const Guid& v);
-    Variant(const Vector2& v);
-    Variant(const Vector3& v);
-    Variant(const Vector4& v);
+    Variant(const Float2& v);
+    Variant(const Float3& v);
+    Variant(const Float4& v);
+    Variant(const Double2& v);
+    Variant(const Double3& v);
+    Variant(const Double4& v);
     Variant(const Int2& v);
     Variant(const Int3& v);
     Variant(const Int4& v);
@@ -223,13 +241,20 @@ public:
     explicit Variant(const Matrix& v);
     Variant(Array<Variant, HeapAllocation>&& v);
     Variant(const Array<Variant, HeapAllocation>& v);
+    explicit Variant(Dictionary<Variant, Variant, HeapAllocation>&& v);
     explicit Variant(const Dictionary<Variant, Variant, HeapAllocation>& v);
+    explicit Variant(const Span<byte>& v);
     explicit Variant(const CommonValue& v);
+
+    template<typename T>
+    Variant(const class AssetReference<T>& v)
+        : Variant(v.Get())
+    {
+    }
 
     ~Variant();
 
 public:
-
     Variant& operator=(Variant&& other);
     Variant& operator=(const Variant& other);
     bool operator==(const Variant& other) const;
@@ -256,7 +281,6 @@ public:
     }
 
 public:
-
     explicit operator bool() const;
     explicit operator Char() const;
     explicit operator int8() const;
@@ -270,14 +294,17 @@ public:
     explicit operator float() const;
     explicit operator double() const;
     explicit operator void*() const;
-    explicit operator StringView() const;       // Returned StringView, if not empty, is guaranteed to point to a null terminated buffer.
-    explicit operator StringAnsiView() const;   // Returned StringView, if not empty, is guaranteed to point to a null terminated buffer.
+    explicit operator StringView() const; // Returned StringView, if not empty, is guaranteed to point to a null terminated buffer.
+    explicit operator StringAnsiView() const; // Returned StringView, if not empty, is guaranteed to point to a null terminated buffer.
     explicit operator ScriptingObject*() const;
-    explicit operator struct _MonoObject*() const;
+    explicit operator MObject*() const;
     explicit operator Asset*() const;
-    explicit operator Vector2() const;
-    explicit operator Vector3() const;
-    explicit operator Vector4() const;
+    explicit operator Float2() const;
+    explicit operator Float3() const;
+    explicit operator Float4() const;
+    explicit operator Double2() const;
+    explicit operator Double3() const;
+    explicit operator Double4() const;
     explicit operator Int2() const;
     explicit operator Int3() const;
     explicit operator Int4() const;
@@ -294,14 +321,41 @@ public:
     const Vector2& AsVector2() const;
     const Vector3& AsVector3() const;
     const Vector4& AsVector4() const;
+    const Float2& AsFloat2() const;
+    Float3& AsFloat3();
+    const Float3& AsFloat3() const;
+    const Float4& AsFloat4() const;
+    const Double2& AsDouble2() const;
+    const Double3& AsDouble3() const;
+    const Double4& AsDouble4() const;
     const Int2& AsInt2() const;
     const Int3& AsInt3() const;
     const Int4& AsInt4() const;
     const Color& AsColor() const;
     const Quaternion& AsQuaternion() const;
+    const Rectangle& AsRectangle() const;
+    const Guid& AsGuid() const;
+    BoundingSphere& AsBoundingSphere();
+    const BoundingSphere& AsBoundingSphere() const;
+    BoundingBox& AsBoundingBox();
+    const BoundingBox& AsBoundingBox() const;
+    Ray& AsRay();
+    const Ray& AsRay() const;
+    Transform& AsTransform();
+    const Transform& AsTransform() const;
+    const Matrix& AsMatrix() const;
+    Array<Variant, HeapAllocation>& AsArray();
+    const Array<Variant, HeapAllocation>& AsArray() const;
+
+    template<typename T>
+    const T* AsStructure() const
+    {
+        if (Type.Type == VariantType::Structure && Type == T::TypeInitializer)
+            return (const T*)AsBlob.Data;
+        return nullptr;
+    }
 
 public:
-
     void SetType(const VariantType& type);
     void SetType(VariantType&& type);
     void SetString(const StringView& str);
@@ -311,9 +365,21 @@ public:
     void SetBlob(int32 length);
     void SetBlob(const void* data, int32 length);
     void SetObject(ScriptingObject* object);
-    void SetManagedObject(struct _MonoObject* object);
+    void SetManagedObject(MObject* object);
     void SetAsset(Asset* asset);
     String ToString() const;
+
+    // Inlines potential value type into in-built format (eg. Vector3 stored as Structure, or String stored as ManagedObject).
+    void Inline();
+
+    // Inverts the inlined value from in-built format into generic storage (eg. Float3 from inlined format into Structure).
+    void InvertInline();
+
+    // Allocates the Variant of the specific type (eg. structure or object or value).
+    static Variant NewValue(const StringAnsiView& typeName);
+
+    // Frees the object or data owned by this Variant container (eg. structure or object).
+    void DeleteValue();
 
     FORCE_INLINE Variant Cast(const VariantType& to) const
     {
@@ -321,7 +387,6 @@ public:
     }
 
 public:
-
     template<typename T>
     static typename TEnableIf<TIsEnum<T>::Value, Variant>::Type Enum(VariantType&& type, const T value)
     {
@@ -348,17 +413,8 @@ public:
     static Variant Lerp(const Variant& a, const Variant& b, float alpha);
 
 private:
-
-    void OnObjectDeleted(ScriptingObject* obj)
-    {
-        AsObject = nullptr;
-    }
-
-    void OnAssetUnloaded(Asset* obj)
-    {
-        AsAsset = nullptr;
-    }
-
+    void OnObjectDeleted(ScriptingObject* obj);
+    void OnAssetUnloaded(Asset* obj);
     void AllocStructure();
     void CopyStructure(void* src);
     void FreeStructure();

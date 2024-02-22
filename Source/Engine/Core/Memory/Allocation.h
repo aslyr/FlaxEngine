@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,16 +12,15 @@ template<int Capacity>
 class FixedAllocation
 {
 public:
+    enum { HasSwap = false };
 
     template<typename T>
     class Data
     {
     private:
-
         byte _data[Capacity * sizeof(T)];
 
     public:
-
         FORCE_INLINE Data()
         {
         }
@@ -46,16 +45,16 @@ public:
             return Capacity;
         }
 
-        FORCE_INLINE void Allocate(uint64 capacity)
+        FORCE_INLINE void Allocate(int32 capacity)
         {
-#if  BUILD_DEBUG
+#if ENABLE_ASSERTION_LOW_LAYERS
             ASSERT(capacity <= Capacity);
 #endif
         }
 
-        FORCE_INLINE void Relocate(uint64 capacity, int32 oldCount, int32 newCount)
+        FORCE_INLINE void Relocate(int32 capacity, int32 oldCount, int32 newCount)
         {
-#if  BUILD_DEBUG
+#if ENABLE_ASSERTION_LOW_LAYERS
             ASSERT(capacity <= Capacity);
 #endif
         }
@@ -64,12 +63,9 @@ public:
         {
         }
 
-        FORCE_INLINE void Swap(Data& other)
+        void Swap(Data& other)
         {
-            byte tmp[Capacity * sizeof(T)];
-            Platform::MemoryCopy(tmp, _data, Capacity * sizeof(T));
-            Platform::MemoryCopy(_data, other._data, Capacity * sizeof(T));
-            Platform::MemoryCopy(other._data, tmp, Capacity * sizeof(T));
+            // Not supported
         }
     };
 };
@@ -80,16 +76,15 @@ public:
 class HeapAllocation
 {
 public:
+    enum { HasSwap = true };
 
     template<typename T>
     class Data
     {
     private:
-
         T* _data = nullptr;
 
     public:
-
         FORCE_INLINE Data()
         {
         }
@@ -111,29 +106,32 @@ public:
 
         FORCE_INLINE int32 CalculateCapacityGrow(int32 capacity, int32 minCapacity) const
         {
-            if (capacity == 0)
+            if (capacity < minCapacity)
+                capacity = minCapacity;
+            if (capacity < 8)
             {
                 capacity = 8;
             }
             else
             {
-                // Round up to the next power of 2 and multiply by 2
-                capacity++;
+                // Round up to the next power of 2 and multiply by 2 (http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2)
+                capacity--;
                 capacity |= capacity >> 1;
                 capacity |= capacity >> 2;
                 capacity |= capacity >> 4;
                 capacity |= capacity >> 8;
                 capacity |= capacity >> 16;
-                capacity = (capacity + 1) * 2;
+                uint64 capacity64 = (uint64)(capacity + 1) * 2;
+                if (capacity64 > MAX_int32)
+                    capacity64 = MAX_int32;
+                capacity = (int32)capacity64;
             }
-            if (capacity < minCapacity)
-                capacity = minCapacity;
             return capacity;
         }
 
-        FORCE_INLINE void Allocate(uint64 capacity)
+        FORCE_INLINE void Allocate(int32 capacity)
         {
-#if  BUILD_DEBUG
+#if  ENABLE_ASSERTION_LOW_LAYERS
             ASSERT(!_data);
 #endif
             _data = (T*)Allocator::Allocate(capacity * sizeof(T));
@@ -143,7 +141,7 @@ public:
 #endif
         }
 
-        FORCE_INLINE void Relocate(uint64 capacity, int32 oldCount, int32 newCount)
+        FORCE_INLINE void Relocate(int32 capacity, int32 oldCount, int32 newCount)
         {
             T* newData = capacity != 0 ? (T*)Allocator::Allocate(capacity * sizeof(T)) : nullptr;
 #if !BUILD_RELEASE
@@ -182,12 +180,12 @@ template<int Capacity, typename OtherAllocator = HeapAllocation>
 class InlinedAllocation
 {
 public:
+    enum { HasSwap = false };
 
     template<typename T>
     class Data
     {
     private:
-
         typedef typename OtherAllocator::template Data<T> OtherData;
 
         bool _useOther = false;
@@ -195,7 +193,6 @@ public:
         OtherData _other;
 
     public:
-
         FORCE_INLINE Data()
         {
         }
@@ -219,7 +216,7 @@ public:
             return minCapacity <= Capacity ? Capacity : _other.CalculateCapacityGrow(capacity, minCapacity);
         }
 
-        FORCE_INLINE void Allocate(uint64 capacity)
+        FORCE_INLINE void Allocate(int32 capacity)
         {
             if (capacity > Capacity)
             {
@@ -228,7 +225,7 @@ public:
             }
         }
 
-        FORCE_INLINE void Relocate(uint64 capacity, int32 oldCount, int32 newCount)
+        FORCE_INLINE void Relocate(int32 capacity, int32 oldCount, int32 newCount)
         {
             // Check if the new allocation will fit into inlined storage
             if (capacity <= Capacity)
@@ -273,14 +270,9 @@ public:
             }
         }
 
-        FORCE_INLINE void Swap(Data& other)
+        void Swap(Data& other)
         {
-            byte tmp[Capacity * sizeof(T)];
-            Platform::MemoryCopy(tmp, _data, Capacity * sizeof(T));
-            Platform::MemoryCopy(_data, other._data, Capacity * sizeof(T));
-            Platform::MemoryCopy(other._data, tmp, Capacity * sizeof(T));
-            ::Swap(_useOther, other._useOther);
-            _other.Swap(other._other);
+            // Not supported
         }
     };
 };

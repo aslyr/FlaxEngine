@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,18 +12,19 @@
 class GPUAdapterNull : public GPUAdapter
 {
 public:
-
     // [GPUAdapter]
     bool IsValid() const override
     {
         return true;
     }
-
+    void* GetNativePtr() const override
+    {
+        return nullptr;
+    }
     uint32 GetVendorId() const override
     {
         return 0;
     }
-
     String GetDescription() const override
     {
         return TEXT("Null");

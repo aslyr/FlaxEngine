@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,11 +10,9 @@
 struct FLAXENGINE_API FlaxStorageReference
 {
 private:
-
     FlaxStorage* _storage;
 
 public:
-
     FlaxStorageReference(FlaxStorage* storage)
         : _storage(storage)
     {
@@ -36,14 +34,12 @@ public:
     }
 
 public:
-
     FORCE_INLINE FlaxStorage* Get() const
     {
         return _storage;
     }
 
 public:
-
     FlaxStorageReference& operator=(const FlaxStorageReference& other)
     {
         if (this != &other)
@@ -62,17 +58,17 @@ public:
         return _storage != nullptr;
     }
 
-    FORCE_INLINE bool operator ==(const FlaxStorageReference& other) const
+    FORCE_INLINE bool operator==(const FlaxStorageReference& other) const
     {
         return _storage == other._storage;
     }
 
-    FORCE_INLINE bool operator !=(const FlaxStorageReference& other) const
+    FORCE_INLINE bool operator!=(const FlaxStorageReference& other) const
     {
         return _storage != other._storage;
     }
 
-    FORCE_INLINE FlaxStorage* operator ->() const
+    FORCE_INLINE FlaxStorage* operator->() const
     {
         return _storage;
     }

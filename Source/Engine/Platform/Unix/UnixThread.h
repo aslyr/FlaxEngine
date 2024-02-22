@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 /// <summary>
 /// Thread object for Unix platform.
 /// </summary>
-class UnixThread : public ThreadBase
+class FLAXENGINE_API UnixThread : public ThreadBase
 {
 protected:
 

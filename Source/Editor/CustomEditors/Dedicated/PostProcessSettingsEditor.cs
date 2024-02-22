@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEditor.CustomEditors.Editors;
@@ -105,6 +105,25 @@ namespace FlaxEditor.CustomEditors.Dedicated
             {
                 var settings = (AmbientOcclusionSettings)Values[0];
                 settings.OverrideFlags = (AmbientOcclusionSettingsOverride)value;
+                SetValue(settings);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Editor for <see cref="GlobalIlluminationSettings"/> type.
+    /// </summary>
+    [CustomEditor(typeof(GlobalIlluminationSettings)), DefaultEditor]
+    sealed class GlobalIlluminationSettingsEditor : PostProcessSettingsEditor
+    {
+        /// <inheritdoc />
+        protected override int OverrideFlags
+        {
+            get => (int)((GlobalIlluminationSettings)Values[0]).OverrideFlags;
+            set
+            {
+                var settings = (GlobalIlluminationSettings)Values[0];
+                settings.OverrideFlags = (GlobalIlluminationSettingsOverride)value;
                 SetValue(settings);
             }
         }

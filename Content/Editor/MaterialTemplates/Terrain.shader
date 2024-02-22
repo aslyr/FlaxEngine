@@ -2,6 +2,7 @@
 // Version: @0
 
 #define MATERIAL 1
+#define USE_PER_VIEW_CONSTANTS 1
 @3
 // Enables/disables smooth terrain chunks LOD transitions (with morphing higher LOD near edges to the lower LOD in the neighbour)
 #define USE_SMOOTH_LOD_TRANSITION 1
@@ -16,15 +17,7 @@
 @7
 // Primary constant buffer (with additional material parameters)
 META_CB_BEGIN(0, Data)
-float4x4 ViewProjectionMatrix;
 float4x4 WorldMatrix;
-float4x4 ViewMatrix;
-float3 ViewPos;
-float ViewFar;
-float3 ViewDir;
-float TimeParam;
-float4 ViewInfo;
-float4 ScreenSize;
 float3 WorldInvScale;
 float WorldDeterminantSign;
 float PerInstanceRandom;
@@ -276,24 +269,16 @@ float CalcLOD(float2 xy, float4 morph)
 	if ((xy.x + xy.y) > 1)
 	{
 		if (xy.x < xy.y)
-		{
 			lod = lodCalculated.w;
-		}
 		else
-		{
 			lod = lodCalculated.z;
-		}
 	}
 	else
 	{
 		if (xy.x < xy.y)
-		{
 			lod = lodCalculated.y;
-		}
 		else
-		{
 			lod = lodCalculated.x;
-		}
 	}
 
 	return lod;
@@ -457,5 +442,19 @@ void PS_Depth(PixelInput input)
 	clip(material.Mask - MATERIAL_MASK_THRESHOLD);
 #endif
 }
+
+#if _PS_QuadOverdraw
+
+#include "./Flax/Editor/QuadOverdraw.hlsl"
+
+// Pixel Shader function for Quad Overdraw Pass (editor-only)
+[earlydepthstencil]
+META_PS(USE_EDITOR, FEATURE_LEVEL_SM5)
+void PS_QuadOverdraw(float4 svPos : SV_Position, uint primId : SV_PrimitiveID)
+{
+	DoQuadOverdraw(svPos, primId);
+}
+
+#endif
 
 @9

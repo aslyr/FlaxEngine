@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -56,9 +56,9 @@ public:
 public:
 
     // [GPUResourceDX12]
-    ResourceType GetResourceType() const final override
+    GPUResourceType GetResourceType() const final override
     {
-        return ResourceType::Buffer;
+        return GPUResourceType::Buffer;
     }
 
     // [ResourceOwnerDX12]
@@ -141,9 +141,8 @@ struct DynamicAllocation
     }
 
     /// <summary>
-    /// Returns true if allocation is invalid
+    /// Returns true if allocation is invalid.
     /// </summary>
-    /// <returns>True if allocation in invalid</returns>
     bool IsInvalid() const
     {
         return CPUAddress == nullptr || Size == 0 || Page == nullptr;

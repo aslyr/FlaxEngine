@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -34,7 +34,7 @@ namespace FlaxEngine.GUI
         {
             base.DrawSelf();
 
-            Render2D.DrawRectangle(new Rectangle(Vector2.Zero, Size), BorderColor, BorderWidth);
+            Render2D.DrawRectangle(new Rectangle(Float2.Zero, Size), BorderColor, BorderWidth);
         }
     }
 }

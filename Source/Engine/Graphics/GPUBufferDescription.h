@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -78,7 +78,7 @@ DECLARE_ENUM_OPERATORS(GPUBufferFlags);
 /// </summary>
 API_STRUCT() struct FLAXENGINE_API GPUBufferDescription
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(GPUBufferDescription);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(GPUBufferDescription);
 
     /// <summary>
     /// The buffer total size.
@@ -111,7 +111,6 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(GPUBufferDescription);
     API_FIELD() GPUResourceUsage Usage;
 
 public:
-
     /// <summary>
     /// Gets the number elements in the buffer.
     /// </summary>
@@ -125,7 +124,7 @@ public:
     /// </summary>
     FORCE_INLINE bool IsShaderResource() const
     {
-        return (Flags & GPUBufferFlags::ShaderResource) != 0;
+        return (Flags & GPUBufferFlags::ShaderResource) != GPUBufferFlags::None;
     }
 
     /// <summary>
@@ -133,11 +132,10 @@ public:
     /// </summary>
     FORCE_INLINE bool IsUnorderedAccess() const
     {
-        return (Flags & GPUBufferFlags::UnorderedAccess) != 0;
+        return (Flags & GPUBufferFlags::UnorderedAccess) != GPUBufferFlags::None;
     }
 
 public:
-
     /// <summary>
     /// Creates the buffer description.
     /// </summary>
@@ -334,7 +332,6 @@ public:
     }
 
 public:
-
     void Clear();
     GPUBufferDescription ToStagingUpload() const;
     GPUBufferDescription ToStagingReadback() const;
@@ -342,7 +339,6 @@ public:
     String ToString() const;
 
 public:
-
     FORCE_INLINE bool operator==(const GPUBufferDescription& other) const
     {
         return Equals(other);

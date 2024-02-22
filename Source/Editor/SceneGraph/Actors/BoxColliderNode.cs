@@ -1,9 +1,48 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+
+#if USE_LARGE_WORLDS
+using Real = System.Double;
+#else
+using Real = System.Single;
+#endif
 
 using FlaxEngine;
+using FlaxEditor.CustomEditors.Dedicated;
+using FlaxEditor.CustomEditors;
+using FlaxEditor.Scripting;
 
 namespace FlaxEditor.SceneGraph.Actors
 {
+    /// <summary>
+    /// Dedicated custom editor for BoxCollider objects.
+    /// </summary>
+    [CustomEditor(typeof(BoxCollider)), DefaultEditor]
+    public class BoxColliderEditor : ActorEditor
+    {
+        private bool _keepLocalOrientation = true;
+
+        /// <inheritdoc />
+        public override void Initialize(LayoutElementsContainer layout)
+        {
+            base.Initialize(layout);
+
+            layout.Space(20f);
+            var checkbox = layout.Checkbox("Keep Local Orientation", "Keeps the local orientation when resizing.").CheckBox;
+            checkbox.Checked = _keepLocalOrientation;
+            checkbox.StateChanged += box => _keepLocalOrientation = box.Checked;
+            layout.Button("Resize to Fit", Editor.Instance.CodeDocs.GetTooltip(new ScriptMemberInfo(typeof(BoxCollider).GetMethod("AutoResize")))).Button.Clicked += OnResizeClicked;
+        }
+
+        private void OnResizeClicked()
+        {
+            foreach (var value in Values)
+            {
+                if (value is BoxCollider collider)
+                    collider.AutoResize(!_keepLocalOrientation);
+            }
+        }
+    }
+
     /// <summary>
     /// Scene tree node for <see cref="BoxCollider"/> actor type.
     /// </summary>
@@ -18,7 +57,7 @@ namespace FlaxEditor.SceneGraph.Actors
         }
 
         /// <inheritdoc />
-        public override bool RayCastSelf(ref RayCastData ray, out float distance, out Vector3 normal)
+        public override bool RayCastSelf(ref RayCastData ray, out Real distance, out Vector3 normal)
         {
             // Pick wires
             var actor = (BoxCollider)_actor;
@@ -30,6 +69,19 @@ namespace FlaxEditor.SceneGraph.Actors
             }
 
             return base.RayCastSelf(ref ray, out distance, out normal);
+        }
+
+        /// <inheritdoc />
+        public override void PostSpawn()
+        {
+            base.PostSpawn();
+
+            if (Actor.HasPrefabLink)
+            {
+                return;
+            }
+
+            ((BoxCollider)Actor).AutoResize(false);
         }
     }
 }

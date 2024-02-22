@@ -1,7 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using FlaxEditor.Surface.Undo;
+using FlaxEngine;
 
 namespace FlaxEditor.Surface
 {
@@ -9,7 +11,7 @@ namespace FlaxEditor.Surface
     {
         private VisjectSurfaceContext _root;
         private VisjectSurfaceContext _context;
-        private readonly Dictionary<ISurfaceContext, VisjectSurfaceContext> _contextCache = new Dictionary<ISurfaceContext, VisjectSurfaceContext>();
+        private readonly Dictionary<ContextHandle, VisjectSurfaceContext> _contextCache = new Dictionary<ContextHandle, VisjectSurfaceContext>();
 
         /// <summary>
         /// The surface context stack.
@@ -30,6 +32,30 @@ namespace FlaxEditor.Surface
         /// Occurs when context gets changed.
         /// </summary>
         public event Action<VisjectSurfaceContext> ContextChanged;
+
+        /// <summary>
+        /// Finds the surface context with the given owning nodes IDs path.
+        /// </summary>
+        /// <param name="nodePath">The node ids path.</param>
+        /// <returns>Found context or null if cannot.</returns>
+        public VisjectSurfaceContext FindContext(Span<uint> nodePath)
+        {
+            // Get size of the path
+            int nodePathSize = 0;
+            while (nodePathSize < nodePath.Length && nodePath[nodePathSize] != 0)
+                nodePathSize++;
+
+            // Follow each context path to verify if it matches with the path in the input path
+            foreach (var e in _contextCache)
+            {
+                var c = e.Value;
+                for (int i = nodePathSize - 1; i >= 0 && c != null; i--)
+                    c = c.OwnerNodeID == nodePath[i] ? c.Parent : null;
+                if (c != null)
+                    return e.Value;
+            }
+            return null;
+        }
 
         /// <summary>
         /// Creates the Visject surface context for the given surface data source context.
@@ -54,11 +80,14 @@ namespace FlaxEditor.Surface
                 return;
 
             // Get or create context
-            if (!_contextCache.TryGetValue(context, out VisjectSurfaceContext surfaceContext))
+            var contextHandle = new ContextHandle(context);
+            if (!_contextCache.TryGetValue(contextHandle, out VisjectSurfaceContext surfaceContext))
             {
                 surfaceContext = CreateContext(_context, context);
                 _context?.Children.Add(surfaceContext);
-                _contextCache.Add(context, surfaceContext);
+                _contextCache.Add(contextHandle, surfaceContext);
+                if (context is SurfaceNode asNode)
+                    surfaceContext.OwnerNodeID = asNode.ID;
 
                 context.OnContextCreated(surfaceContext);
 
@@ -118,7 +147,8 @@ namespace FlaxEditor.Surface
             }
 
             // Check if has context in cache
-            if (_contextCache.TryGetValue(context, out VisjectSurfaceContext surfaceContext))
+            var contextHandle = new ContextHandle(context);
+            if (_contextCache.TryGetValue(contextHandle, out VisjectSurfaceContext surfaceContext))
             {
                 // Remove from navigation path
                 while (ContextStack.Contains(surfaceContext))
@@ -126,7 +156,7 @@ namespace FlaxEditor.Surface
 
                 // Dispose
                 surfaceContext.Clear();
-                _contextCache.Remove(context);
+                _contextCache.Remove(contextHandle);
             }
         }
 
@@ -147,7 +177,8 @@ namespace FlaxEditor.Surface
                 return;
 
             // Check if already in a path
-            if (_contextCache.TryGetValue(context, out VisjectSurfaceContext surfaceContext) && ContextStack.Contains(surfaceContext))
+            var contextHandle = new ContextHandle(context);
+            if (_contextCache.TryGetValue(contextHandle, out VisjectSurfaceContext surfaceContext) && ContextStack.Contains(surfaceContext))
             {
                 // Change stack
                 do
@@ -166,7 +197,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <summary>
-        /// Called when context gets changed. Updates current context and UI. Updates the current context based on the first element in teh stack.
+        /// Called when context gets changed. Updates current context and UI. Updates the current context based on the first element in the stack.
         /// </summary>
         protected virtual void OnContextChanged()
         {

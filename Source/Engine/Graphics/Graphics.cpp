@@ -1,10 +1,14 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Graphics.h"
 #include "GPUDevice.h"
 #include "PixelFormatExtensions.h"
+#include "Async/GPUTasksManager.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Config/GraphicsSettings.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Engine/EngineService.h"
+#include "Engine/Render2D/Font.h"
 
 bool Graphics::UseVSync = false;
 Quality Graphics::AAQuality = Quality::Medium;
@@ -14,6 +18,9 @@ Quality Graphics::VolumetricFogQuality = Quality::High;
 Quality Graphics::ShadowsQuality = Quality::Medium;
 Quality Graphics::ShadowMapsQuality = Quality::Medium;
 bool Graphics::AllowCSMBlending = false;
+Quality Graphics::GlobalSDFQuality = Quality::High;
+Quality Graphics::GIQuality = Quality::High;
+PostProcessSettings Graphics::PostProcessSettings;
 
 #if GRAPHICS_API_NULL
 extern GPUDevice* CreateGPUDeviceNull();
@@ -30,11 +37,13 @@ extern GPUDevice* CreateGPUDeviceDX12();
 #if GRAPHICS_API_PS4
 extern GPUDevice* CreateGPUDevicePS4();
 #endif
+#if GRAPHICS_API_PS5
+extern GPUDevice* CreateGPUDevicePS5();
+#endif
 
 class GraphicsService : public EngineService
 {
 public:
-
     GraphicsService()
         : EngineService(TEXT("Graphics"), -40)
     {
@@ -47,13 +56,32 @@ public:
 
 GraphicsService GraphicsServiceInstance;
 
+void GraphicsSettings::Apply()
+{
+    Graphics::UseVSync = UseVSync;
+    Graphics::AAQuality = AAQuality;
+    Graphics::SSRQuality = SSRQuality;
+    Graphics::SSAOQuality = SSAOQuality;
+    Graphics::VolumetricFogQuality = VolumetricFogQuality;
+    Graphics::ShadowsQuality = ShadowsQuality;
+    Graphics::ShadowMapsQuality = ShadowMapsQuality;
+    Graphics::AllowCSMBlending = AllowCSMBlending;
+    Graphics::GlobalSDFQuality = GlobalSDFQuality;
+    Graphics::GIQuality = GIQuality;
+    Graphics::PostProcessSettings = ::PostProcessSettings();
+    Graphics::PostProcessSettings.BlendWith(PostProcessSettings, 1.0f);
+#if !USE_EDITOR // OptionsModule handles fallback fonts in Editor
+    Font::FallbackFonts = FallbackFonts;
+#endif
+}
+
 void Graphics::DisposeDevice()
 {
-    // Clean any danging pointer to last task (might stay if engine is disposing after crash)
-    GPUDevice::Instance->CurrentTask = nullptr;
-
     if (GPUDevice::Instance)
     {
+        // Clean any danging pointer to last task (might stay if engine is disposing after crash)
+        GPUDevice::Instance->CurrentTask = nullptr;
+
         GPUDevice::Instance->Dispose();
         LOG_FLUSH();
         Delete(GPUDevice::Instance);
@@ -133,6 +161,10 @@ bool GraphicsService::Init()
         if (!device)
             device = CreateGPUDevicePS4();
 #endif
+#if GRAPHICS_API_PS5
+        if (!device)
+            device = CreateGPUDevicePS5();
+#endif
     }
 
     // Null as a fallback
@@ -169,7 +201,7 @@ void GraphicsService::BeforeExit()
     if (GPUDevice::Instance)
     {
         // Start disposing
-        GPUDevice::Instance->TasksManager.Dispose();
+        GPUDevice::Instance->GetTasksManager()->Dispose();
     }
 }
 

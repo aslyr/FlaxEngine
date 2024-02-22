@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Runtime.InteropServices;
@@ -23,8 +23,8 @@ namespace FlaxEngine
                 if (_keyframes == null || _keyframes.Length != count)
                     _keyframes = new BezierCurve<Transform>.Keyframe[count];
 #if !BUILD_RELEASE
-                if (Marshal.SizeOf(typeof(BezierCurve<Transform>.Keyframe)) != Transform.SizeInBytes * 3 + sizeof(float))
-                    throw new Exception("Invalid size of BezierCurve keyframe " + Marshal.SizeOf(typeof(BezierCurve<Transform>.Keyframe)) + " bytes.");
+                if (System.Runtime.CompilerServices.Unsafe.SizeOf<BezierCurve<Transform>.Keyframe>() != Transform.SizeInBytes * 3 + sizeof(float))
+                    throw new Exception("Invalid size of BezierCurve keyframe " + System.Runtime.CompilerServices.Unsafe.SizeOf<BezierCurve<Transform>.Keyframe>() + " bytes.");
 #endif
                 Internal_GetKeyframes(__unmanagedPtr, _keyframes);
                 return _keyframes;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,27 +14,27 @@ class FLAXENGINE_API MProperty
     friend MClass;
 
 protected:
-
 #if USE_MONO
     MonoProperty* _monoProperty;
 #endif
 
-    MMethod* _getMethod;
-    MMethod* _setMethod;
+    mutable MMethod* _getMethod;
+    mutable MMethod* _setMethod;
     MClass* _parentClass;
 
-    MString _name;
+    StringAnsi _name;
 
-    Array<MonoObject*> _attributes;
+    mutable int32 _hasCachedAttributes : 1;
+    mutable int32 _hasSetMethod : 1;
+    mutable int32 _hasGetMethod : 1;
 
-    int32 _hasCachedAttributes : 1;
-    int32 _hasSetMethod : 1;
-    int32 _hasGetMethod : 1;
+    mutable Array<MObject*> _attributes;
 
 public:
-
 #if USE_MONO
     explicit MProperty(MonoProperty* monoProperty, const char* name, MClass* parentClass);
+#elif USE_NETCORE
+    MProperty(MClass* parentClass, const char* name, void* getterHandle, void* setterHandle, MMethodAttributes getterAttributes, MMethodAttributes setterAttributes);
 #endif
 
     /// <summary>
@@ -43,12 +43,10 @@ public:
     ~MProperty();
 
 public:
-
     /// <summary>
     /// Gets the property name.
     /// </summary>
-    /// <returns>The property name.</returns>
-    FORCE_INLINE const MString& GetName() const
+    FORCE_INLINE const StringAnsi& GetName() const
     {
         return _name;
     }
@@ -56,7 +54,6 @@ public:
     /// <summary>
     /// Returns the parent class that this method is contained with.
     /// </summary>
-    /// <returns>The parent class.</returns>
     FORCE_INLINE MClass* GetParentClass() const
     {
         return _parentClass;
@@ -65,59 +62,52 @@ public:
     /// <summary>
     /// Gets property type class.
     /// </summary>
-    /// <returns>The property type.</returns>
-    MType GetType();
+    MType* GetType() const;
 
     /// <summary>
     /// Gets property get method.
     /// </summary>
-    /// <returns>The getter method.</returns>
-    MMethod* GetGetMethod();
+    MMethod* GetGetMethod() const;
 
     /// <summary>
     /// Gets property set method.
     /// </summary>
-    /// <returns>The setter method.</returns>
-    MMethod* GetSetMethod();
+    MMethod* GetSetMethod() const;
 
     /// <summary>
     /// Gets property visibility in the class.
     /// </summary>
-    /// <returns>The property visibility.</returns>
-    MVisibility GetVisibility();
+    MVisibility GetVisibility() const;
 
     /// <summary>
     /// Returns true if property is static.
     /// </summary>
-    /// <returns>True if is static, otherwise false.</returns>
-    bool IsStatic();
+    bool IsStatic() const;
 
 public:
-
     /// <summary>
     /// Retrieves value currently set in the property on the specified object instance. If property is static object instance can be null.
     /// </summary>
     /// <remarks>
-    /// Value will be a pointer to raw data type for value types (for example int, float), and a MonoObject* for reference types.
+    /// Value will be a pointer to raw data type for value types (for example int, float), and a MObject* for reference types.
     /// </remarks>
     /// <param name="instance">The object of given type to get value from.</param>
     /// <param name="exception">An optional pointer to the exception value to store exception object reference.</param>
     /// <returns>The returned boxed value object.</returns>
-    MonoObject* GetValue(MonoObject* instance, MonoObject** exception);
+    MObject* GetValue(MObject* instance, MObject** exception) const;
 
     /// <summary>
     /// Sets a value for the property on the specified object instance. If property is static object instance can be null.
     /// </summary>
     /// <remarks>
-    /// Value should be a pointer to raw data type for value types (for example int, float), and a MonoObject* for reference types.
+    /// Value should be a pointer to raw data type for value types (for example int, float), and a MObject* for reference types.
     /// </remarks>
     /// <param name="instance">Object of given type to set value to.</param>
     /// <param name="exception">An optional pointer to the exception value to store exception object reference.</param>
     /// <param name="value">The value to set of undefined type.</param>
-    void SetValue(MonoObject* instance, void* value, MonoObject** exception);
+    void SetValue(MObject* instance, void* value, MObject** exception) const;
 
 public:
-
     /// <summary>
     /// Checks if property has an attribute of the specified type.
     /// </summary>
@@ -136,11 +126,11 @@ public:
     /// </summary>
     /// <param name="monoClass">The attribute class to take.</param>
     /// <returns>The attribute object.</returns>
-    MonoObject* GetAttribute(MClass* monoClass) const;
+    MObject* GetAttribute(MClass* monoClass) const;
 
     /// <summary>
     /// Returns an instance of all attributes connected with given property. Returns null if the property doesn't have any attributes.
     /// </summary>
     /// <returns>The array of attribute objects.</returns>
-    const Array<MonoObject*>& GetAttributes();
+    const Array<MObject*>& GetAttributes() const;
 };

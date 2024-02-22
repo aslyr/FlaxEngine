@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 using FlaxEngine.Utilities;
@@ -93,12 +93,13 @@ namespace FlaxEditor.States
         /// </summary>
         public virtual void UpdateFPS()
         {
-            var editorFps = Editor.Options.Options.General.EditorFPS;
+            var generalOptions = Editor.Options.Options.General;
+            var editorFps = generalOptions.EditorFPS;
             if (!Platform.HasFocus)
             {
                 // Drop performance if app has no focus
-                Time.DrawFPS = 15;
-                Time.UpdateFPS = 15;
+                Time.DrawFPS = generalOptions.EditorFPSWhenNotFocused;
+                Time.UpdateFPS = generalOptions.EditorFPSWhenNotFocused;
             }
             else if (editorFps < 1)
             {

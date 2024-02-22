@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -36,6 +36,11 @@ class ISkyRenderer
 public:
 
     /// <summary>
+    /// Returns true if sky is realtime, otherwise it's static.
+    /// </summary>
+    virtual bool IsDynamicSky() const = 0;
+
+    /// <summary>
     /// Apply sky material/shader state to the GPU pipeline with custom parameters set (render to GBuffer).
     /// </summary>
     /// <param name="context">The context responsible for rendering commands.</param>
@@ -55,7 +60,7 @@ struct VolumetricFogOptions
     Color Emissive;
     float ExtinctionScale;
     float Distance;
-    Vector4 FogParameters;
+    Float4 FogParameters;
 
     bool UseVolumetricFog() const
     {
@@ -184,7 +189,7 @@ struct DrawCall
             const Lightmap* Lightmap;
             Rectangle LightmapUVsArea;
             SkinnedMeshDrawData* Skinning;
-            Vector3 GeometrySize; // Object geometry size in the world (unscaled).
+            Float3 GeometrySize; // Object geometry size in the world (unscaled).
             float LODDitherFactor; // The model LOD transition dither progress.
             Matrix PrevWorld;
         } Surface;
@@ -193,9 +198,9 @@ struct DrawCall
         {
             const Lightmap* Lightmap;
             Rectangle LightmapUVsArea;
-            Vector4 HeightmapUVScaleBias;
-            Vector4 NeighborLOD;
-            Vector2 OffsetUV;
+            Float4 HeightmapUVScaleBias;
+            Float4 NeighborLOD;
+            Float2 OffsetUV;
             float CurrentLOD;
             float ChunkSizeNextLOD;
             float TerrainChunkSizeLOD0;
@@ -216,12 +221,11 @@ struct DrawCall
                 float UVOffsetX;
                 float UVOffsetY;
                 uint32 SegmentCount;
-                GPUBuffer* SegmentDistances;
             } Ribbon;
 
             struct
             {
-                Vector3 Position;
+                Float3 Position;
                 float Radius;
                 int32 ParticleIndex;
             } VolumetricFog;
@@ -231,7 +235,7 @@ struct DrawCall
         {
             GPUBuffer* SplineDeformation;
             Matrix LocalMatrix; // Geometry transformation applied before deformation.
-            Vector3 GeometrySize; // Object geometry size in the world (unscaled).
+            Float3 GeometrySize; // Object geometry size in the world (unscaled).
             float Segment;
             float ChunksPerSegment;
             float MeshMinZ;
@@ -252,7 +256,12 @@ struct DrawCall
     /// <summary>
     /// Object location in the world used for draw calls sorting.
     /// </summary>
-    Vector3 ObjectPosition;
+    Float3 ObjectPosition;
+
+    /// <summary>
+    /// Object bounding sphere radius that contains it whole (sphere at ObjectPosition).
+    /// </summary>
+    float ObjectRadius;
 
     /// <summary>
     /// The world matrix determinant sign (used for geometry that is two sided or has inverse scale - needs to flip normal vectors and change triangles culling).
@@ -265,10 +274,16 @@ struct DrawCall
     float PerInstanceRandom;
 
     /// <summary>
-    /// Does nothing.
+    /// The sorting key for the draw call calculate by RenderList.
     /// </summary>
-    DrawCall()
+    uint64 SortKey;
+
+    /// <summary>
+    /// Zero-init.
+    /// </summary>
+    FORCE_INLINE DrawCall()
     {
+        Platform::MemoryClear(this, sizeof(DrawCall));
     }
 };
 
@@ -287,31 +302,23 @@ struct GeometryDrawStateData
     /// <summary>
     /// The previous frame world transformation matrix for the given geometry instance.
     /// </summary>
-    Matrix PrevWorld;
+    Matrix PrevWorld = Matrix::Identity;
 
     /// <summary>
     /// The previous frame index. In sync with Engine::FrameCount used to detect new frames and rendering gaps to reset state.
     /// </summary>
-    uint64 PrevFrame;
+    uint64 PrevFrame = 0;
 
     /// <summary>
     /// The previous frame model LOD index used. It's locked during LOD transition to cache the transition start LOD.
     /// </summary>
-    char PrevLOD;
+    char PrevLOD = -1;
 
     /// <summary>
     /// The LOD transition timer. Value 255 means the end of the transition (aka no transition), value 0 means transition started. 
     /// Interpolated between 0-255 to smooth transition over several frames and reduce LOD changing artifacts.
     /// </summary>
-    byte LODTransition;
-
-    GeometryDrawStateData()
-    {
-        PrevWorld = Matrix::Identity;
-        PrevFrame = 0;
-        PrevLOD = -1;
-        LODTransition = 255;
-    }
+    byte LODTransition = 255;
 };
 
 template<>
@@ -322,13 +329,13 @@ struct TIsPODType<GeometryDrawStateData>
 
 #define GEOMETRY_DRAW_STATE_EVENT_BEGIN(drawState, worldMatrix) \
     const auto frame = Engine::FrameCount; \
-	if (drawState.PrevFrame + 1 < frame) \
+	if (drawState.PrevFrame + 1 < frame && !renderContext.View.IsSingleFrame) \
 	{ \
         drawState.PrevWorld = worldMatrix; \
     }
 
 #define GEOMETRY_DRAW_STATE_EVENT_END(drawState, worldMatrix) \
-	if (drawState.PrevFrame != frame) \
+	if (drawState.PrevFrame != frame && !renderContext.View.IsSingleFrame) \
 	{ \
 		drawState.PrevWorld = worldMatrix; \
 		drawState.PrevFrame = frame; \

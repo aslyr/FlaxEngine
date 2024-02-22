@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -93,7 +93,7 @@ namespace FlaxEditor.Tools.Foliage
                         rotation = Quaternion.RotationZ(Mathf.Pi);
                     else
                         rotation = Quaternion.LookRotation(Vector3.Cross(Vector3.Cross(brushNormal, Vector3.Forward), brushNormal), brushNormal);
-                    Matrix transform = Matrix.Scaling(Mode.CurrentBrush.Size * 0.01f) * Matrix.RotationQuaternion(rotation) * Matrix.Translation(brushPosition);
+                    Matrix transform = Matrix.Scaling(Mode.CurrentBrush.Size * 0.01f) * Matrix.RotationQuaternion(rotation) * Matrix.Translation(brushPosition - renderContext.View.Origin);
                     _brushModel.Draw(ref renderContext, brushMaterial, ref transform);
                 }
             }

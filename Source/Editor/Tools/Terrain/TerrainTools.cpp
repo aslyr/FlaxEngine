@@ -1,9 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "TerrainTools.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Cache.h"
-#include "Engine/Core/Math/Int2.h"
 #include "Engine/Core/Math/Color32.h"
 #include "Engine/Core/Collections/CollectionPoolCache.h"
 #include "Engine/Terrain/TerrainPatch.h"
@@ -21,7 +20,7 @@ bool TerrainTools::TryGetPatchCoordToAdd(Terrain* terrain, const Ray& ray, Int2&
 {
     CHECK_RETURN(terrain, true);
     result = Int2::Zero;
-    const float patchSize = terrain->GetChunkSize() * TERRAIN_UNITS_PER_VERTEX * TerrainPatch::CHUNKS_COUNT_EDGE;
+    const float patchSize = terrain->GetChunkSize() * TERRAIN_UNITS_PER_VERTEX * Terrain::ChunksCountEdge;
 
     // Try to pick any of the patch edges
     for (int32 patchIndex = 0; patchIndex < terrain->GetPatchesCount(); patchIndex++)
@@ -180,7 +179,7 @@ bool TerrainTools::GenerateTerrain(Terrain* terrain, const Int2& numberOfPatches
     terrain->AddPatches(numberOfPatches);
 
     // Prepare data
-    const auto heightmapSize = terrain->GetChunkSize() * TerrainPatch::CHUNKS_COUNT_EDGE + 1;
+    const auto heightmapSize = terrain->GetChunkSize() * Terrain::ChunksCountEdge + 1;
     Array<float> heightmapData;
     heightmapData.Resize(heightmapSize * heightmapSize);
 
@@ -286,6 +285,7 @@ bool TerrainTools::GenerateTerrain(Terrain* terrain, const Int2& numberOfPatches
 
 StringAnsi TerrainTools::SerializePatch(Terrain* terrain, const Int2& patchCoord)
 {
+    CHECK_RETURN(terrain, StringAnsi::Empty);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, StringAnsi::Empty);
 
@@ -301,6 +301,7 @@ StringAnsi TerrainTools::SerializePatch(Terrain* terrain, const Int2& patchCoord
 
 void TerrainTools::DeserializePatch(Terrain* terrain, const Int2& patchCoord, const StringAnsiView& value)
 {
+    CHECK(terrain);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK(patch);
 
@@ -318,27 +319,31 @@ void TerrainTools::DeserializePatch(Terrain* terrain, const Int2& patchCoord, co
 
 bool TerrainTools::InitializePatch(Terrain* terrain, const Int2& patchCoord)
 {
+    CHECK_RETURN(terrain, true);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, true);
     return patch->InitializeHeightMap();
 }
 
-bool TerrainTools::ModifyHeightMap(Terrain* terrain, const Int2& patchCoord, float* samples, const Int2& offset, const Int2& size)
+bool TerrainTools::ModifyHeightMap(Terrain* terrain, const Int2& patchCoord, const float* samples, const Int2& offset, const Int2& size)
 {
+    CHECK_RETURN(terrain, true);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, true);
     return patch->ModifyHeightMap(samples, offset, size);
 }
 
-bool TerrainTools::ModifyHolesMask(Terrain* terrain, const Int2& patchCoord, byte* samples, const Int2& offset, const Int2& size)
+bool TerrainTools::ModifyHolesMask(Terrain* terrain, const Int2& patchCoord, const byte* samples, const Int2& offset, const Int2& size)
 {
+    CHECK_RETURN(terrain, true);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, true);
     return patch->ModifyHolesMask(samples, offset, size);
 }
 
-bool TerrainTools::ModifySplatMap(Terrain* terrain, const Int2& patchCoord, int32 index, Color32* samples, const Int2& offset, const Int2& size)
+bool TerrainTools::ModifySplatMap(Terrain* terrain, const Int2& patchCoord, int32 index, const Color32* samples, const Int2& offset, const Int2& size)
 {
+    CHECK_RETURN(terrain, true);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, true);
     CHECK_RETURN(index >= 0 && index < TERRAIN_MAX_SPLATMAPS_COUNT, true);
@@ -347,6 +352,7 @@ bool TerrainTools::ModifySplatMap(Terrain* terrain, const Int2& patchCoord, int3
 
 float* TerrainTools::GetHeightmapData(Terrain* terrain, const Int2& patchCoord)
 {
+    CHECK_RETURN(terrain, nullptr);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, nullptr);
     return patch->GetHeightmapData();
@@ -354,6 +360,7 @@ float* TerrainTools::GetHeightmapData(Terrain* terrain, const Int2& patchCoord)
 
 byte* TerrainTools::GetHolesMaskData(Terrain* terrain, const Int2& patchCoord)
 {
+    CHECK_RETURN(terrain, nullptr);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, nullptr);
     return patch->GetHolesMaskData();
@@ -361,6 +368,7 @@ byte* TerrainTools::GetHolesMaskData(Terrain* terrain, const Int2& patchCoord)
 
 Color32* TerrainTools::GetSplatMapData(Terrain* terrain, const Int2& patchCoord, int32 index)
 {
+    CHECK_RETURN(terrain, nullptr);
     auto patch = terrain->GetPatch(patchCoord);
     CHECK_RETURN(patch, nullptr);
     return patch->GetSplatMapData(index);
@@ -372,7 +380,7 @@ bool TerrainTools::ExportTerrain(Terrain* terrain, String outputFolder)
     const auto firstPatch = terrain->GetPatch(0);
 
     // Calculate texture size
-    const int32 patchEdgeVertexCount = terrain->GetChunkSize() * TerrainPatch::CHUNKS_COUNT_EDGE + 1;
+    const int32 patchEdgeVertexCount = terrain->GetChunkSize() * Terrain::ChunksCountEdge + 1;
     const int32 patchVertexCount = patchEdgeVertexCount * patchEdgeVertexCount;
 
     // Find size of heightmap in patches

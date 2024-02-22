@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FlaxEditor.Options;
 using FlaxEngine;
 using FlaxEngine.GUI;
 
@@ -270,6 +271,24 @@ namespace FlaxEditor.GUI.ContextMenu
         }
 
         /// <summary>
+        /// Adds the button.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <param name="binding">The input binding.</param>
+        /// <param name="clicked">On button clicked event.</param>
+        /// <returns>Created context menu item control.</returns>
+        public ContextMenuButton AddButton(string text, InputBinding binding, Action clicked)
+        {
+            var item = new ContextMenuButton(this, text, binding.ToString())
+            {
+                Parent = _panel
+            };
+            item.Clicked += clicked;
+            SortButtons();
+            return item;
+        }
+
+        /// <summary>
         /// Gets the child menu (with that name).
         /// </summary>
         /// <param name="text">The text.</param>
@@ -341,12 +360,12 @@ namespace FlaxEditor.GUI.ContextMenu
         }
 
         /// <inheritdoc />
-        public override bool ContainsPoint(ref Vector2 location)
+        public override bool ContainsPoint(ref Float2 location)
         {
             if (base.ContainsPoint(ref location))
                 return true;
 
-            Vector2 cLocation = location - Location;
+            var cLocation = location - Location;
             for (int i = 0; i < _panel.Children.Count; i++)
             {
                 if (_panel.Children[i].ContainsPoint(ref cLocation))
@@ -365,6 +384,7 @@ namespace FlaxEditor.GUI.ContextMenu
             float maxWidth = 0;
             float height = _itemsAreaMargin.Height;
             int itemsLeft = MaximumItemsInViewCount;
+            int overflowItemCount = 0;
             for (int i = 0; i < _panel.Children.Count; i++)
             {
                 if (_panel.Children[i] is ContextMenuItem item && item.Visible)
@@ -374,16 +394,32 @@ namespace FlaxEditor.GUI.ContextMenu
                         height += item.Height + _itemsMargin.Height;
                         itemsLeft--;
                     }
+                    else
+                    {
+                        overflowItemCount++;
+                    }
                     maxWidth = Mathf.Max(maxWidth, item.MinimumWidth);
                 }
             }
             maxWidth = Mathf.Max(maxWidth + 20, MinimumWidth);
 
+            // Move child arrows to accommodate scroll bar showing 
+            if (overflowItemCount > 0)
+            {
+                foreach (var child in _panel.Children)
+                {
+                    if (child is ContextMenuButton item && item.Visible)
+                    {
+                        item.ExtraAdjustmentAmount = -_panel.VScrollBar.Width;
+                    }
+                }
+            }
+
             // Resize container
-            Size = new Vector2(Mathf.Ceil(maxWidth), Mathf.Ceil(height));
+            Size = new Float2(Mathf.Ceil(maxWidth), Mathf.Ceil(height));
 
             // Arrange items view panel
-            var panelBounds = new Rectangle(Vector2.Zero, Size);
+            var panelBounds = new Rectangle(Float2.Zero, Size);
             _itemsAreaMargin.ShrinkRectangle(ref panelBounds);
             _panel.Bounds = panelBounds;
 

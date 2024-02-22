@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,18 +10,17 @@ class MemoryReadStream;
 /// <summary>
 /// Represents single Level Of Detail for the model. Contains a collection of the meshes.
 /// </summary>
-API_CLASS(NoSpawn) class FLAXENGINE_API ModelLOD : public PersistentScriptingObject
+API_CLASS(NoSpawn) class FLAXENGINE_API ModelLOD : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(ModelLOD, PersistentScriptingObject);
+    DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(ModelLOD, ScriptingObject);
     friend Model;
     friend Mesh;
 private:
-
     Model* _model = nullptr;
+    int32 _lodIndex = 0;
     uint32 _verticesCount;
 
 public:
-
     /// <summary>
     /// The screen size to switch LODs. Bottom limit of the model screen size to render this LOD.
     /// </summary>
@@ -43,6 +42,14 @@ public:
     }
 
     /// <summary>
+    /// Gets the model LOD index.
+    /// </summary>
+    API_PROPERTY() FORCE_INLINE int32 GetLODIndex() const
+    {
+        return _lodIndex;
+    }
+
+    /// <summary>
     /// Gets the vertex count for this model LOD level.
     /// </summary>
     API_PROPERTY() FORCE_INLINE int32 GetVertexCount() const
@@ -51,7 +58,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Initializes the LOD from the data stream.
     /// </summary>
@@ -70,7 +76,6 @@ public:
     void Dispose();
 
 public:
-
     /// <summary>
     /// Determines if there is an intersection between the Model and a Ray in given world using given instance
     /// </summary>
@@ -80,22 +85,33 @@ public:
     /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
     /// <param name="mesh">Mesh, or null</param>
     /// <returns>True whether the two objects intersected</returns>
-    bool Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal, Mesh** mesh);
+    bool Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal, Mesh** mesh);
 
     /// <summary>
-    /// Get model bounding box in transformed world for given instance buffer
+    /// Determines if there is an intersection between the Model and a Ray in given world using given instance
+    /// </summary>
+    /// <param name="ray">The ray to test</param>
+    /// <param name="transform">The instance transformation.</param>
+    /// <param name="distance">When the method completes, contains the distance of the intersection (if any valid).</param>
+    /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
+    /// <param name="mesh">Mesh, or null</param>
+    /// <returns>True whether the two objects intersected</returns>
+    bool Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal, Mesh** mesh);
+
+    /// <summary>
+    /// Get model bounding box in transformed world matrix.
     /// </summary>
     /// <param name="world">World matrix</param>
     /// <returns>Bounding box</returns>
     BoundingBox GetBox(const Matrix& world) const;
 
     /// <summary>
-    /// Get model bounding box in transformed world for given instance buffer for only one mesh
+    /// Get model bounding box in transformed world.
     /// </summary>
-    /// <param name="world">World matrix</param>
-    /// <param name="meshIndex">esh index</param>
+    /// <param name="transform">The instance transformation.</param>
+    /// <param name="deformation">The meshes deformation container (optional).</param>
     /// <returns>Bounding box</returns>
-    BoundingBox GetBox(const Matrix& world, int32 meshIndex) const;
+    BoundingBox GetBox(const Transform& transform, const MeshDeformation* deformation = nullptr) const;
 
     /// <summary>
     /// Gets the bounding box combined for all meshes in this model LOD.
@@ -109,9 +125,7 @@ public:
     FORCE_INLINE void Render(GPUContext* context)
     {
         for (int32 i = 0; i < Meshes.Count(); i++)
-        {
-            Meshes[i].Render(context);
-        }
+            Meshes.Get()[i].Render(context);
     }
 
     /// <summary>
@@ -124,12 +138,11 @@ public:
     /// <param name="receiveDecals">True if rendered geometry can receive decals, otherwise false.</param>
     /// <param name="drawModes">The draw passes to use for rendering this object.</param>
     /// <param name="perInstanceRandom">The random per-instance value (normalized to range 0-1).</param>
-    API_FUNCTION() void Draw(API_PARAM(Ref) const RenderContext& renderContext, MaterialBase* material, API_PARAM(Ref) const Matrix& world, StaticFlags flags = StaticFlags::None, bool receiveDecals = true, DrawPass drawModes = DrawPass::Default, float perInstanceRandom = 0.0f) const
+    /// <param name="sortOrder">Object sorting key.</param>
+    API_FUNCTION() void Draw(API_PARAM(Ref) const RenderContext& renderContext, MaterialBase* material, API_PARAM(Ref) const Matrix& world, StaticFlags flags = StaticFlags::None, bool receiveDecals = true, DrawPass drawModes = DrawPass::Default, float perInstanceRandom = 0.0f, int16 sortOrder = 0) const
     {
         for (int32 i = 0; i < Meshes.Count(); i++)
-        {
-            Meshes[i].Draw(renderContext, material, world, flags, receiveDecals, drawModes, perInstanceRandom);
-        }
+            Meshes.Get()[i].Draw(renderContext, material, world, flags, receiveDecals, drawModes, perInstanceRandom, sortOrder);
     }
 
     /// <summary>
@@ -141,8 +154,18 @@ public:
     FORCE_INLINE void Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info, float lodDitherFactor) const
     {
         for (int32 i = 0; i < Meshes.Count(); i++)
-        {
-            Meshes[i].Draw(renderContext, info, lodDitherFactor);
-        }
+            Meshes.Get()[i].Draw(renderContext, info, lodDitherFactor);
+    }
+
+    /// <summary>
+    /// Draws all the meshes from the model LOD.
+    /// </summary>
+    /// <param name="renderContextBatch">The rendering context batch.</param>
+    /// <param name="info">The packed drawing info data.</param>
+    /// <param name="lodDitherFactor">The LOD transition dither factor.</param>
+    FORCE_INLINE void Draw(const RenderContextBatch& renderContextBatch, const Mesh::DrawInfo& info, float lodDitherFactor) const
+    {
+        for (int32 i = 0; i < Meshes.Count(); i++)
+            Meshes.Get()[i].Draw(renderContextBatch, info, lodDitherFactor);
     }
 };

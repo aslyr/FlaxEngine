@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "BitonicSort.h"
 #include "Engine/Content/Content.h"
 #include "Engine/Graphics/GPUBuffer.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPULimits.h"
 
 #define INDIRECT_ARGS_STRIDE 12

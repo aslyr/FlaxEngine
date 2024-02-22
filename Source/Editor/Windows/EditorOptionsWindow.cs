@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -46,7 +46,7 @@ namespace FlaxEditor.Windows
                 Orientation = Orientation.Vertical,
                 AnchorPreset = AnchorPresets.StretchAll,
                 Offsets = new Margin(0, 0, toolstrip.Bottom, 0),
-                TabsSize = new Vector2(120, 32),
+                TabsSize = new Float2(120, 32),
                 UseScroll = true,
                 Parent = this
             };
@@ -215,6 +215,37 @@ namespace FlaxEditor.Windows
             _saveButton = null;
 
             base.OnDestroy();
+        }
+
+        /// <inheritdoc />
+        protected override bool OnClosing(ClosingReason reason)
+        {
+            // Block closing only on user events
+            if (reason == ClosingReason.User)
+            {
+                // Check if asset has been edited and not saved (and still has linked item)
+                if (_isDataDirty && _options != null)
+                {
+                    // Ask user for further action
+                    var result = MessageBox.Show(
+                                                 "Editor options have been edited. Save before closing?",
+                                                 "Save before closing?",
+                                                 MessageBoxButtons.YesNoCancel
+                                                );
+                    if (result == DialogResult.OK || result == DialogResult.Yes)
+                    {
+                        // Save and close
+                        SaveData();
+                    }
+                    else if (result == DialogResult.Cancel || result == DialogResult.Abort)
+                    {
+                        // Cancel closing
+                        return true;
+                    }
+                }
+            }
+
+            return base.OnClosing(reason);
         }
     }
 }

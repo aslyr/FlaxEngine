@@ -1,12 +1,14 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using FlaxEditor.GUI.ContextMenu;
+using FlaxEditor.GUI.Input;
 using FlaxEditor.Options;
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -42,7 +44,7 @@ namespace FlaxEditor.Windows
 
         private struct TextBlockTag
         {
-            public enum Types
+            internal enum Types
             {
                 CodeLocation
             };
@@ -93,7 +95,7 @@ namespace FlaxEditor.Windows
             }
 
             /// <inheritdoc />
-            public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+            public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
             {
                 // Click on text block
                 int textLength = TextLength;
@@ -148,6 +150,7 @@ namespace FlaxEditor.Windows
         {
             Title = "Output Log";
             ClipChildren = false;
+            FlaxEditor.Utilities.Utils.SetupCommonInputActions(this);
 
             // Setup UI
             _viewDropdown = new Button(2, 2, 40.0f, TextBoxBase.DefaultHeight)
@@ -157,9 +160,8 @@ namespace FlaxEditor.Windows
                 Parent = this,
             };
             _viewDropdown.Clicked += OnViewButtonClicked;
-            _searchBox = new TextBox(false, _viewDropdown.Right + 2, 2, Width - _viewDropdown.Right - 2 - _scrollSize)
+            _searchBox = new SearchBox(false, _viewDropdown.Right + 2, 2, Width - _viewDropdown.Right - 4)
             {
-                WatermarkText = "Search...",
                 Parent = this,
             };
             _searchBox.TextChanged += Refresh;
@@ -169,11 +171,12 @@ namespace FlaxEditor.Windows
                 Maximum = 0,
             };
             _hScroll.ValueChanged += OnHScrollValueChanged;
-            _vScroll = new VScrollBar(this, Width - _scrollSize, Height, _scrollSize)
+            _vScroll = new VScrollBar(this, Width - _scrollSize, Height - _viewDropdown.Height - 2, _scrollSize)
             {
                 ThumbThickness = 10,
                 Maximum = 0,
             };
+            _vScroll.Y += _viewDropdown.Height + 2;
             _vScroll.ValueChanged += OnVScrollValueChanged;
             _output = new OutputTextBox
             {
@@ -181,7 +184,7 @@ namespace FlaxEditor.Windows
                 IsReadOnly = true,
                 IsMultiline = true,
                 BackgroundSelectedFlashSpeed = 0.0f,
-                Location = new Vector2(2, _viewDropdown.Bottom + 2),
+                Location = new Float2(2, _viewDropdown.Bottom + 2),
                 Parent = this,
             };
             _output.TargetViewOffsetChanged += OnOutputTargetViewOffsetChanged;
@@ -192,7 +195,7 @@ namespace FlaxEditor.Windows
             _contextMenu.AddButton("Clear log", Clear);
             _contextMenu.AddButton("Copy selection", _output.Copy);
             _contextMenu.AddButton("Select All", _output.SelectAll);
-            _contextMenu.AddButton("Show in explorer", () => FileSystem.ShowFileExplorer(Path.Combine(Globals.ProjectFolder, "Logs")));
+            _contextMenu.AddButton(Utilities.Constants.ShowInExplorer, () => FileSystem.ShowFileExplorer(Path.Combine(Globals.ProjectFolder, "Logs")));
             _contextMenu.AddButton("Scroll to bottom", () => { _vScroll.TargetValue = _vScroll.Maximum; }).Icon = Editor.Icons.ArrowDown12;
 
             // Setup editor options
@@ -366,7 +369,7 @@ namespace FlaxEditor.Windows
                         // Try to add the line for multi-line logs
                         if (_entries.Count != 0 && !line.StartsWith("======"))
                         {
-                            ref var last = ref Utils.ExtractArrayFromList(_entries)[_entries.Count - 1];
+                            ref var last = ref CollectionsMarshal.AsSpan(_entries)[_entries.Count - 1];
                             last.Message += '\n';
                             last.Message += line;
                         }
@@ -407,13 +410,13 @@ namespace FlaxEditor.Windows
 
             if (_output != null)
             {
-                _searchBox.Width = Width - _viewDropdown.Right - 2 - _scrollSize;
-                _output.Size = new Vector2(_vScroll.X - 2, _hScroll.Y - 4 - _viewDropdown.Bottom);
+                _searchBox.Width = Width - _viewDropdown.Right - 4;
+                _output.Size = new Float2(_vScroll.X - 2, _hScroll.Y - 4 - _viewDropdown.Bottom);
             }
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (base.OnMouseUp(location, button))
                 return true;
@@ -445,7 +448,7 @@ namespace FlaxEditor.Windows
             int logCount;
             do
             {
-                logCount = Editor.Internal_ReadOutputLogs(_outMessages, _outLogTypes, _outLogTimes);
+                logCount = Editor.Internal_ReadOutputLogs(ref _outMessages, ref _outLogTypes, ref _outLogTimes, OutCapacity);
 
                 for (int i = 0; i < logCount; i++)
                 {
@@ -464,6 +467,7 @@ namespace FlaxEditor.Windows
             if (_isDirty)
             {
                 _isDirty = false;
+                var wasEmpty = _output.TextLength == 0;
 
                 // Cache fonts
                 _output.DefaultStyle.Font.GetFont();
@@ -471,7 +475,7 @@ namespace FlaxEditor.Windows
                 _output.ErrorStyle.Font.GetFont();
 
                 // Generate the output log
-                var entries = Utils.ExtractArrayFromList(_entries);
+                Span<Entry> entries = CollectionsMarshal.AsSpan(_entries);
                 var searchQuery = _searchBox.Text;
                 for (int i = _textBufferCount; i < _entries.Count; i++)
                 {
@@ -482,7 +486,6 @@ namespace FlaxEditor.Windows
                         continue;
 
                     var startIndex = _textBuffer.Length;
-
                     switch (_timestampsFormats)
                     {
                     case InterfaceOptions.TimestampsFormats.Utc:
@@ -496,12 +499,12 @@ namespace FlaxEditor.Windows
                         _textBuffer.AppendFormat("[ {0:00}:{1:00}:{2:00}.{3:000} ]: ", diff.Hours, diff.Minutes, diff.Seconds, diff.Milliseconds);
                         break;
                     }
-
                     if (_showLogType)
                     {
                         _textBuffer.AppendFormat("[{0}] ", entry.Level);
                     }
 
+                    var prefixLength = _textBuffer.Length - startIndex;
                     if (entry.Message.IndexOf('\r') != -1)
                         entry.Message = entry.Message.Replace("\r", "");
                     _textBuffer.Append(entry.Message);
@@ -542,33 +545,40 @@ namespace FlaxEditor.Windows
                     {
                         ref var line = ref lines[j];
                         textBlock.Range.StartIndex = startIndex + line.FirstCharIndex;
-                        textBlock.Range.EndIndex = startIndex + line.LastCharIndex;
-                        textBlock.Bounds = new Rectangle(new Vector2(0.0f, prevBlockBottom), line.Size);
+                        textBlock.Range.EndIndex = startIndex + line.LastCharIndex + 1;
+                        textBlock.Bounds = new Rectangle(new Float2(0.0f, prevBlockBottom), line.Size);
 
                         if (textBlock.Range.Length > 0)
                         {
                             // Parse compilation error/warning
-                            var match = _compileRegex.Match(entryText, line.FirstCharIndex, textBlock.Range.Length);
-                            if (match.Success)
+                            var regexStart = line.FirstCharIndex;
+                            if (j == 0)
+                                regexStart += prefixLength;
+                            var regexLength = line.LastCharIndex + 1 - regexStart;
+                            if (regexLength > 0)
                             {
-                                switch (match.Groups["level"].Value)
+                                var match = _compileRegex.Match(entryText, regexStart, regexLength);
+                                if (match.Success)
                                 {
-                                case "error":
-                                    textBlock.Style = _output.ErrorStyle;
-                                    break;
-                                case "warning":
-                                    textBlock.Style = _output.WarningStyle;
-                                    break;
+                                    switch (match.Groups["level"].Value)
+                                    {
+                                    case "error":
+                                        textBlock.Style = _output.ErrorStyle;
+                                        break;
+                                    case "warning":
+                                        textBlock.Style = _output.WarningStyle;
+                                        break;
+                                    }
+                                    textBlock.Tag = new TextBlockTag
+                                    {
+                                        Type = TextBlockTag.Types.CodeLocation,
+                                        Url = match.Groups["path"].Value,
+                                        Line = int.Parse(match.Groups["line"].Value),
+                                    };
                                 }
-                                textBlock.Tag = new TextBlockTag
-                                {
-                                    Type = TextBlockTag.Types.CodeLocation,
-                                    Url = match.Groups["path"].Value,
-                                    Line = int.Parse(match.Groups["line"].Value),
-                                };
+                                // TODO: parsing hyperlinks with link
+                                // TODO: parsing file paths with link
                             }
-                            // TODO: parsing hyperlinks with link
-                            // TODO: parsing file paths with link
                         }
 
                         prevBlockBottom += line.Size.Y;
@@ -580,7 +590,7 @@ namespace FlaxEditor.Windows
                 // Update the output
                 var cachedScrollValue = _vScroll.Value;
                 var cachedSelection = _output.SelectionRange;
-                var isBottomScroll = _vScroll.Value >= _vScroll.Maximum - 20.0f;
+                var isBottomScroll = _vScroll.Value >= _vScroll.Maximum - 20.0f || wasEmpty;
                 _output.Text = _textBuffer.ToString();
                 _textBufferCount = _entries.Count;
                 if (!_vScroll.IsThumbClicked)

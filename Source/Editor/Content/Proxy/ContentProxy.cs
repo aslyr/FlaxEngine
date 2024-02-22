@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI.ContextMenu;
@@ -82,7 +82,7 @@ namespace FlaxEditor.Content
         {
             return true;
         }
-        
+
         /// <summary>
         /// Determines whether this proxy can create items in the specified target location.
         /// </summary>

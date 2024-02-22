@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI.ContextMenu;
@@ -58,12 +58,17 @@ namespace FlaxEditor.GUI
         }
 
         /// <summary>
+        /// Gets the text input field control.
+        /// </summary>
+        public TextBox InputField => _inputField;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="RenamePopup"/> class.
         /// </summary>
         /// <param name="value">The value.</param>
         /// <param name="size">The size.</param>
         /// <param name="isMultiline">Enable/disable multiline text input support</param>
-        public RenamePopup(string value, Vector2 size, bool isMultiline)
+        public RenamePopup(string value, Float2 size, bool isMultiline)
         {
             if (!isMultiline)
                 size.Y = TextBox.DefaultHeight;
@@ -80,6 +85,20 @@ namespace FlaxEditor.GUI
         }
 
         private bool IsInputValid => !string.IsNullOrWhiteSpace(_inputField.Text) && (_inputField.Text == _startValue || Validate == null || Validate(this, _inputField.Text));
+
+        /// <inheritdoc />
+        public override void Update(float deltaTime)
+        {
+            var mouseLocation = Root.MousePosition;
+            if (!ContainsPoint(ref mouseLocation) && RootWindow.ContainsFocus && Text != _startValue)
+            {
+                // rename item before closing if left mouse button in clicked
+                if (FlaxEngine.Input.GetMouseButtonDown(MouseButton.Left))
+                    OnEnd();
+            }
+
+            base.Update(deltaTime);
+        }
 
         private void OnTextChanged()
         {
@@ -117,7 +136,7 @@ namespace FlaxEditor.GUI
             var size = bottomRight - upperLeft;
 
             var rename = new RenamePopup(value, size, isMultiline);
-            rename.Show(control, area.Location + new Vector2(0, (size.Y - rename.Height) * 0.5f));
+            rename.Show(control, area.Location + new Float2(0, (size.Y - rename.Height) * 0.5f));
             return rename;
         }
 
@@ -158,6 +177,7 @@ namespace FlaxEditor.GUI
         /// <inheritdoc />
         protected override void OnShow()
         {
+            _inputField.EndEditOnClick = false; // Ending edit is handled through popup
             _inputField.Focus();
             _inputField.SelectAll();
 

@@ -1,11 +1,12 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Platform/Platform.h"
+#include "Engine/Platform/CriticalSection.h"
+#include "Engine/Core/NonCopyable.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Scripting/ScriptingObject.h"
-#include "Async/GPUTasksManager.h"
-#include "GPUResourcesCollection.h"
 #include "GPUAdapter.h"
 #include "GPULimits.h"
 #include "Enums.h"
@@ -13,6 +14,7 @@
 
 class ITextureOwner;
 class RenderTask;
+class GPUResource;
 class GPUContext;
 class GPUShader;
 class GPUTimerQuery;
@@ -20,7 +22,11 @@ class GPUTexture;
 class GPUBuffer;
 class GPUSampler;
 class GPUPipelineState;
+class GPUConstantBuffer;
+class GPUTasksContext;
+class GPUTasksExecutor;
 class GPUSwapChain;
+class GPUTasksManager;
 class Shader;
 class Model;
 class Material;
@@ -29,22 +35,29 @@ class MaterialBase;
 /// <summary>
 /// Graphics device object for rendering on GPU.
 /// </summary>
-API_CLASS(Sealed, NoSpawn) class FLAXENGINE_API GPUDevice : public PersistentScriptingObject
+API_CLASS(Sealed, NoSpawn) class FLAXENGINE_API GPUDevice : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDevice);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDevice);
 public:
-
     /// <summary>
     /// Graphics Device states that describe its lifetime.
     /// </summary>
-    DECLARE_ENUM_6(DeviceState, Missing, Created, Ready, Removed, Disposing, Disposed);
+    enum class DeviceState
+    {
+        Missing = 0,
+        Created,
+        Ready,
+        Removed,
+        Disposing,
+        Disposed
+    };
 
     /// <summary>
     /// Describes a video output display mode.
     /// </summary>
     API_STRUCT() struct VideoOutputMode
     {
-    DECLARE_SCRIPTING_TYPE_NO_SPAWN(VideoOutputMode);
+        DECLARE_SCRIPTING_TYPE_NO_SPAWN(VideoOutputMode);
 
         /// <summary>
         /// The resolution width (in pixel).
@@ -68,7 +81,6 @@ public:
     API_FIELD(ReadOnly) static GPUDevice* Instance;
 
 protected:
-
     // State
     DeviceState _state;
     bool _isRendering;
@@ -81,9 +93,10 @@ protected:
     // Private resources (hidden with declaration)
     struct PrivateData;
     PrivateData* _res;
+    Array<GPUResource*> _resources;
+    CriticalSection _resourcesLock;
 
 protected:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="GPUDevice"/> class.
     /// </summary>
@@ -92,30 +105,16 @@ protected:
     GPUDevice(RendererType type, ShaderProfile profile);
 
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="GPUDevice"/> class.
     /// </summary>
     virtual ~GPUDevice();
 
 public:
-
     /// <summary>
     /// The graphics device locking mutex.
     /// </summary>
     CriticalSection Locker;
-
-    /// <summary>
-    /// The GPU resources collection.
-    /// </summary>
-    GPUResourcesCollection Resources;
-
-    /// <summary>
-    /// GPU asynchronous work manager.
-    /// </summary>
-    GPUTasksManager TasksManager;
-
-public:
 
     /// <summary>
     /// The total amount of graphics memory in bytes.
@@ -135,7 +134,7 @@ public:
     /// <summary>
     /// Quad rendering shader
     /// </summary>
-    GPUShader* QuadShader;
+    API_FIELD(ReadOnly) GPUShader* QuadShader;
 
     /// <summary>
     /// The current task being executed.
@@ -158,7 +157,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets current device state.
     /// </summary>
@@ -228,9 +226,19 @@ public:
     API_PROPERTY() uint64 GetMemoryUsage() const;
 
     /// <summary>
+    /// Gets the list with all active GPU resources.
+    /// </summary>
+    API_PROPERTY() Array<GPUResource*> GetResources() const;
+
+    /// <summary>
+    /// Gets the GPU asynchronous work manager.
+    /// </summary>
+    GPUTasksManager* GetTasksManager() const;
+
+    /// <summary>
     /// Gets the default material.
     /// </summary>
-    MaterialBase* GetDefaultMaterial() const;
+    API_PROPERTY() MaterialBase* GetDefaultMaterial() const;
 
     /// <summary>
     /// Gets the default material (Deformable domain).
@@ -268,7 +276,6 @@ public:
     GPUBuffer* GetFullscreenTriangleVB() const;
 
 public:
-
     /// <summary>
     /// Init device resources
     /// </summary>
@@ -302,8 +309,16 @@ public:
     /// </summary>
     virtual void WaitForGPU() = 0;
 
-protected:
+public:
+    void AddResource(GPUResource* resource);
+    void RemoveResource(GPUResource* resource);
 
+    /// <summary>
+    /// Dumps all GPU resources information to the log.
+    /// </summary>
+    void DumpResourcesToLog() const;
+
+protected:
     virtual void preDispose();
 
     /// <summary>
@@ -327,7 +342,6 @@ protected:
     virtual void RenderEnd();
 
 public:
-
     /// <summary>
     /// Creates the texture.
     /// </summary>
@@ -373,6 +387,14 @@ public:
     /// <param name="window">The output window.</param>
     /// <returns>The native window swap chain.</returns>
     virtual GPUSwapChain* CreateSwapChain(Window* window) = 0;
+
+    /// <summary>
+    /// Creates the constant buffer.
+    /// </summary>
+    /// <param name="name">The resource name.</param>
+    /// <param name="size">The buffer size (in bytes).</param>
+    /// <returns>The constant buffer.</returns>
+    virtual GPUConstantBuffer* CreateConstantBuffer(uint32 size, const StringView& name = StringView::Empty) = 0;
 
     /// <summary>
     /// Creates the GPU tasks context.

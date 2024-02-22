@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.CustomEditors.Elements;
 using FlaxEngine;
@@ -31,6 +31,7 @@ namespace FlaxEditor.CustomEditors.GUI
         private float _splitterValue;
         private Rectangle _splitterRect;
         private bool _splitterClicked, _mouseOverSplitter;
+        private bool _cursorChanged;
 
         /// <summary>
         /// Gets or sets the splitter value (always in range [0; 1]).
@@ -117,20 +118,32 @@ namespace FlaxEditor.CustomEditors.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             _mouseOverSplitter = _splitterRect.Contains(location);
 
             if (_splitterClicked)
             {
                 SplitterValue = location.X / Width;
+                Cursor = CursorType.SizeWE;
+                _cursorChanged = true;
+            }
+            else if (_mouseOverSplitter)
+            {
+                Cursor = CursorType.SizeWE;
+                _cursorChanged = true;
+            }
+            else if (_cursorChanged)
+            {
+                Cursor = CursorType.Default;
+                _cursorChanged = false;
             }
 
             base.OnMouseMove(location);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left)
             {
@@ -146,7 +159,7 @@ namespace FlaxEditor.CustomEditors.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (_splitterClicked)
             {
@@ -162,6 +175,12 @@ namespace FlaxEditor.CustomEditors.GUI
         {
             // Clear flag
             _mouseOverSplitter = false;
+
+            if (_cursorChanged)
+            {
+                Cursor = CursorType.Default;
+                _cursorChanged = false;
+            }
 
             base.OnMouseLeave();
         }

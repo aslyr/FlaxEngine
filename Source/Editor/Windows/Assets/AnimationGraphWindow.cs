@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -13,6 +13,7 @@ using FlaxEditor.Viewport.Cameras;
 using FlaxEditor.Viewport.Previews;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Windows.Search;
 using Object = FlaxEngine.Object;
 
 // ReSharper disable UnusedMember.Local
@@ -27,7 +28,7 @@ namespace FlaxEditor.Windows.Assets
     /// <seealso cref="AnimationGraph" />
     /// <seealso cref="AnimGraphSurface" />
     /// <seealso cref="AnimatedModelPreview" />
-    public sealed class AnimationGraphWindow : VisjectSurfaceWindow<AnimationGraph, AnimGraphSurface, AnimatedModelPreview>
+    public sealed class AnimationGraphWindow : VisjectSurfaceWindow<AnimationGraph, AnimGraphSurface, AnimatedModelPreview>, ISearchWindow
     {
         internal static Guid BaseModelId = new Guid(1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
@@ -50,7 +51,7 @@ namespace FlaxEditor.Windows.Assets
                 var style = Style.Current;
                 if (_window.Asset == null || !_window.Asset.IsLoaded)
                 {
-                    Render2D.DrawText(style.FontLarge, "Loading...", new Rectangle(Vector2.Zero, Size), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
+                    Render2D.DrawText(style.FontLarge, "Loading...", new Rectangle(Float2.Zero, Size), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
                 }
             }
         }
@@ -153,10 +154,11 @@ namespace FlaxEditor.Windows.Assets
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct AnimGraphDebugFlowInfo
+        private unsafe struct AnimGraphDebugFlowInfo
         {
             public uint NodeId;
             public int BoxId;
+            public fixed uint NodePath[8];
         }
 
         private FlaxObjectRefPickerControl _debugPicker;
@@ -216,19 +218,19 @@ namespace FlaxEditor.Windows.Assets
                 VerticalAlignment = TextAlignment.Center,
                 HorizontalAlignment = TextAlignment.Far,
                 Parent = debugPickerContainer,
-                Size = new Vector2(50.0f, _toolstrip.Height),
+                Size = new Float2(50.0f, _toolstrip.Height),
                 Text = "Debug:",
                 TooltipText = "The current animated model actor to preview. Pick the player to debug it's playback. Leave empty to debug the model from the preview panel.",
             };
             _debugPicker = new FlaxObjectRefPickerControl
             {
-                Location = new Vector2(debugPickerLabel.Right + 4.0f, 8.0f),
+                Location = new Float2(debugPickerLabel.Right + 4.0f, 8.0f),
                 Width = 120.0f,
                 Type = new ScriptType(typeof(AnimatedModel)),
                 Parent = debugPickerContainer,
             };
             debugPickerContainer.Width = _debugPicker.Right + 2.0f;
-            debugPickerContainer.Size = new Vector2(_debugPicker.Right + 2.0f, _toolstrip.Height);
+            debugPickerContainer.Size = new Float2(_debugPicker.Right + 2.0f, _toolstrip.Height);
             debugPickerContainer.Parent = _toolstrip;
             _debugPicker.CheckValid = OnCheckValid;
 
@@ -251,25 +253,26 @@ namespace FlaxEditor.Windows.Assets
             return obj is AnimatedModel player && player.AnimationGraph == OriginalAsset;
         }
 
-        private void OnDebugFlow(Asset asset, Object obj, uint nodeId, uint boxId)
+        private unsafe void OnDebugFlow(Animations.DebugFlowInfo flowInfo)
         {
             // Filter the flow
             if (_debugPicker.Value != null)
             {
-                if (asset != OriginalAsset || _debugPicker.Value != obj)
+                if (flowInfo.Asset != OriginalAsset || _debugPicker.Value != flowInfo.Instance)
                     return;
             }
             else
             {
-                if (asset != Asset || _preview.PreviewActor != obj)
+                if (flowInfo.Asset != Asset || _preview.PreviewActor != flowInfo.Instance)
                     return;
             }
 
             // Register flow to show it in UI on a surface
-            var flowInfo = new AnimGraphDebugFlowInfo { NodeId = nodeId, BoxId = (int)boxId };
+            var flow = new AnimGraphDebugFlowInfo { NodeId = flowInfo.NodeId, BoxId = (int)flowInfo.BoxId };
+            Utils.MemoryCopy(new IntPtr(flow.NodePath), new IntPtr(flowInfo.NodePath0), sizeof(uint) * 8ul);
             lock (_debugFlows)
             {
-                _debugFlows.Add(flowInfo);
+                _debugFlows.Add(flow);
             }
         }
 
@@ -321,13 +324,13 @@ namespace FlaxEditor.Windows.Assets
             {
                 if (value == null)
                 {
-                    Editor.LogError("Failed to save animation graph surface");
+                    Editor.LogError("Failed to save surface data");
                     return;
                 }
                 if (_asset.SaveSurface(value))
                 {
                     _surface.MarkAsEdited();
-                    Editor.LogError("Failed to save animation graph surface data");
+                    Editor.LogError("Failed to save surface data");
                     return;
                 }
                 _asset.Reload();
@@ -343,7 +346,6 @@ namespace FlaxEditor.Windows.Assets
             // Load surface graph
             if (_surface.Load())
             {
-                // Error
                 Editor.LogError("Failed to load animation graph surface.");
                 return true;
             }
@@ -387,15 +389,25 @@ namespace FlaxEditor.Windows.Assets
             {
                 _navigationBar.Bounds = new Rectangle
                 (
-                 new Vector2(_debugPicker.Parent.Right + 8.0f, 0),
-                 new Vector2(Parent.Width - X - 8.0f, 32)
+                 new Float2(_debugPicker.Parent.Right + 8.0f, 0),
+                 new Float2(Parent.Width - X - 8.0f, 32)
                 );
             }
         }
 
         /// <inheritdoc />
-        public override void OnUpdate()
+        public override unsafe void OnUpdate()
         {
+            // Extract animations playback state from the events tracing
+            var debugActor = _debugPicker.Value as AnimatedModel;
+            if (debugActor == null)
+                debugActor = _preview.PreviewActor;
+            if (debugActor != null)
+            {
+                debugActor.EnableTracing = true;
+                Surface.LastTraceEvents = debugActor.TraceEvents;
+            }
+
             base.OnUpdate();
 
             // Update graph execution flow debugging visualization
@@ -403,7 +415,8 @@ namespace FlaxEditor.Windows.Assets
             {
                 foreach (var debugFlow in _debugFlows)
                 {
-                    var node = Surface.Context.FindNode(debugFlow.NodeId);
+                    var context = Surface.FindContext(new Span<uint>(debugFlow.NodePath, 8));
+                    var node = context?.FindNode(debugFlow.NodeId);
                     var box = node?.GetBox(debugFlow.BoxId);
                     box?.HighlightConnections();
                 }
@@ -416,6 +429,8 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnDestroy()
         {
+            if (IsDisposing)
+                return;
             Animations.DebugFlow -= OnDebugFlow;
 
             _properties = null;
@@ -426,5 +441,8 @@ namespace FlaxEditor.Windows.Assets
 
             base.OnDestroy();
         }
+
+        /// <inheritdoc />
+        public SearchAssetTypes AssetType => SearchAssetTypes.AnimGraph;
     }
 }

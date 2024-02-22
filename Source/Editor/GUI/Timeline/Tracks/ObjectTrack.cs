@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -16,6 +16,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
     /// <summary>
     /// The base interface for <see cref="ObjectTrack"/>.
     /// </summary>
+    [HideInEditor]
     public interface IObjectTrack
     {
         /// <summary>
@@ -79,7 +80,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
 
             var obj = Object;
             var hasObject = obj != null;
-            TitleTintColor = hasObject ? Color.White : Color.Red;
+            TitleTintColor = hasObject ? (Flags.HasFlag(TrackFlags.PrefabObject) ? Style.Current.ProgressNormal : Color.White) : Color.Red;
             if (hasObject != _hasObject)
                 OnObjectExistenceChanged(obj);
             _hasObject = hasObject;
@@ -112,6 +113,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         /// <summary>
         /// The data for add property track buttons tag.
         /// </summary>
+        [HideInEditor]
         public struct AddMemberTag
         {
             /// <summary>
@@ -410,6 +412,12 @@ namespace FlaxEditor.GUI.Timeline.Tracks
             { typeof(Vector2), CurvePropertyTrack.GetArchetype() },
             { typeof(Vector3), CurvePropertyTrack.GetArchetype() },
             { typeof(Vector4), CurvePropertyTrack.GetArchetype() },
+            { typeof(Float2), CurvePropertyTrack.GetArchetype() },
+            { typeof(Float3), CurvePropertyTrack.GetArchetype() },
+            { typeof(Float4), CurvePropertyTrack.GetArchetype() },
+            { typeof(Double2), CurvePropertyTrack.GetArchetype() },
+            { typeof(Double3), CurvePropertyTrack.GetArchetype() },
+            { typeof(Double4), CurvePropertyTrack.GetArchetype() },
             { typeof(Quaternion), CurvePropertyTrack.GetArchetype() },
             { typeof(Color), CurvePropertyTrack.GetArchetype() },
             { typeof(Color32), CurvePropertyTrack.GetArchetype() },

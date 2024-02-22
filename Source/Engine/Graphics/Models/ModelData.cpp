@@ -1,7 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ModelData.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/Math/BoundingBox.h"
+#include "Engine/Core/Math/BoundingSphere.h"
 #include "Engine/Animations/CurveSerialization.h"
 #include "Engine/Serialization/WriteStream.h"
 #include "Engine/Debug/Exceptions/ArgumentNullException.h"
@@ -17,6 +19,7 @@ void MeshData::Clear()
     UVs.Clear();
     Normals.Clear();
     Tangents.Clear();
+    BitangentSigns.Clear();
     LightmapUVs.Clear();
     Colors.Clear();
     BlendIndices.Clear();
@@ -44,6 +47,7 @@ void MeshData::SwapBuffers(MeshData& other)
     UVs.Swap(other.UVs);
     Normals.Swap(other.Normals);
     Tangents.Swap(other.Tangents);
+    BitangentSigns.Swap(other.BitangentSigns);
     LightmapUVs.Swap(other.LightmapUVs);
     Colors.Swap(other.Colors);
     BlendIndices.Swap(other.BlendIndices);
@@ -59,6 +63,7 @@ void MeshData::Release()
     UVs.Resize(0);
     Normals.Resize(0);
     Tangents.Resize(0);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(0);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -72,6 +77,7 @@ void MeshData::InitFromModelVertices(ModelVertex19* vertices, uint32 verticesCou
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(verticesCount, false);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -81,10 +87,10 @@ void MeshData::InitFromModelVertices(ModelVertex19* vertices, uint32 verticesCou
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vertices->Position;
-        UVs[i] = vertices->TexCoord.ToVector2();
-        Normals[i] = vertices->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vertices->Tangent.ToVector3() * 2.0f - 1.0f;
-        LightmapUVs[i] = vertices->LightmapUVs.ToVector2();
+        UVs[i] = vertices->TexCoord.ToFloat2();
+        Normals[i] = vertices->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vertices->Tangent.ToFloat3() * 2.0f - 1.0f;
+        LightmapUVs[i] = vertices->LightmapUVs.ToFloat2();
         Colors[i] = Color(vertices->Color);
 
         vertices++;
@@ -97,6 +103,7 @@ void MeshData::InitFromModelVertices(ModelVertex18* vertices, uint32 verticesCou
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(verticesCount, false);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -106,10 +113,10 @@ void MeshData::InitFromModelVertices(ModelVertex18* vertices, uint32 verticesCou
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vertices->Position;
-        UVs[i] = vertices->TexCoord.ToVector2();
-        Normals[i] = vertices->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vertices->Tangent.ToVector3() * 2.0f - 1.0f;
-        LightmapUVs[i] = vertices->LightmapUVs.ToVector2();
+        UVs[i] = vertices->TexCoord.ToFloat2();
+        Normals[i] = vertices->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vertices->Tangent.ToFloat3() * 2.0f - 1.0f;
+        LightmapUVs[i] = vertices->LightmapUVs.ToFloat2();
 
         vertices++;
     }
@@ -121,6 +128,7 @@ void MeshData::InitFromModelVertices(ModelVertex15* vertices, uint32 verticesCou
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(0);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -130,9 +138,9 @@ void MeshData::InitFromModelVertices(ModelVertex15* vertices, uint32 verticesCou
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vertices->Position;
-        UVs[i] = vertices->TexCoord.ToVector2();
-        Normals[i] = vertices->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vertices->Tangent.ToVector3() * 2.0f - 1.0f;
+        UVs[i] = vertices->TexCoord.ToFloat2();
+        Normals[i] = vertices->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vertices->Tangent.ToFloat3() * 2.0f - 1.0f;
 
         vertices++;
     }
@@ -144,6 +152,7 @@ void MeshData::InitFromModelVertices(VB0ElementType18* vb0, VB1ElementType18* vb
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(verticesCount, false);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -153,10 +162,10 @@ void MeshData::InitFromModelVertices(VB0ElementType18* vb0, VB1ElementType18* vb
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vb0->Position;
-        UVs[i] = vb1->TexCoord.ToVector2();
-        Normals[i] = vb1->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vb1->Tangent.ToVector3() * 2.0f - 1.0f;
-        LightmapUVs[i] = vb1->LightmapUVs.ToVector2();
+        UVs[i] = vb1->TexCoord.ToFloat2();
+        Normals[i] = vb1->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vb1->Tangent.ToFloat3() * 2.0f - 1.0f;
+        LightmapUVs[i] = vb1->LightmapUVs.ToFloat2();
 
         vb0++;
         vb1++;
@@ -169,6 +178,7 @@ void MeshData::InitFromModelVertices(VB0ElementType18* vb0, VB1ElementType18* vb
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(verticesCount, false);
     if (vb2)
     {
@@ -185,10 +195,10 @@ void MeshData::InitFromModelVertices(VB0ElementType18* vb0, VB1ElementType18* vb
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vb0->Position;
-        UVs[i] = vb1->TexCoord.ToVector2();
-        Normals[i] = vb1->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vb1->Tangent.ToVector3() * 2.0f - 1.0f;
-        LightmapUVs[i] = vb1->LightmapUVs.ToVector2();
+        UVs[i] = vb1->TexCoord.ToFloat2();
+        Normals[i] = vb1->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vb1->Tangent.ToFloat3() * 2.0f - 1.0f;
+        LightmapUVs[i] = vb1->LightmapUVs.ToFloat2();
         if (vb2)
         {
             Colors[i] = Color(vb2->Color);
@@ -206,6 +216,7 @@ void MeshData::InitFromModelVertices(VB0ElementType15* vb0, VB1ElementType15* vb
     UVs.Resize(verticesCount, false);
     Normals.Resize(verticesCount, false);
     Tangents.Resize(verticesCount, false);
+    BitangentSigns.Resize(0);
     LightmapUVs.Resize(0, false);
     Colors.Resize(0);
     BlendIndices.Resize(0);
@@ -215,9 +226,9 @@ void MeshData::InitFromModelVertices(VB0ElementType15* vb0, VB1ElementType15* vb
     for (uint32 i = 0; i < verticesCount; i++)
     {
         Positions[i] = vb0->Position;
-        UVs[i] = vb1->TexCoord.ToVector2();
-        Normals[i] = vb1->Normal.ToVector3() * 2.0f - 1.0f;
-        Tangents[i] = vb1->Tangent.ToVector3() * 2.0f - 1.0f;
+        UVs[i] = vb1->TexCoord.ToFloat2();
+        Normals[i] = vb1->Normal.ToFloat3() * 2.0f - 1.0f;
+        Tangents[i] = vb1->Tangent.ToFloat3() * 2.0f - 1.0f;
 
         vb0++;
         vb1++;
@@ -283,6 +294,12 @@ bool MeshData::Pack2Model(WriteStream* stream) const
         LOG(Error, "Invalid size of {0} stream.", TEXT("Tangents"));
         return true;
     }
+    bool hasBitangentSigns = BitangentSigns.HasItems();
+    if (hasBitangentSigns && BitangentSigns.Count() != verticiecCount)
+    {
+        LOG(Error, "Invalid size of {0} stream.", TEXT("BitangentSigns"));
+        return true;
+    }
     bool hasLightmapUVs = LightmapUVs.HasItems();
     if (hasLightmapUVs && LightmapUVs.Count() != verticiecCount)
     {
@@ -303,28 +320,25 @@ bool MeshData::Pack2Model(WriteStream* stream) const
     stream->WriteUint32(trianglesCount);
 
     // Vertex Buffer 0
-    stream->WriteBytes(Positions.Get(), sizeof(Vector3) * verticiecCount);
+    stream->WriteBytes(Positions.Get(), sizeof(Float3) * verticiecCount);
 
     // Vertex Buffer 1
     VB1ElementType vb1;
     for (uint32 i = 0; i < verticiecCount; i++)
     {
         // Get vertex components
-        Vector2 uv = hasUVs ? UVs[i] : Vector2::Zero;
-        Vector3 normal = hasNormals ? Normals[i] : Vector3::UnitZ;
-        Vector3 tangent = hasTangents ? Tangents[i] : Vector3::UnitX;
-        Vector2 lightmapUV = hasLightmapUVs ? LightmapUVs[i] : Vector2::Zero;
-
-        // Calculate bitangent sign
-        Vector3 bitangent = Vector3::Normalize(Vector3::Cross(normal, tangent));
-        byte sign = static_cast<byte>(Vector3::Dot(Vector3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
+        Float2 uv = hasUVs ? UVs[i] : Float2::Zero;
+        Float3 normal = hasNormals ? Normals[i] : Float3::UnitZ;
+        Float3 tangent = hasTangents ? Tangents[i] : Float3::UnitX;
+        Float2 lightmapUV = hasLightmapUVs ? LightmapUVs[i] : Float2::Zero;
+        Float3 bitangentSign = hasBitangentSigns ? BitangentSigns[i] : Float3::Dot(Float3::Cross(Float3::Normalize(Float3::Cross(normal, tangent)), normal), tangent);
 
         // Write vertex
         vb1.TexCoord = Half2(uv);
         vb1.Normal = Float1010102(normal * 0.5f + 0.5f, 0);
-        vb1.Tangent = Float1010102(tangent * 0.5f + 0.5f, sign);
+        vb1.Tangent = Float1010102(tangent * 0.5f + 0.5f, static_cast<byte>(bitangentSign < 0 ? 1 : 0));
         vb1.LightmapUVs = Half2(lightmapUV);
-        stream->Write(&vb1);
+        stream->WriteBytes(&vb1, sizeof(vb1));
 
         // Pack TBN matrix into a quaternion
         /*Quaternion quaternionTBN;
@@ -333,10 +347,10 @@ bool MeshData::Pack2Model(WriteStream* stream) const
         quaternionTBN.Normalize();
         uint32 packedQuaternionTBN = QuantizeNormalizedQuaternionWithHandedness(quaternionTBN, invertedHandednessTBN);
 
-        Vector4 unpackedQuaternionTBN = Vector4(quaternionTBN.X, quaternionTBN.Y, quaternionTBN.Z, ((invertedHandednessTBN ? 0.0f : 128.0f) + (127.0f * (quaternionTBN.W * 0.5f + 0.5f))) / 255.0f);
+        Float4 unpackedQuaternionTBN = Float4(quaternionTBN.X, quaternionTBN.Y, quaternionTBN.Z, ((invertedHandednessTBN ? 0.0f : 128.0f) + (127.0f * (quaternionTBN.W * 0.5f + 0.5f))) / 255.0f);
         
         //lods.WriteUint32(packedQuaternionTBN);
-        //lods.WriteVector4(unpackedQuaternionTBN);
+        //lods.WriteFloat4(unpackedQuaternionTBN);
         */
     }
 
@@ -348,7 +362,7 @@ bool MeshData::Pack2Model(WriteStream* stream) const
         for (uint32 i = 0; i < verticiecCount; i++)
         {
             vb2.Color = Color32(Colors[i]);
-            stream->Write(&vb2);
+            stream->WriteBytes(&vb2, sizeof(vb2));
         }
     }
 
@@ -405,6 +419,12 @@ bool MeshData::Pack2SkinnedModel(WriteStream* stream) const
         LOG(Error, "Invalid size of {0} stream.", TEXT("Tangents"));
         return true;
     }
+    bool hasBitangentSigns = BitangentSigns.HasItems();
+    if (hasBitangentSigns && BitangentSigns.Count() != verticiecCount)
+    {
+        LOG(Error, "Invalid size of {0} stream.", TEXT("BitangentSigns"));
+        return true;
+    }
     if (BlendIndices.Count() != verticiecCount)
     {
         LOG(Error, "Invalid size of {0} stream.", TEXT("BlendIndices"));
@@ -438,24 +458,21 @@ bool MeshData::Pack2SkinnedModel(WriteStream* stream) const
     for (uint32 i = 0; i < verticiecCount; i++)
     {
         // Get vertex components
-        Vector2 uv = hasUVs ? UVs[i] : Vector2::Zero;
-        Vector3 normal = hasNormals ? Normals[i] : Vector3::UnitZ;
-        Vector3 tangent = hasTangents ? Tangents[i] : Vector3::UnitX;
+        Float2 uv = hasUVs ? UVs[i] : Float2::Zero;
+        Float3 normal = hasNormals ? Normals[i] : Float3::UnitZ;
+        Float3 tangent = hasTangents ? Tangents[i] : Float3::UnitX;
+        Float3 bitangentSign = hasBitangentSigns ? BitangentSigns[i] : Float3::Dot(Float3::Cross(Float3::Normalize(Float3::Cross(normal, tangent)), normal), tangent);
         Int4 blendIndices = BlendIndices[i];
-        Vector4 blendWeights = BlendWeights[i];
-
-        // Calculate bitangent sign
-        Vector3 bitangent = Vector3::Normalize(Vector3::Cross(normal, tangent));
-        byte sign = static_cast<byte>(Vector3::Dot(Vector3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
+        Float4 blendWeights = BlendWeights[i];
 
         // Write vertex
         vb.Position = Positions[i];
         vb.TexCoord = Half2(uv);
         vb.Normal = Float1010102(normal * 0.5f + 0.5f, 0);
-        vb.Tangent = Float1010102(tangent * 0.5f + 0.5f, sign);
+        vb.Tangent = Float1010102(tangent * 0.5f + 0.5f, static_cast<byte>(bitangentSign < 0 ? 1 : 0));
         vb.BlendIndices = Color32(blendIndices.X, blendIndices.Y, blendIndices.Z, blendIndices.W);
         vb.BlendWeights = Half4(blendWeights);
-        stream->Write(&vb);
+        stream->WriteBytes(&vb, sizeof(vb));
     }
 
     // Index Buffer
@@ -472,6 +489,18 @@ bool MeshData::Pack2SkinnedModel(WriteStream* stream) const
     return false;
 }
 
+void MeshData::CalculateBox(BoundingBox& result) const
+{
+    if (Positions.HasItems())
+        BoundingBox::FromPoints(Positions.Get(), Positions.Count(), result);
+}
+
+void MeshData::CalculateSphere(BoundingSphere& result) const
+{
+    if (Positions.HasItems())
+        BoundingSphere::FromPoints(Positions.Get(), Positions.Count(), result);
+}
+
 void MeshData::TransformBuffer(const Matrix& matrix)
 {
     // Compute matrix inverse transpose
@@ -480,21 +509,50 @@ void MeshData::TransformBuffer(const Matrix& matrix)
     Matrix::Transpose(inverseTransposeMatrix, inverseTransposeMatrix);
 
     // Transform positions
+    const auto pp = Positions.Get();
     for (int32 i = 0; i < Positions.Count(); i++)
     {
-        Vector3::Transform(Positions[i], matrix, Positions[i]);
+        auto& p = pp[i];
+        Float3::Transform(p, matrix, p);
     }
 
     // Transform normals and tangents
+    const auto nn = Normals.Get();
     for (int32 i = 0; i < Normals.Count(); i++)
     {
-        Vector3::TransformNormal(Normals[i], inverseTransposeMatrix, Normals[i]);
-        Normals[i].Normalize();
+        auto& n = nn[i];
+        Float3::TransformNormal(n, inverseTransposeMatrix, n);
+        n.Normalize();
     }
+    const auto tt = Tangents.Get();
     for (int32 i = 0; i < Tangents.Count(); i++)
     {
-        Vector3::TransformNormal(Tangents[i], inverseTransposeMatrix, Tangents[i]);
-        Tangents[i].Normalize();
+        auto& t = tt[i];
+        Float3::TransformNormal(t, inverseTransposeMatrix, t);
+        t.Normalize();
+    }
+
+    // Transform blend shapes
+    for (auto& blendShape : BlendShapes)
+    {
+        for (int32 i = 0; i < blendShape.Vertices.Count(); i++)
+        {
+            auto& v = blendShape.Vertices[i];
+            Float3::Transform(v.PositionDelta, matrix, v.PositionDelta);
+            Float3::TransformNormal(v.NormalDelta, inverseTransposeMatrix, v.NormalDelta);
+            v.NormalDelta.Normalize();
+        }
+    }
+}
+
+void MeshData::NormalizeBlendWeights()
+{
+    ASSERT(Positions.Count() == BlendWeights.Count());
+    for (int32 i = 0; i < Positions.Count(); i++)
+    {
+        const float sum = BlendWeights[i].SumValues();
+        const float invSum = sum > ZeroTolerance ? 1.0f / sum : 0.0f;
+        BlendWeights[i] *= invSum;
     }
 }
 
@@ -518,14 +576,15 @@ void MeshData::Merge(MeshData& other)
 		for (int32 i = 0; i < other.Positions.Count(); i++) item.Add(defautValue); \
 	else if (!item.HasItems() && other.item.HasItems()) \
 		for (int32 i = 0; i < Positions.Count(); i++) item.Add(defautValue)
-    MERGE(Positions, Vector3::Zero);
-    MERGE(UVs, Vector2::Zero);
-    MERGE(Normals, Vector3::Forward);
-    MERGE(Tangents, Vector3::Right);
-    MERGE(LightmapUVs, Vector2::Zero);
+    MERGE(Positions, Float3::Zero);
+    MERGE(UVs, Float2::Zero);
+    MERGE(Normals, Float3::Forward);
+    MERGE(Tangents, Float3::Right);
+    MERGE(BitangentSigns, 1.0f);
+    MERGE(LightmapUVs, Float2::Zero);
     MERGE(Colors, Color::Black);
     MERGE(BlendIndices, Int4::Zero);
-    MERGE(BlendWeights, Vector4::Zero);
+    MERGE(BlendWeights, Float4::Zero);
 #undef MERGE
 
     // Merge blend shapes
@@ -555,15 +614,44 @@ void MeshData::Merge(MeshData& other)
     }
 }
 
+bool MaterialSlotEntry::UsesProperties() const
+{
+    return Diffuse.Color != Color::White ||
+            Diffuse.TextureIndex != -1 ||
+            Emissive.Color != Color::Transparent ||
+            Emissive.TextureIndex != -1 ||
+            !Math::IsOne(Opacity.Value) ||
+            Opacity.TextureIndex != -1 ||
+            Normals.TextureIndex != -1;
+}
+
+ModelLodData::~ModelLodData()
+{
+    Meshes.ClearDelete();
+}
+
+BoundingBox ModelLodData::GetBox() const
+{
+    if (Meshes.IsEmpty())
+        return BoundingBox::Empty;
+    BoundingBox bounds;
+    Meshes[0]->CalculateBox(bounds);
+    for (int32 i = 1; i < Meshes.Count(); i++)
+    {
+        BoundingBox b;
+        Meshes[i]->CalculateBox(b);
+        BoundingBox::Merge(bounds, b, bounds);
+    }
+    return bounds;
+}
+
 void ModelData::CalculateLODsScreenSizes()
 {
     const float autoComputeLodPowerBase = 0.5f;
     const int32 lodCount = LODs.Count();
-
     for (int32 lodIndex = 0; lodIndex < lodCount; lodIndex++)
     {
         auto& lod = LODs[lodIndex];
-
         if (lodIndex == 0)
         {
             lod.ScreenSize = 1.0f;
@@ -589,6 +677,8 @@ void ModelData::TransformBuffer(const Matrix& matrix)
         }
     }
 }
+
+#if USE_EDITOR
 
 bool ModelData::Pack2ModelHeader(WriteStream* stream) const
 {
@@ -621,7 +711,7 @@ bool ModelData::Pack2ModelHeader(WriteStream* stream) const
     {
         auto& slot = Materials[materialSlotIndex];
 
-        stream->Write(&slot.AssetID);
+        stream->Write(slot.AssetID);
         stream->WriteByte(static_cast<byte>(slot.ShadowsMode));
         stream->WriteString(slot.Name, 11);
     }
@@ -639,7 +729,12 @@ bool ModelData::Pack2ModelHeader(WriteStream* stream) const
 
         // Amount of meshes
         const int32 meshes = lod.Meshes.Count();
-        if (meshes == 0 || meshes > MODEL_MAX_MESHES)
+        if (meshes == 0)
+        {
+            LOG(Warning, "Empty LOD.");
+            return true;
+        }
+        if (meshes > MODEL_MAX_MESHES)
         {
             LOG(Warning, "Too many meshes per LOD.");
             return true;
@@ -657,12 +752,12 @@ bool ModelData::Pack2ModelHeader(WriteStream* stream) const
             // Box
             BoundingBox box;
             mesh.CalculateBox(box);
-            stream->Write(&box);
+            stream->WriteBoundingBox(box);
 
             // Sphere
             BoundingSphere sphere;
             mesh.CalculateSphere(sphere);
-            stream->Write(&sphere);
+            stream->WriteBoundingSphere(sphere);
 
             // TODO: calculate Sphere and Box at once - make it faster using SSE
 
@@ -683,21 +778,14 @@ bool ModelData::Pack2SkinnedModelHeader(WriteStream* stream) const
         return true;
     }
     const int32 lodCount = GetLODsCount();
-    if (lodCount == 0 || lodCount > MODEL_MAX_LODS)
+    if (lodCount > MODEL_MAX_LODS)
     {
         Log::ArgumentOutOfRangeException();
         return true;
     }
-    if (Materials.IsEmpty())
-    {
-        Log::ArgumentOutOfRangeException(TEXT("MaterialSlots"), TEXT("Material slots collection cannot be empty."));
-        return true;
-    }
-    if (!HasSkeleton())
-    {
-        Log::InvalidOperationException(TEXT("Missing skeleton."));
-        return true;
-    }
+
+    // Version
+    stream->WriteByte(1);
 
     // Min Screen Size
     stream->WriteFloat(MinScreenSize);
@@ -709,8 +797,7 @@ bool ModelData::Pack2SkinnedModelHeader(WriteStream* stream) const
     for (int32 materialSlotIndex = 0; materialSlotIndex < Materials.Count(); materialSlotIndex++)
     {
         auto& slot = Materials[materialSlotIndex];
-
-        stream->Write(&slot.AssetID);
+        stream->Write(slot.AssetID);
         stream->WriteByte(static_cast<byte>(slot.ShadowsMode));
         stream->WriteString(slot.Name, 11);
     }
@@ -746,12 +833,12 @@ bool ModelData::Pack2SkinnedModelHeader(WriteStream* stream) const
             // Box
             BoundingBox box;
             mesh.CalculateBox(box);
-            stream->Write(&box);
+            stream->WriteBoundingBox(box);
 
             // Sphere
             BoundingSphere sphere;
             mesh.CalculateSphere(sphere);
-            stream->Write(&sphere);
+            stream->WriteBoundingSphere(sphere);
 
             // TODO: calculate Sphere and Box at once - make it faster using SSE
 
@@ -776,8 +863,8 @@ bool ModelData::Pack2SkinnedModelHeader(WriteStream* stream) const
         {
             auto& node = Skeleton.Nodes[nodeIndex];
 
-            stream->Write(&node.ParentIndex);
-            stream->Write(&node.LocalTransform);
+            stream->Write(node.ParentIndex);
+            stream->WriteTransform(node.LocalTransform);
             stream->WriteString(node.Name, 71);
         }
 
@@ -788,53 +875,66 @@ bool ModelData::Pack2SkinnedModelHeader(WriteStream* stream) const
         {
             auto& bone = Skeleton.Bones[boneIndex];
 
-            stream->Write(&bone.ParentIndex);
-            stream->Write(&bone.NodeIndex);
-            stream->Write(&bone.LocalTransform);
-            stream->Write(&bone.OffsetMatrix);
+            stream->Write(bone.ParentIndex);
+            stream->Write(bone.NodeIndex);
+            stream->WriteTransform(bone.LocalTransform);
+            stream->Write(bone.OffsetMatrix);
         }
+    }
+
+    // Retargeting
+    {
+        stream->WriteInt32(0);
     }
 
     return false;
 }
 
-bool ModelData::Pack2AnimationHeader(WriteStream* stream) const
+bool ModelData::Pack2AnimationHeader(WriteStream* stream, int32 animIndex) const
 {
     // Validate input
-    if (stream == nullptr)
+    if (stream == nullptr || animIndex < 0 || animIndex >= Animations.Count())
     {
         Log::ArgumentNullException();
         return true;
     }
-    if (Animation.Duration <= ZeroTolerance || Animation.FramesPerSecond <= ZeroTolerance)
+    auto& anim = Animations.Get()[animIndex];
+    if (anim.Duration <= ZeroTolerance || anim.FramesPerSecond <= ZeroTolerance)
     {
         Log::InvalidOperationException(TEXT("Invalid animation duration."));
         return true;
     }
-    if (Animation.Channels.IsEmpty())
+    if (anim.Channels.IsEmpty())
     {
         Log::ArgumentOutOfRangeException(TEXT("Channels"), TEXT("Animation channels collection cannot be empty."));
         return true;
     }
 
     // Info
-    stream->WriteInt32(100); // Header version (for fast version upgrades without serialization format change)
-    stream->WriteDouble(Animation.Duration);
-    stream->WriteDouble(Animation.FramesPerSecond);
-    stream->WriteBool(Animation.EnableRootMotion);
-    stream->WriteString(Animation.RootNodeName, 13);
+    stream->WriteInt32(103); // Header version (for fast version upgrades without serialization format change)
+    stream->WriteDouble(anim.Duration);
+    stream->WriteDouble(anim.FramesPerSecond);
+    stream->WriteByte((byte)anim.RootMotionFlags);
+    stream->WriteString(anim.RootNodeName, 13);
 
     // Animation channels
-    stream->WriteInt32(Animation.Channels.Count());
-    for (int32 i = 0; i < Animation.Channels.Count(); i++)
+    stream->WriteInt32(anim.Channels.Count());
+    for (int32 i = 0; i < anim.Channels.Count(); i++)
     {
-        auto& anim = Animation.Channels[i];
-
-        stream->WriteString(anim.NodeName, 172);
-        Serialization::Serialize(*stream, anim.Position);
-        Serialization::Serialize(*stream, anim.Rotation);
-        Serialization::Serialize(*stream, anim.Scale);
+        auto& channel = anim.Channels[i];
+        stream->WriteString(channel.NodeName, 172);
+        Serialization::Serialize(*stream, channel.Position);
+        Serialization::Serialize(*stream, channel.Rotation);
+        Serialization::Serialize(*stream, channel.Scale);
     }
+
+    // Animation events
+    stream->WriteInt32(0);
+
+    // Nested animations
+    stream->WriteInt32(0);
 
     return false;
 }
+
+#endif

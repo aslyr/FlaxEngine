@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine.GUI;
@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 namespace FlaxEngine.Json
 {
     /// <summary>
-    /// Serialize references to the FlaxEngine.Object as Guid.
+    /// Serialize references to the <see cref="FlaxEngine.Object"/> as Guid.
     /// </summary>
     /// <seealso cref="Newtonsoft.Json.JsonConverter" />
     internal class FlaxObjectConverter : JsonConverter
@@ -37,7 +37,7 @@ namespace FlaxEngine.Json
         {
             // Skip serialization as reference id for the root object serialization (eg. Script)
             var cache = JsonSerializer.Current.Value;
-            if (cache != null && cache.IsDuringSerialization && cache.SerializerWriter.SerializeStackSize == 0)
+            if (cache != null && cache.IsWriting && cache.SerializerWriter.SerializeStackSize == 0)
             {
                 return false;
             }
@@ -46,7 +46,7 @@ namespace FlaxEngine.Json
     }
 
     /// <summary>
-    /// Serialize SceneReference as Guid in internal format.
+    /// Serialize <see cref="SceneReference"/> as Guid in internal format.
     /// </summary>
     /// <seealso cref="Newtonsoft.Json.JsonConverter" />
     internal class SceneReferenceConverter : JsonConverter
@@ -79,7 +79,7 @@ namespace FlaxEngine.Json
     }
 
     /// <summary>
-    /// Serialize SoftObjectReference as Guid in internal format.
+    /// Serialize <see cref="SoftObjectReference"/> as Guid in internal format.
     /// </summary>
     /// <seealso cref="Newtonsoft.Json.JsonConverter" />
     internal class SoftObjectReferenceConverter : JsonConverter
@@ -111,7 +111,63 @@ namespace FlaxEngine.Json
     }
 
     /// <summary>
-    /// Serialize SoftObjectReference as Guid in internal format.
+    /// Serialize <see cref="SoftTypeReference"/> as typename string in internal format.
+    /// </summary>
+    /// <seealso cref="Newtonsoft.Json.JsonConverter" />
+    internal class SoftTypeReferenceConverter : JsonConverter
+    {
+        /// <inheritdoc />
+        public override void WriteJson(JsonWriter writer, object value, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            writer.WriteValue(((SoftTypeReference)value).TypeName);
+        }
+
+        /// <inheritdoc />
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            var result = new SoftTypeReference();
+            if (reader.TokenType == JsonToken.String)
+                result.TypeName = (string)reader.Value;
+            return result;
+        }
+
+        /// <inheritdoc />
+        public override bool CanConvert(Type objectType)
+        {
+            return objectType == typeof(SoftTypeReference);
+        }
+    }
+
+    /// <summary>
+    /// Serialize <see cref="BehaviorKnowledgeSelectorAny"/> as path string in internal format.
+    /// </summary>
+    /// <seealso cref="Newtonsoft.Json.JsonConverter" />
+    internal class BehaviorKnowledgeSelectorAnyConverter : JsonConverter
+    {
+        /// <inheritdoc />
+        public override void WriteJson(JsonWriter writer, object value, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            writer.WriteValue(((BehaviorKnowledgeSelectorAny)value).Path);
+        }
+
+        /// <inheritdoc />
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            var result = new BehaviorKnowledgeSelectorAny();
+            if (reader.TokenType == JsonToken.String)
+                result.Path = (string)reader.Value;
+            return result;
+        }
+
+        /// <inheritdoc />
+        public override bool CanConvert(Type objectType)
+        {
+            return objectType == typeof(BehaviorKnowledgeSelectorAny);
+        }
+    }
+
+    /// <summary>
+    /// Serialize <see cref="Margin"/> as Guid in internal format.
     /// </summary>
     /// <seealso cref="Newtonsoft.Json.JsonConverter" />
     internal class MarginConverter : JsonConverter
@@ -237,7 +293,7 @@ namespace FlaxEngine.Json
     }
 
     /// <summary>
-    /// Serialize LocalizedString as inlined text is not using localization (Id member is empty).
+    /// Serialize <see cref="LocalizedString"/> as inlined text is not using localization (Id member is empty).
     /// </summary>
     /// <seealso cref="Newtonsoft.Json.JsonConverter" />
     internal class LocalizedStringConverter : JsonConverter
@@ -319,6 +375,34 @@ namespace FlaxEngine.Json
         public override bool CanConvert(Type objectType)
         {
             return objectType == typeof(LocalizedString);
+        }
+    }
+
+    /// <summary>
+    /// Serialize <see cref="Tag"/> as inlined text.
+    /// </summary>
+    /// <seealso cref="Newtonsoft.Json.JsonConverter" />
+    internal class TagConverter : JsonConverter
+    {
+        /// <inheritdoc />
+        public override void WriteJson(JsonWriter writer, object value, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            var tag = (Tag)value;
+            writer.WriteValue(tag.ToString());
+        }
+
+        /// <inheritdoc />
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, Newtonsoft.Json.JsonSerializer serializer)
+        {
+            if (reader.TokenType == JsonToken.String)
+                return Tags.Get((string)reader.Value);
+            return Tag.Default;
+        }
+
+        /// <inheritdoc />
+        public override bool CanConvert(Type objectType)
+        {
+            return objectType == typeof(Tag);
         }
     }
 

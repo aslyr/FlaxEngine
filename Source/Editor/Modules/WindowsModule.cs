@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -36,6 +36,22 @@ namespace FlaxEditor.Modules
         {
             public string AssemblyName;
             public string TypeName;
+            
+            public DockState DockState;
+            public DockPanel DockedTo;
+            public float? SplitterValue = null;
+
+            public bool SelectOnShow = false;
+
+            public bool Maximize;
+            public bool Minimize;
+            public Float2 FloatSize;
+            public Float2 FloatPosition;
+
+            // Constructor, to allow for default values
+            public WindowRestoreData()
+            {
+            }
         }
 
         private readonly List<WindowRestoreData> _restoreWindows = new List<WindowRestoreData>();
@@ -171,9 +187,13 @@ namespace FlaxEditor.Modules
             var mainWindow = MainWindow;
             if (mainWindow)
             {
-                var projectPath = Globals.ProjectFolder.Replace('/', '\\');
-                var platformBit = Platform.Is64BitApp ? "64" : "32";
-                var title = string.Format("Flax Editor - \'{0}\' ({1}-bit)", projectPath, platformBit);
+                var projectPath = Globals.ProjectFolder;
+#if PLATFORM_WINDOWS
+                projectPath = projectPath.Replace('/', '\\');
+#endif
+                var engineVersion = Editor.EngineProject.Version;
+                var engineVersionText = engineVersion.Revision > 0 ? $"{engineVersion.Major}.{engineVersion.Minor}.{engineVersion.Revision}" : $"{engineVersion.Major}.{engineVersion.Minor}";
+                var title = $"Flax Editor {engineVersionText} - \'{projectPath}\'";
                 mainWindow.Title = title;
             }
         }
@@ -193,6 +213,8 @@ namespace FlaxEditor.Modules
         /// <returns>Editor window or null if cannot find any window.</returns>
         public EditorWindow FindEditor(ContentItem item)
         {
+            if (item == null)
+                return null;
             for (int i = 0; i < Windows.Count; i++)
             {
                 var win = Windows[i];
@@ -235,7 +257,11 @@ namespace FlaxEditor.Modules
         /// </summary>
         public void LoadDefaultLayout()
         {
-            LoadLayout(StringUtils.CombinePaths(Globals.EngineContentFolder, "Editor/LayoutDefault.xml"));
+            var path = StringUtils.CombinePaths(Globals.EngineContentFolder, "Editor/LayoutDefault.xml");
+            if (File.Exists(path))
+            {
+                LoadLayout(path);
+            }
         }
 
         /// <summary>
@@ -274,9 +300,6 @@ namespace FlaxEditor.Modules
 
                 // Get metadata
                 int version = int.Parse(root.Attributes["Version"].Value, CultureInfo.InvariantCulture);
-                var virtualDesktopBounds = Platform.VirtualDesktopBounds;
-                var virtualDesktopSafeLeftCorner = virtualDesktopBounds.Location;
-                var virtualDesktopSafeRightCorner = virtualDesktopBounds.BottomRight;
 
                 switch (version)
                 {
@@ -286,31 +309,9 @@ namespace FlaxEditor.Modules
                     if (MainWindow)
                     {
                         var mainWindowNode = root["MainWindow"];
-                        Rectangle bounds = LoadBounds(mainWindowNode["Bounds"]);
-                        bool isMaximized = bool.Parse(mainWindowNode.GetAttribute("IsMaximized"));
-
-                        // Clamp position to match current desktop dimensions (if window was on desktop that is now inactive)
-                        if (bounds.X < virtualDesktopSafeLeftCorner.X || bounds.Y < virtualDesktopSafeLeftCorner.Y || bounds.X > virtualDesktopSafeRightCorner.X || bounds.Y > virtualDesktopSafeRightCorner.Y)
-                            bounds.Location = virtualDesktopSafeLeftCorner;
-
-                        if (isMaximized)
-                        {
-                            if (MainWindow.IsMaximized)
-                                MainWindow.Restore();
-                            MainWindow.ClientPosition = bounds.Location;
-                            MainWindow.Maximize();
-                        }
-                        else
-                        {
-                            if (Mathf.Min(bounds.Size.X, bounds.Size.Y) >= 1)
-                            {
-                                MainWindow.ClientBounds = bounds;
-                            }
-                            else
-                            {
-                                MainWindow.ClientPosition = bounds.Location;
-                            }
-                        }
+                        bool isMaximized = true, isMinimized = false;
+                        Rectangle bounds = LoadBounds(mainWindowNode, ref isMaximized, ref isMinimized);
+                        LoadWindow(MainWindow, ref bounds, isMaximized, false);
                     }
 
                     // Load master panel structure
@@ -330,11 +331,13 @@ namespace FlaxEditor.Modules
                                 continue;
 
                             // Get window properties
-                            Rectangle bounds = LoadBounds(child["Bounds"]);
+                            bool isMaximized = false, isMinimized = false;
+                            Rectangle bounds = LoadBounds(child, ref isMaximized, ref isMinimized);
 
                             // Create window and floating dock panel
                             var window = FloatWindowDockPanel.CreateFloatWindow(MainWindow.GUI, bounds.Location, bounds.Size, WindowStartPosition.Manual, string.Empty);
                             var panel = new FloatWindowDockPanel(masterPanel, window.GUI);
+                            LoadWindow(panel.Window.Window, ref bounds, isMaximized, isMinimized);
 
                             // Load structure
                             LoadPanel(child, panel);
@@ -350,7 +353,7 @@ namespace FlaxEditor.Modules
                             {
                                 // Perform layout
                                 var windowGUI = window.GUI;
-                                windowGUI.UnlockChildrenRecursive();
+                                windowGUI.IsLayoutLocked = false;
                                 windowGUI.PerformLayout();
 
                                 // Show
@@ -378,6 +381,10 @@ namespace FlaxEditor.Modules
                 Editor.LogWarning("Failed to load windows layout.");
                 Editor.LogWarning(ex);
                 return false;
+            }
+            finally
+            {
+                masterPanel.PerformLayout();
             }
 
             return true;
@@ -487,21 +494,65 @@ namespace FlaxEditor.Modules
 
         private static void SaveBounds(XmlWriter writer, Window win)
         {
-            var bounds = win.ClientBounds;
-
-            writer.WriteAttributeString("X", bounds.X.ToString(CultureInfo.InvariantCulture));
-            writer.WriteAttributeString("Y", bounds.Y.ToString(CultureInfo.InvariantCulture));
-            writer.WriteAttributeString("Width", bounds.Width.ToString(CultureInfo.InvariantCulture));
-            writer.WriteAttributeString("Height", bounds.Height.ToString(CultureInfo.InvariantCulture));
+            writer.WriteStartElement("Bounds");
+            {
+                var bounds = win.ClientBounds;
+                writer.WriteAttributeString("X", bounds.X.ToString(CultureInfo.InvariantCulture));
+                writer.WriteAttributeString("Y", bounds.Y.ToString(CultureInfo.InvariantCulture));
+                writer.WriteAttributeString("Width", bounds.Width.ToString(CultureInfo.InvariantCulture));
+                writer.WriteAttributeString("Height", bounds.Height.ToString(CultureInfo.InvariantCulture));
+                writer.WriteAttributeString("IsMaximized", win.IsMaximized.ToString());
+                writer.WriteAttributeString("IsMinimized", win.IsMinimized.ToString());
+            }
+            writer.WriteEndElement();
         }
 
-        private static Rectangle LoadBounds(XmlElement node)
+        private static Rectangle LoadBounds(XmlElement node, ref bool isMaximized, ref bool isMinimized)
         {
-            float x = float.Parse(node.GetAttribute("X"), CultureInfo.InvariantCulture);
-            float y = float.Parse(node.GetAttribute("Y"), CultureInfo.InvariantCulture);
-            float width = float.Parse(node.GetAttribute("Width"), CultureInfo.InvariantCulture);
-            float height = float.Parse(node.GetAttribute("Height"), CultureInfo.InvariantCulture);
+            var bounds = node["Bounds"];
+            var isMaximizedText = bounds.GetAttribute("IsMaximized");
+            if (!string.IsNullOrEmpty(isMaximizedText))
+                isMaximized = bool.Parse(isMaximizedText);
+            var isMinimizedText = bounds.GetAttribute("IsMinimized");
+            if (!string.IsNullOrEmpty(isMinimizedText))
+                isMinimized = bool.Parse(isMinimizedText);
+            float x = float.Parse(bounds.GetAttribute("X"), CultureInfo.InvariantCulture);
+            float y = float.Parse(bounds.GetAttribute("Y"), CultureInfo.InvariantCulture);
+            float width = float.Parse(bounds.GetAttribute("Width"), CultureInfo.InvariantCulture);
+            float height = float.Parse(bounds.GetAttribute("Height"), CultureInfo.InvariantCulture);
             return new Rectangle(x, y, width, height);
+        }
+
+        private static void LoadWindow(Window win, ref Rectangle bounds, bool isMaximized, bool isMinimized)
+        {
+            var virtualDesktopBounds = Platform.VirtualDesktopBounds;
+            var virtualDesktopSafeLeftCorner = virtualDesktopBounds.Location;
+            var virtualDesktopSafeRightCorner = virtualDesktopBounds.BottomRight;
+
+            // Clamp position to match current desktop dimensions (if window was on desktop that is now inactive)
+            if (bounds.X < virtualDesktopSafeLeftCorner.X || bounds.Y < virtualDesktopSafeLeftCorner.Y || bounds.X > virtualDesktopSafeRightCorner.X || bounds.Y > virtualDesktopSafeRightCorner.Y)
+                bounds.Location = virtualDesktopSafeLeftCorner;
+
+            if (isMaximized)
+            {
+                if (win.IsMaximized)
+                    win.Restore();
+                win.ClientPosition = bounds.Location;
+                win.Maximize();
+            }
+            else
+            {
+                if (Mathf.Min(bounds.Size.X, bounds.Size.Y) >= 1)
+                {
+                    win.ClientBounds = bounds;
+                }
+                else
+                {
+                    win.ClientPosition = bounds.Location;
+                }
+                if (isMinimized)
+                    win.Minimize();
+            }
         }
 
         private class LayoutNameDialog : Dialog
@@ -523,7 +574,7 @@ namespace FlaxEditor.Modules
                     Text = "OK",
                     Parent = this,
                 };
-                okButton.Clicked += OnOk;
+                okButton.Clicked += OnSubmit;
 
                 var cancelButton = new Button(okButton.Left - 54, okButton.Y, 50)
                 {
@@ -532,10 +583,11 @@ namespace FlaxEditor.Modules
                 };
                 cancelButton.Clicked += OnCancel;
 
-                _dialogSize = okButton.BottomRight + new Vector2(8);
+                _dialogSize = okButton.BottomRight + new Float2(8);
             }
 
-            private void OnOk()
+            /// <inheritdoc />
+            public override void OnSubmit()
             {
                 var name = _textbox.Text;
                 if (name.Length == 0)
@@ -549,31 +601,10 @@ namespace FlaxEditor.Modules
                     return;
                 }
 
-                Close(DialogResult.OK);
+                base.OnSubmit();
 
-                var path = StringUtils.CombinePaths(Globals.ProjectCacheFolder, "Layout_" + name + ".xml");
+                var path = StringUtils.CombinePaths(Editor.LocalCachePath, "LayoutsCache", "Layout_" + name + ".xml");
                 Editor.Instance.Windows.SaveLayout(path);
-            }
-
-            private void OnCancel()
-            {
-                Close(DialogResult.Cancel);
-            }
-
-            /// <inheritdoc />
-            public override bool OnKeyDown(KeyboardKeys key)
-            {
-                switch (key)
-                {
-                case KeyboardKeys.Escape:
-                    OnCancel();
-                    return true;
-                case KeyboardKeys.Return:
-                    OnOk();
-                    return true;
-                }
-
-                return base.OnKeyDown(key);
             }
         }
 
@@ -623,12 +654,7 @@ namespace FlaxEditor.Modules
                 if (MainWindow)
                 {
                     writer.WriteStartElement("MainWindow");
-                    writer.WriteAttributeString("IsMaximized", MainWindow.IsMaximized.ToString());
-
-                    writer.WriteStartElement("Bounds");
                     SaveBounds(writer, MainWindow);
-                    writer.WriteEndElement();
-
                     writer.WriteEndElement();
                 }
 
@@ -642,26 +668,49 @@ namespace FlaxEditor.Modules
                 {
                     var panel = masterPanel.FloatingPanels[i];
                     var window = panel.Window;
-
                     if (window == null)
-                    {
-                        Editor.LogWarning("Floating panel has missing window");
                         continue;
-                    }
 
                     writer.WriteStartElement("Float");
-
                     SavePanel(writer, panel);
-
-                    writer.WriteStartElement("Bounds");
                     SaveBounds(writer, window.Window);
-                    writer.WriteEndElement();
-
                     writer.WriteEndElement();
                 }
 
                 writer.WriteEndElement();
                 writer.WriteEndDocument();
+            }
+        }
+
+        /// <summary>
+        /// Opens the specified editor window (shows it with editor options handling for new windows).
+        /// </summary>
+        /// <param name="window">The window.</param>
+        public void Open(EditorWindow window)
+        {
+            var newLocation = (DockState)Editor.Options.Options.Interface.NewWindowLocation;
+            if (newLocation == DockState.Float)
+            {
+                // Check if there is a floating window that has the same size
+                var dpi = (float)Platform.Dpi / 96.0f;
+                var dpiScale = Platform.CustomDpiScale;
+                var defaultSize = window.DefaultSize * dpi;
+                for (var i = 0; i < Editor.UI.MasterPanel.FloatingPanels.Count; i++)
+                {
+                    var win = Editor.UI.MasterPanel.FloatingPanels[i];
+                    if (Float2.Abs(win.Size - defaultSize).LengthSquared < 100)
+                    {
+                        window.Show(DockState.DockFill, win);
+                        window.Focus();
+                        return;
+                    }
+                }
+
+                window.ShowFloating(defaultSize * dpiScale);
+            }
+            else
+            {
+                window.Show(newLocation);
             }
         }
 
@@ -676,9 +725,7 @@ namespace FlaxEditor.Modules
             for (int i = 0; i < Windows.Count; i++)
             {
                 if (string.Equals(Windows[i].SerializationTypename, typename, StringComparison.OrdinalIgnoreCase))
-                {
                     return Windows[i];
-                }
             }
 
             // Check if it's an asset ID
@@ -703,29 +750,25 @@ namespace FlaxEditor.Modules
             _windowsLayoutPath = StringUtils.CombinePaths(Globals.ProjectCacheFolder, "WindowsLayout.xml");
 
             // Create main window
-            var dpiScale = Platform.DpiScale;
             var settings = CreateWindowSettings.Default;
             settings.Title = "Flax Editor";
-            settings.Size = Platform.DesktopSize;
+            settings.Size = Platform.DesktopSize * 0.75f;
             settings.StartPosition = WindowStartPosition.CenterScreen;
             settings.ShowAfterFirstPaint = true;
-
 #if PLATFORM_WINDOWS
             if (!Editor.Instance.Options.Options.Interface.UseNativeWindowSystem)
-#endif
             {
                 settings.HasBorder = false;
-#if PLATFORM_WINDOWS
+
                 // Skip OS sizing frame and implement it using LeftButtonHit
                 settings.HasSizingFrame = false;
-#endif
             }
-
+#elif PLATFORM_LINUX
+            settings.HasBorder = false;
+#endif
             MainWindow = Platform.CreateWindow(ref settings);
-
             if (MainWindow == null)
             {
-                // Error
                 Editor.LogError("Failed to create editor main window!");
                 return;
             }
@@ -773,10 +816,38 @@ namespace FlaxEditor.Modules
             if (constructor == null || type.IsGenericType)
                 return;
 
-            WindowRestoreData winData;
+            var winData = new WindowRestoreData();
+            var panel = win.Window.ParentDockPanel;
+
+            // Ensure that this window is only selected following recompilation
+            // if it was the active tab in its dock panel. Otherwise, there is a
+            // risk of interrupting the user's workflow by potentially selecting
+            // background tabs.
+            winData.SelectOnShow = panel.SelectedTab == win.Window;
+            if (panel is FloatWindowDockPanel)
+            {
+                winData.DockState = DockState.Float;
+                var window = win.Window.RootWindow.Window;
+                winData.FloatPosition = window.Position;
+                winData.FloatSize = window.ClientSize;
+                winData.Maximize = window.IsMaximized;
+                winData.Minimize = window.IsMinimized;
+            }
+            else
+            {
+                if (panel.TabsCount > 1)
+                {
+                    winData.DockState = DockState.DockFill;
+                    winData.DockedTo = panel;
+                }else
+                {
+                    winData.DockState = panel.TryGetDockState(out var splitterValue);
+                    winData.DockedTo = panel.ParentDockPanel;
+                    winData.SplitterValue = splitterValue;
+                }
+            }
             winData.AssemblyName = type.Assembly.GetName().Name;
             winData.TypeName = type.FullName;
-            // TODO: cache and restore docking info
             _restoreWindows.Add(winData);
         }
 
@@ -795,7 +866,24 @@ namespace FlaxEditor.Modules
                         if (type != null)
                         {
                             var win = (CustomEditorWindow)Activator.CreateInstance(type);
-                            win.Show();
+                            win.Show(winData.DockState, winData.DockedTo, winData.SelectOnShow, winData.SplitterValue);
+                            if (winData.DockState == DockState.Float)
+                            {
+                                var window = win.Window.RootWindow.Window;
+                                window.Position = winData.FloatPosition;
+                                if (winData.Maximize)
+                                {
+                                    window.Maximize();
+                                }
+                                else if (winData.Minimize)
+                                {
+                                    window.Minimize();
+                                }
+                                else 
+                                {
+                                    window.ClientSize = winData.FloatSize;
+                                }
+                            }
                         }
                     }
                 }

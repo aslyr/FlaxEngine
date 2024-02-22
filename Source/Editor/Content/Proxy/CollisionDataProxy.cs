@@ -1,6 +1,7 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using FlaxEditor.Windows;
 using FlaxEditor.Windows.Assets;
@@ -37,6 +38,7 @@ namespace FlaxEditor.Content
     /// A <see cref="CollisionData"/> asset proxy object.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.BinaryAssetProxy" />
+    [ContentContextMenu("New/Physics/Collision Data")]
     class CollisionDataProxy : BinaryAssetProxy
     {
         /// <inheritdoc />
@@ -69,7 +71,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override void Create(string outputPath, object arg)
         {
-            if (Editor.CreateAsset(Editor.NewAssetType.CollisionData, outputPath))
+            if (Editor.CreateAsset("CollisionData", outputPath))
                 throw new Exception("Failed to create new asset.");
         }
 
@@ -78,7 +80,8 @@ namespace FlaxEditor.Content
         /// </summary>
         /// <param name="model">The associated model.</param>
         /// <param name="created">The action to call once the collision data gets created (or reused from existing).</param>
-        public void CreateCollisionDataFromModel(Model model, Action<CollisionData> created = null)
+        /// <param name="withRenaming">True if start initial item renaming by user, or tru to skip it.</param>
+        public void CreateCollisionDataFromModel(Model model, Action<CollisionData> created = null, bool withRenaming = true)
         {
             // Check if there already is collision data for that model to reuse
             var modelItem = (AssetItem)Editor.Instance.ContentDatabase.Find(model.ID);
@@ -86,6 +89,7 @@ namespace FlaxEditor.Content
             {
                 foreach (var child in modelItem.ParentFolder.Children)
                 {
+                    // Check if there is collision that was made with this model
                     if (child is BinaryAssetItem b && b.IsOfType<CollisionData>())
                     {
                         var collisionData = FlaxEngine.Content.Load<CollisionData>(b.ID);
@@ -95,6 +99,25 @@ namespace FlaxEditor.Content
                             if (created != null)
                                 FlaxEngine.Scripting.InvokeOnUpdate(() => created(collisionData));
                             return;
+                        }
+                    }
+
+                    // Check if there is a auto-imported collision
+                    if (child is ContentFolder childFolder && childFolder.ShortName == modelItem.ShortName)
+                    {
+                        foreach (var childFolderChild in childFolder.Children)
+                        {
+                            if (childFolderChild is BinaryAssetItem c && c.IsOfType<CollisionData>())
+                            {
+                                var collisionData = FlaxEngine.Content.Load<CollisionData>(c.ID);
+                                if (collisionData && (collisionData.Options.Model == model.ID || collisionData.Options.Model == Guid.Empty))
+                                {
+                                    Editor.Instance.Windows.ContentWin.Select(c);
+                                    if (created != null)
+                                        FlaxEngine.Scripting.InvokeOnUpdate(() => created(collisionData));
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
@@ -117,7 +140,8 @@ namespace FlaxEditor.Content
                         FlaxEngine.Scripting.InvokeOnUpdate(() => created(collisionData));
                 });
             };
-            Editor.Instance.Windows.ContentWin.NewItem(this, null, create);
+            var initialName = (modelItem?.ShortName ?? Path.GetFileNameWithoutExtension(model.Path)) + " Collision";
+            Editor.Instance.Windows.ContentWin.NewItem(this, null, create, initialName, withRenaming);
         }
     }
 }

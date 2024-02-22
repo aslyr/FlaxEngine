@@ -1,6 +1,7 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using FlaxEditor.Surface.Elements;
 using FlaxEditor.Utilities;
 using FlaxEngine;
@@ -21,14 +22,19 @@ namespace FlaxEditor.Surface.ContextMenu
         public readonly VisjectCM ContextMenu;
 
         /// <summary>
-        /// The archetype.
+        /// The archetypes (one or more).
         /// </summary>
-        public readonly GroupArchetype Archetype;
+        public readonly List<GroupArchetype> Archetypes = new List<GroupArchetype>();
 
         /// <summary>
         /// A computed score for the context menu order.
         /// </summary>
         public float SortScore;
+
+        /// <summary>
+        /// The group name.
+        /// </summary>
+        public string Name;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="VisjectCMGroup"/> class.
@@ -38,7 +44,13 @@ namespace FlaxEditor.Surface.ContextMenu
         public VisjectCMGroup(VisjectCM cm, GroupArchetype archetype)
         {
             ContextMenu = cm;
-            Archetype = archetype;
+            Archetypes.Add(archetype);
+            Name = archetype.Name;
+            EnableDropDownIcon = true;
+            HeaderColor = Style.Current.Background;
+            ArrowImageOpened = new SpriteBrush(Style.Current.ArrowDown);
+            ArrowImageClosed = new SpriteBrush(Style.Current.ArrowRight);
+            CloseAnimationTime = 0;
         }
 
         /// <summary>
@@ -54,7 +66,7 @@ namespace FlaxEditor.Surface.ContextMenu
             {
                 if (_children[i] is VisjectCMItem item)
                 {
-                    item.UpdateFilter(null);
+                    item.UpdateFilter(null, null);
                     item.UpdateScore(null);
                 }
             }
@@ -72,23 +84,42 @@ namespace FlaxEditor.Surface.ContextMenu
         /// Updates the filter.
         /// </summary>
         /// <param name="filterText">The filter text.</param>
-        public void UpdateFilter(string filterText)
+        /// <param name="selectedBox">The optionally selected box to show hints for it.</param>
+        public void UpdateFilter(string filterText, Box selectedBox)
         {
             Profiler.BeginEvent("VisjectCMGroup.UpdateFilter");
 
             // Update items
             bool isAnyVisible = false;
+            bool groupHeaderMatches = QueryFilterHelper.Match(filterText, HeaderText);
             for (int i = 0; i < _children.Count; i++)
             {
                 if (_children[i] is VisjectCMItem item)
                 {
-                    item.UpdateFilter(filterText);
+                    item.UpdateFilter(filterText, selectedBox, groupHeaderMatches);
                     isAnyVisible |= item.Visible;
                 }
             }
 
-            // Update header title
-            if (QueryFilterHelper.Match(filterText, HeaderText))
+            // Update itself
+            if (isAnyVisible)
+            {
+                if (!string.IsNullOrEmpty(filterText))
+                    Open(false);
+                Visible = true;
+            }
+            else
+            {
+                // Hide group if none of the items matched the filter
+                Visible = false;
+            }
+
+            Profiler.EndEvent();
+        }
+
+        internal void EvaluateVisibilityWithBox(Box selectedBox)
+        {
+            if (selectedBox == null)
             {
                 for (int i = 0; i < _children.Count; i++)
                 {
@@ -97,14 +128,25 @@ namespace FlaxEditor.Surface.ContextMenu
                         item.Visible = true;
                     }
                 }
-                isAnyVisible = true;
+                Visible = true;
+                return;
+            }
+
+            Profiler.BeginEvent("VisjectCMGroup.EvaluateVisibilityWithBox");
+
+            bool isAnyVisible = false;
+            for (int i = 0; i < _children.Count; i++)
+            {
+                if (_children[i] is VisjectCMItem item)
+                {
+                    item.Visible = item.CanConnectTo(selectedBox);
+                    isAnyVisible |= item.Visible;
+                }
             }
 
             // Update itself
             if (isAnyVisible)
             {
-                if (!string.IsNullOrEmpty(filterText))
-                    Open(false);
                 Visible = true;
             }
             else
@@ -148,7 +190,7 @@ namespace FlaxEditor.Surface.ContextMenu
                 int order = -1 * SortScore.CompareTo(otherGroup.SortScore);
                 if (order == 0)
                 {
-                    order = string.Compare(Archetype.Name, otherGroup.Archetype.Name, StringComparison.InvariantCulture);
+                    order = string.Compare(Name, otherGroup.Name, StringComparison.InvariantCulture);
                 }
                 return order;
             }

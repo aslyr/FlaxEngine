@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -51,11 +51,11 @@ public class Main : EngineModule
             options.CompileEnv.GenerateDocumentation = true;
 
             break;
-        case TargetPlatform.Linux:
-            options.SourcePaths.Add(Path.Combine(FolderPath, "Linux"));
-            break;
         case TargetPlatform.PS4:
             options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS4", "Engine", "Main"));
+            break;
+        case TargetPlatform.PS5:
+            options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS5", "Engine", "Main"));
             break;
         case TargetPlatform.XboxOne:
             options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "XboxOne", "Engine", "Main"));
@@ -69,6 +69,11 @@ public class Main : EngineModule
         case TargetPlatform.Switch:
             options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "Switch", "Engine", "Main"));
             break;
+        case TargetPlatform.Linux:
+        case TargetPlatform.Mac:
+        case TargetPlatform.iOS:
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Default"));
+            break;
         default: throw new InvalidPlatformException(options.Platform.Target);
         }
     }
@@ -76,5 +81,6 @@ public class Main : EngineModule
     /// <inheritdoc />
     public override void GetFilesToDeploy(List<string> files)
     {
+        files.Add(Path.Combine(FolderPath, "Android/android_native_app_glue.h"));
     }
 }

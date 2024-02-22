@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -7,11 +7,11 @@
 /// <summary>
 /// Root of the UI structure. Renders GUI and handles input events forwarding.
 /// </summary>
-API_CLASS(Sealed, NoConstructor) class FLAXENGINE_API UICanvas : public Actor
+API_CLASS(Sealed, NoConstructor, Attributes="ActorContextMenu(\"New/UI/UI Canvas\"), ActorToolbox(\"GUI\")")
+class FLAXENGINE_API UICanvas : public Actor
 {
-DECLARE_SCENE_OBJECT(UICanvas);
+    DECLARE_SCENE_OBJECT(UICanvas);
 public:
-
     // [Actor]
 #if USE_EDITOR
     BoundingBox GetEditorBox() const override;
@@ -20,10 +20,9 @@ public:
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
 
 protected:
-
     // [Actor]
-    void BeginPlay(SceneBeginData* data) final override;
-    void EndPlay() final override;
+    void OnBeginPlay() override;
+    void OnEndPlay() override;
     void OnParentChanged() override;
     void OnEnable() override;
     void OnDisable() override;

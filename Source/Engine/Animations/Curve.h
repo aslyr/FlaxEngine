@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -286,15 +286,12 @@ template<class T, typename KeyFrame = LinearCurveKeyframe<T>>
 class CurveBase
 {
 public:
-
     typedef Span<KeyFrame> KeyFrameData;
 
 protected:
-
     T _default;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="Curve"/> class.
     /// </summary>
@@ -320,7 +317,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the default value for the keyframes.
     /// </summary>
@@ -338,7 +334,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Evaluates the animation curve value at the specified time.
     /// </summary>
@@ -355,7 +350,7 @@ public:
             return;
         }
 
-        const float start = 0;
+        const float start = Math::Min(data[0].Time, 0.0f);
         const float end = data[count - 1].Time;
         AnimationUtils::WrapTime(time, start, end, loop);
 
@@ -397,7 +392,7 @@ public:
             return;
         }
 
-        const float start = 0;
+        const float start = Math::Min(data[0].Time, 0.0f);
         const float end = data[count - 1].Time;
         AnimationUtils::WrapTime(time, start, end, loop);
 
@@ -439,7 +434,7 @@ public:
             return;
         }
 
-        const float start = 0;
+        const float start = Math::Min(data[0].Time, 0.0f);
         const float end = data[count - 1].Time;
         AnimationUtils::WrapTime(time, start, end, loop);
 
@@ -466,7 +461,6 @@ public:
     }
 
 protected:
-
     /// <summary>
     /// Returns a pair of keys that can be used for interpolating to field the value at the provided time.
     /// </summary>
@@ -507,16 +501,13 @@ template<class T, typename KeyFrame = LinearCurveKeyframe<T>>
 class Curve : public CurveBase<T, KeyFrame>
 {
 public:
-
     typedef CurveBase<T, KeyFrame> Base;
     using KeyFrameCollection = Array<KeyFrame>;
 
 private:
-
     KeyFrameCollection _keyframes;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="Curve"/> class.
     /// </summary>
@@ -552,7 +543,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the length of the animation curve, from time zero to last keyframe.
     /// </summary>
@@ -627,7 +617,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Evaluates the animation curve value at the specified time.
     /// </summary>
@@ -741,11 +730,15 @@ public:
     void TransformTime(float timeScale, float timeOffset)
     {
         for (int32 i = 0; i < _keyframes.Count(); i++)
-            _keyframes[i].Time = _keyframes[i].Time * timeScale + timeOffset;;
+            _keyframes[i].Time = _keyframes[i].Time * timeScale + timeOffset;
+    }
+
+    uint64 GetMemoryUsage() const
+    {
+        return _keyframes.Capacity() * sizeof(KeyFrame);
     }
 
 public:
-
     FORCE_INLINE KeyFrame& operator[](int32 index)
     {
         return _keyframes[index];
@@ -768,6 +761,12 @@ public:
         return true;
     }
 };
+
+/// <summary>
+/// An animation spline represented by a set of keyframes, each representing a value point. 
+/// </summary>
+template<typename T>
+using StepCurve = Curve<T, StepCurveKeyframe<T>>;
 
 /// <summary>
 /// An animation spline represented by a set of keyframes, each representing an endpoint of a linear curve. 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_LINUX
 
@@ -6,17 +6,14 @@
 #include "Engine/Input/Input.h"
 #include "Engine/Input/Mouse.h"
 #include "Engine/Input/Keyboard.h"
-#include "Engine/Engine/Engine.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Core/Math/Color32.h"
-#include "Engine/Core/Math/Int2.h"
+#include "Engine/Core/Math/Vector2.h"
 #include "Engine/Core/Collections/Array.h"
 #include "Engine/Core/Collections/Dictionary.h"
 #include "Engine/Utilities/StringConverter.h"
-#include "Engine/Utilities/StringConverter.h"
 #include "Engine/Graphics/RenderTask.h"
-#include "Engine/Graphics/GPUSwapChain.h"
 #include "Engine/Graphics/Textures/TextureData.h"
 // hack using TextureTool in Platform module -> TODO: move texture data sampling to texture data itself
 #define COMPILE_WITH_TEXTURE_TOOL 1
@@ -43,17 +40,25 @@ extern X11::Atom xAtomWmName;
 extern Dictionary<StringAnsi, X11::KeyCode> KeyNameMap;
 extern Array<KeyboardKeys> KeyCodeMap;
 extern X11::Cursor Cursors[(int32)CursorType::MAX];
+extern Window* MouseTrackingWindow;
 
-static const uint32 MouseDoubleClickTime = 500;
+static constexpr uint32 MouseDoubleClickTime = 500;
+static constexpr uint32 MaxDoubleClickDistanceSquared = 10;
 static X11::Time MouseLastButtonPressTime = 0;
+static Float2 OldMouseClickPosition;
 
 LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	: WindowBase(settings)
 {
-	// Cache data
+	auto display = (X11::Display*)LinuxPlatform::GetXDisplay();
+    if (!display)
+        return;
+	auto screen = XDefaultScreen(display);
+
+    // Cache data
 	int32 width = Math::TruncToInt(settings.Size.X);
 	int32 height = Math::TruncToInt(settings.Size.Y);
-	_clientSize = Vector2((float)width, (float)height);
+	_clientSize = Float2((float)width, (float)height);
     int32 x = 0, y = 0;
 	switch (settings.StartPosition)
     {
@@ -67,9 +72,21 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
         break;
     case WindowStartPosition::CenterScreen:
         {
-            Vector2 desktopSize = Platform::GetDesktopSize();
-            x = Math::TruncToInt((desktopSize.X - _clientSize.X) * 0.5f);
-            y = Math::TruncToInt((desktopSize.Y - _clientSize.Y) * 0.5f);
+			Rectangle desktopBounds;
+			int event, err;
+			const bool ok = X11::XineramaQueryExtension(display, &event, &err);
+			if (X11::XineramaQueryExtension(display, &event, &err))
+			{
+				int count;
+				X11::XineramaScreenInfo* xsi = X11::XineramaQueryScreens(display, &count);
+				ASSERT(screen < count);
+				desktopBounds = Rectangle(Float2((float)xsi[screen].x_org, (float)xsi[screen].y_org), Float2((float)xsi[screen].width, (float)xsi[screen].height));
+				X11::XFree(xsi);
+			}
+			else
+				desktopBounds = Rectangle(Float2::Zero, Platform::GetDesktopSize());
+            x = Math::TruncToInt(desktopBounds.Location.X + (desktopBounds.Size.X - _clientSize.X) * 0.5f);
+            y = Math::TruncToInt(desktopBounds.Location.Y + (desktopBounds.Size.Y - _clientSize.Y) * 0.5f);
         }
         break;
     case WindowStartPosition::Manual:
@@ -79,9 +96,6 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	}
 	_resizeDisabled = !settings.HasSizingFrame;
 
-	auto display = (X11::Display*)LinuxPlatform::GetXDisplay();
-
-	auto screen = XDefaultScreen(display);
 	auto rootWindow = XRootWindow(display, screen);
 
 	long visualMask = VisualScreenMask;
@@ -98,6 +112,12 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	windowAttributes.border_pixel = XBlackPixel(display, screen);
 	windowAttributes.event_mask = KeyPressMask | KeyReleaseMask | StructureNotifyMask | ExposureMask;
 
+    if (!settings.IsRegularWindow)
+    {
+        windowAttributes.save_under = true;
+        windowAttributes.override_redirect = true;
+    }
+
 	// TODO: implement all window settings
 	/*
 	bool Fullscreen;
@@ -105,11 +125,16 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	bool AllowMaximize;
 	*/
 
+    unsigned long valueMask = CWBackPixel | CWBorderPixel | CWEventMask | CWColormap;
+    if (!settings.IsRegularWindow)
+    {
+        valueMask |= CWOverrideRedirect | CWSaveUnder;
+    }
 	const X11::Window window = X11::XCreateWindow(
 		display, X11::XRootWindow(display, screen), x, y,
 		width, height, 0, visualInfo->depth, InputOutput,
 		visualInfo->visual,
-		CWBackPixel | CWBorderPixel | CWEventMask | CWColormap, &windowAttributes);
+		valueMask, &windowAttributes);
 	_window = window;
 	LinuxWindow::SetTitle(settings.Title);
 
@@ -137,12 +162,16 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	{
 		// Set resizing range
 		hints.min_width = (int)settings.MinimumSize.X;
-		hints.max_width = (int)settings.MaximumSize.X;
+		hints.max_width = settings.MaximumSize.X > 0 ? (int)settings.MaximumSize.X : MAX_uint16;
 		hints.min_height = (int)settings.MinimumSize.Y;
-		hints.max_height = (int)settings.MaximumSize.Y;
+		hints.max_height = settings.MaximumSize.Y > 0 ? (int)settings.MaximumSize.Y : MAX_uint16;
 		hints.flags |= USSize;
 	}
-	X11::XSetNormalHints(display, window, &hints);
+    // honor the WM placement except for manual (overriding) placements
+    if (settings.StartPosition == WindowStartPosition::Manual)
+    {
+        X11::XSetNormalHints(display, window, &hints);
+    }
 
 	// Ensures the child window is always on top of the parent window
 	if (settings.Parent)
@@ -205,7 +234,7 @@ LinuxWindow::LinuxWindow(const CreateWindowSettings& settings)
 	X11::Atom wmSateSkipTaskbar = X11::XInternAtom(display, "_NET_WM_STATE_SKIP_TASKBAR", 0);
 	X11::Atom wmStateSkipPager = X11::XInternAtom(display, "_NET_WM_STATE_SKIP_PAGER", 0);
 	X11::Atom wmStateFullscreen = X11::XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", 0);
-	X11::Atom states[2];
+	X11::Atom states[4];
 	int32 statesCount = 0;
 	if (settings.IsTopmost)
 	{
@@ -241,6 +270,8 @@ LinuxWindow::~LinuxWindow()
 {
 	// Cleanup
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	X11::XDestroyWindow(display, window);
 }
 
@@ -263,9 +294,12 @@ void LinuxWindow::Show()
 
 		// Show
 		LINUX_WINDOW_PROLOG;
-		X11::XMapWindow(display, window);
-		X11::XFlush(display);
-		_focusOnMapped = _settings.AllowInput && _settings.ActivateWhenFirstShown;
+        if (display)
+        {
+            X11::XMapWindow(display, window);
+            X11::XFlush(display);
+        }
+        _focusOnMapped = _settings.AllowInput && _settings.ActivateWhenFirstShown;
 
 		// Base
 		WindowBase::Show();
@@ -278,7 +312,10 @@ void LinuxWindow::Hide()
 	{
 		// Hide
 		LINUX_WINDOW_PROLOG;
-		X11::XUnmapWindow(display, window);
+        if (display)
+        {
+		    X11::XUnmapWindow(display, window);
+        }
 
 		// Base
 		WindowBase::Hide();
@@ -306,6 +343,8 @@ void LinuxWindow::Restore()
 void LinuxWindow::BringToFront(bool force)
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	X11::Atom activeWindow = X11::XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 
 	X11::XEvent event;
@@ -338,6 +377,8 @@ void LinuxWindow::SetClientBounds(const Rectangle& clientArea)
 	int32 width = Math::TruncToInt(clientArea.GetWidth());
 	int32 height = Math::TruncToInt(clientArea.GetHeight());
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	// If resize is disabled on WM level, we need to force it
 	if (_resizeDisabled)
@@ -351,74 +392,90 @@ void LinuxWindow::SetClientBounds(const Rectangle& clientArea)
 		X11::XSetNormalHints(display, window, &hints);
 	}
 
-	_clientSize = Vector2((float)width, (float)height);
+	X11::XMapWindow(display, window);
+
+	_clientSize = Float2((float)width, (float)height);
 	X11::XResizeWindow(display, window, width, height);
 	X11::XMoveWindow(display, window, x, y);
 	X11::XFlush(display);
 }
 
-void LinuxWindow::SetPosition(const Vector2& position)
+void LinuxWindow::SetPosition(const Float2& position)
 {
 	int32 x = Math::TruncToInt(position.X);
 	int32 y = Math::TruncToInt(position.Y);
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	X11::XMoveWindow(display, window, x, y);
 	X11::XFlush(display);
 }
 
-void LinuxWindow::SetClientPosition(const Vector2& position)
+void LinuxWindow::SetClientPosition(const Float2& position)
 {
 	int32 x = Math::TruncToInt(position.X);
 	int32 y = Math::TruncToInt(position.Y);
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	X11::XWindowAttributes xwa;
 	X11::XGetWindowAttributes(display, window, &xwa);
 	X11::XMoveWindow(display, window, x - xwa.border_width, y - xwa.border_width);
 	X11::XFlush(display);
 }
 
-Vector2 LinuxWindow::GetPosition() const
+Float2 LinuxWindow::GetPosition() const
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return Float2::Zero;
 	X11::XWindowAttributes xwa;
 	X11::XGetWindowAttributes(display, window, &xwa);
-	return Vector2((float)xwa.x, (float)xwa.y);
+	return Float2((float)xwa.x, (float)xwa.y);
 }
 
-Vector2 LinuxWindow::GetSize() const
+Float2 LinuxWindow::GetSize() const
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return _clientSize;
 	X11::XWindowAttributes xwa;
 	X11::XGetWindowAttributes(display, window, &xwa);
-	return Vector2((float)(xwa.width + xwa.border_width), (float)(xwa.height + xwa.border_width));
+	return Float2((float)(xwa.width + xwa.border_width), (float)(xwa.height + xwa.border_width));
 }
 
-Vector2 LinuxWindow::GetClientSize() const
+Float2 LinuxWindow::GetClientSize() const
 {
 	return _clientSize;
 }
 
-Vector2 LinuxWindow::ScreenToClient(const Vector2& screenPos) const
+Float2 LinuxWindow::ScreenToClient(const Float2& screenPos) const
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return screenPos;
 	int32 x, y;
 	X11::Window child;
 	X11::XTranslateCoordinates(display, X11_DefaultRootWindow(display), window, (int32)screenPos.X, (int32)screenPos.Y, &x, &y, &child);
-	return Vector2((float)x, (float)y);
+	return Float2((float)x, (float)y);
 }
 
-Vector2 LinuxWindow::ClientToScreen(const Vector2& clientPos) const
+Float2 LinuxWindow::ClientToScreen(const Float2& clientPos) const
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return clientPos;
 	int32 x, y;
 	X11::Window child;
 	X11::XTranslateCoordinates(display, window, X11_DefaultRootWindow(display), (int32)clientPos.X, (int32)clientPos.Y, &x, &y, &child);
-	return Vector2((float)x, (float)y);
+	return Float2((float)x, (float)y);
 }
 
 void LinuxWindow::FlashWindow()
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	const X11::Atom wmState = X11::XInternAtom(display, "_NET_WM_STATE", 0);
 	const X11::Atom wmAttention = X11::XInternAtom(display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0);
@@ -439,6 +496,8 @@ void LinuxWindow::GetScreenInfo(int32& x, int32& y, int32& width, int32& height)
 {
 	LINUX_WINDOW_PROLOG;
 	x = y = width = height = 0;
+    if (!display)
+        return;
 
 	int event, err;
 	const bool ok = X11::XineramaQueryExtension(display, &event, &err);
@@ -475,13 +534,15 @@ void LinuxWindow::CheckForWindowResize()
 		return;
 
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	// Get client size
 	X11::XWindowAttributes xwa;
 	X11::XGetWindowAttributes(display, window, &xwa);
 	const int32 width = xwa.width;
 	const int32 height = xwa.height;
-	const Vector2 clientSize((float)width, (float)height);
+	const Float2 clientSize((float)width, (float)height);
 
     // Check if window size has been changed
 	if (clientSize != _clientSize && width > 0 && height > 0)
@@ -532,7 +593,7 @@ void LinuxWindow::OnButtonPress(void* event)
 {
 	auto buttonEvent = (X11::XButtonPressedEvent*)event;
 
-	Vector2 mousePos((float)buttonEvent->x, (float)buttonEvent->y);
+	Float2 mousePos((float)buttonEvent->x, (float)buttonEvent->y);
 	MouseButton mouseButton;
 	switch (buttonEvent->button)
 	{
@@ -545,6 +606,12 @@ void LinuxWindow::OnButtonPress(void* event)
 	case Button3:
 		mouseButton = MouseButton::Right;
 		break;
+	case 8:
+		mouseButton = MouseButton::Extended2;
+		break;
+	case 9:
+		mouseButton = MouseButton::Extended1;
+		break;
 	default:
 		return;
 	}
@@ -552,15 +619,19 @@ void LinuxWindow::OnButtonPress(void* event)
 	// Handle double-click
 	if (buttonEvent->button == Button1)
 	{
-		if (buttonEvent->time < (MouseLastButtonPressTime + MouseDoubleClickTime))
+		if (
+			buttonEvent->time < (MouseLastButtonPressTime + MouseDoubleClickTime) &&
+			Float2::DistanceSquared(mousePos, OldMouseClickPosition) < MaxDoubleClickDistanceSquared)
 		{
 			Input::Mouse->OnMouseDoubleClick(ClientToScreen(mousePos), mouseButton, this);
 			MouseLastButtonPressTime = 0;
+			OldMouseClickPosition = mousePos;
 			return;
 		}
 		else
 		{
 			MouseLastButtonPressTime = buttonEvent->time;
+			OldMouseClickPosition = mousePos;
 		}
 	}
 
@@ -570,7 +641,7 @@ void LinuxWindow::OnButtonPress(void* event)
 void LinuxWindow::OnButtonRelease(void* event)
 {
 	auto buttonEvent = (X11::XButtonReleasedEvent*)event;
-	Vector2 mousePos((float)buttonEvent->x, (float)buttonEvent->y);
+	Float2 mousePos((float)buttonEvent->x, (float)buttonEvent->y);
 	switch (buttonEvent->button)
 	{
 	case Button1:
@@ -588,6 +659,12 @@ void LinuxWindow::OnButtonRelease(void* event)
 	case Button5:
 		Input::Mouse->OnMouseWheel(ClientToScreen(mousePos), -1.0f, this);
 		break;
+	case 8:
+		Input::Mouse->OnMouseUp(ClientToScreen(mousePos), MouseButton::Extended2, this);
+		break;
+	case 9:
+		Input::Mouse->OnMouseUp(ClientToScreen(mousePos), MouseButton::Extended1, this);
+		break;
 	default:
 		return;
 	}
@@ -596,7 +673,7 @@ void LinuxWindow::OnButtonRelease(void* event)
 void LinuxWindow::OnMotionNotify(void* event)
 {
 	auto motionEvent = (X11::XMotionEvent*)event;
-	Vector2 mousePos((float)motionEvent->x, (float)motionEvent->y);
+	Float2 mousePos((float)motionEvent->x, (float)motionEvent->y);
 	Input::Mouse->OnMouseMove(ClientToScreen(mousePos), this);
 }
 
@@ -609,7 +686,7 @@ void LinuxWindow::OnLeaveNotify(void* event)
 void LinuxWindow::OnConfigureNotify(void* event)
 {
 	auto configureEvent = (X11::XConfigureEvent*)event;
-	const Vector2 clientSize((float)configureEvent->width, (float)configureEvent->height);
+	const Float2 clientSize((float)configureEvent->width, (float)configureEvent->height);
 	if (clientSize != _clientSize)
 	{
 		_clientSize = clientSize;
@@ -620,6 +697,8 @@ void LinuxWindow::OnConfigureNotify(void* event)
 void LinuxWindow::Maximize(bool enable)
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	X11::Atom wmState = X11::XInternAtom(display, "_NET_WM_STATE", 0);
 	X11::Atom wmMaxHorz = X11::XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", 0);
@@ -651,6 +730,8 @@ void LinuxWindow::Maximize(bool enable)
 void LinuxWindow::Minimize(bool enable)
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	X11::Atom wmChange = X11::XInternAtom(display, "WM_CHANGE_STATE", 0);
 
@@ -668,6 +749,8 @@ void LinuxWindow::Minimize(bool enable)
 bool LinuxWindow::IsWindowMapped()
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return false;
 	X11::XWindowAttributes xwa;
 	X11::XGetWindowAttributes(display, window, &xwa);
 	return xwa.map_state != IsUnmapped;
@@ -681,6 +764,8 @@ float LinuxWindow::GetOpacity() const
 void LinuxWindow::SetOpacity(const float opacity)
 {
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	if (Math::IsOne(opacity))
 	{
@@ -702,6 +787,8 @@ void LinuxWindow::Focus()
 		return;
 
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 
 	X11::XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
 	X11::XFlush(display);
@@ -711,6 +798,9 @@ void LinuxWindow::Focus()
 void LinuxWindow::SetTitle(const StringView& title)
 {
 	LINUX_WINDOW_PROLOG;
+	_title = title;
+    if (!display)
+        return;
 	const StringAsANSI<512> titleAnsi(title.Get(), title.Length());
 	const char* text = titleAnsi.Get();
 
@@ -729,18 +819,17 @@ void LinuxWindow::SetTitle(const StringView& title)
 		//X11::XSetWMIconName(display, window, &titleProp);
 		X11::XFree(titleProp.value);
 	}
-
-	_title = title;
 }
 
 void LinuxWindow::StartTrackingMouse(bool useMouseScreenOffset)
 {
-	// TODO: impl this
+    MouseTrackingWindow = this;
 }
 
 void LinuxWindow::EndTrackingMouse()
 {
-	// TODO: impl this
+    if (MouseTrackingWindow == this)
+        MouseTrackingWindow = nullptr;
 }
 
 void LinuxWindow::SetCursor(CursorType type)
@@ -748,6 +837,8 @@ void LinuxWindow::SetCursor(CursorType type)
 	WindowBase::SetCursor(type);
 
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	X11::XDefineCursor(display, window, Cursors[(int32)type]);
 }
 
@@ -764,6 +855,8 @@ void LinuxWindow::SetIcon(TextureData& icon)
 	WindowBase::SetIcon(icon);
 
 	LINUX_WINDOW_PROLOG;
+    if (!display)
+        return;
 	IconErrorFlag = false;
 	int (*oldHandler)(X11::Display*, X11::XErrorEvent*) = X11::XSetErrorHandler(&SetIconErrorHandler);
 	X11::Atom iconAtom = X11::XInternAtom(display, "_NET_WM_ICON", 0);
@@ -800,7 +893,7 @@ void LinuxWindow::SetIcon(TextureData& icon)
 			{
 				for (int32 x = 0; x < icon.Width; x++)
 				{
-					const Vector2 uv((float)x / icon.Width, (float)y / icon.Height);
+					const Float2 uv((float)x / icon.Width, (float)y / icon.Height);
 					Color color = TextureTool::SampleLinear(sampler, uv, iconData->Data.Get(), iconSize, iconData->RowPitch);
 					*(mipData + y * icon.Width + x) = Color32(color);
 				}
@@ -844,7 +937,7 @@ void LinuxWindow::SetIcon(TextureData& icon)
 				{
 					for (int32 x = 0; x < newWidth; x++)
 					{
-						const Vector2 uv((float)x / newWidth, (float)y / newHeight);
+						const Float2 uv((float)x / newWidth, (float)y / newHeight);
 						Color color = TextureTool::SampleLinear(sampler, uv, iconData->Data.Get(), iconSize, iconData->RowPitch);
 						*(mipData + y * newWidth + x) = Color32(color);
 					}

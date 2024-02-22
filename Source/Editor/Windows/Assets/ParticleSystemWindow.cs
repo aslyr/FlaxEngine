@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Linq;
@@ -156,14 +156,14 @@ namespace FlaxEditor.Windows.Assets
 
             private bool HasEmitter => _track.Asset != null;
 
-            [EditorDisplay("Particle Emitter"), VisibleIf("HasEmitter"), EditorOrder(200), Tooltip("The start frame of the media event.")]
+            [EditorDisplay("Particle Emitter"), VisibleIf(nameof(HasEmitter)), EditorOrder(200), Tooltip("The start frame of the media event.")]
             public int StartFrame
             {
                 get => _track.Media.Count > 0 ? _track.TrackMedia.StartFrame : 0;
                 set => _track.TrackMedia.StartFrame = value;
             }
 
-            [EditorDisplay("Particle Emitter"), Limit(1), VisibleIf("HasEmitter"), EditorOrder(300), Tooltip("The total duration of the media event in the timeline sequence frames amount.")]
+            [EditorDisplay("Particle Emitter"), Limit(1), VisibleIf(nameof(HasEmitter)), EditorOrder(300), Tooltip("The total duration of the media event in the timeline sequence frames amount.")]
             public int DurationFrames
             {
                 get => _track.Media.Count > 0 ? _track.TrackMedia.DurationFrames : 0;
@@ -187,7 +187,7 @@ namespace FlaxEditor.Windows.Assets
                     base.Initialize(layout);
 
                     var emitterTrack = Values[0] as EmitterTrackProxy;
-                    if (emitterTrack?._effect?.Parameters == null)
+                    if (emitterTrack?._effect == null || emitterTrack?._effect.Parameters == null)
                         return;
 
                     var group = layout.Group("Parameters");
@@ -306,6 +306,8 @@ namespace FlaxEditor.Windows.Assets
         public ParticleSystemWindow(Editor editor, AssetItem item)
         : base(editor, item)
         {
+            var inputOptions = Editor.Options.Options.Input;
+
             // Undo
             _undo = new Undo();
             _undo.UndoDone += OnUndoRedo;
@@ -347,6 +349,7 @@ namespace FlaxEditor.Windows.Assets
             };
             _timeline.Modified += OnTimelineModified;
             _timeline.SelectionChanged += OnTimelineSelectionChanged;
+            _timeline.SetNoTracksText("Loading...");
 
             // Properties editor
             var propertiesEditor = new CustomEditorPresenter(_undo, string.Empty);
@@ -358,8 +361,8 @@ namespace FlaxEditor.Windows.Assets
             // Toolstrip
             _saveButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Save64, Save).LinkTooltip("Save");
             _toolstrip.AddSeparator();
-            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip("Undo (Ctrl+Z)");
-            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip("Redo (Ctrl+Y)");
+            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip($"Undo ({inputOptions.Undo})");
+            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip($"Redo ({inputOptions.Redo})");
             _toolstrip.AddSeparator();
             _toolstrip.AddButton(editor.Icons.Docs64, () => Platform.OpenUrl(Utilities.Constants.DocsUrl + "manual/particles/index.html")).LinkTooltip("See documentation to learn more");
 
@@ -527,6 +530,7 @@ namespace FlaxEditor.Windows.Assets
                 // Setup
                 _undo.Clear();
                 _timeline.Enabled = true;
+                _timeline.SetNoTracksText(null);
                 _propertiesEditor.Select(new GeneralProxy(this));
                 ClearEditedFlag();
             }
@@ -541,22 +545,17 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutSerialize(XmlWriter writer)
         {
-            writer.WriteAttributeString("Split1", _split1.SplitterValue.ToString());
-            writer.WriteAttributeString("Split2", _split2.SplitterValue.ToString());
-            writer.WriteAttributeString("Split3", _timeline.Splitter.SplitterValue.ToString());
+            LayoutSerializeSplitter(writer, "Split1", _split1);
+            LayoutSerializeSplitter(writer, "Split2", _split2);
+            LayoutSerializeSplitter(writer, "Split3", _timeline.Splitter);
         }
 
         /// <inheritdoc />
         public override void OnLayoutDeserialize(XmlElement node)
         {
-            if (float.TryParse(node.GetAttribute("Split1"), out float value1))
-                _split1.SplitterValue = value1;
-
-            if (float.TryParse(node.GetAttribute("Split2"), out value1))
-                _split2.SplitterValue = value1;
-
-            if (float.TryParse(node.GetAttribute("Split3"), out value1))
-                _timeline.Splitter.SplitterValue = value1;
+            LayoutDeserializeSplitter(node, "Split1", _split1);
+            LayoutDeserializeSplitter(node, "Split2", _split2);
+            LayoutDeserializeSplitter(node, "Split3", _timeline.Splitter);
         }
 
         /// <inheritdoc />

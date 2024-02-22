@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 /// <summary>
 /// Implementation of the window class for Linux platform.
 /// </summary>
-class LinuxWindow : public WindowBase
+class FLAXENGINE_API LinuxWindow : public WindowBase
 {
 	friend LinuxPlatform;
 public:
@@ -65,7 +65,7 @@ private:
 
 public:
 
-	// [Window]
+	// [WindowBase]
 	void* GetNativePtr() const override;
 	void Show() override;
 	void Hide() override;
@@ -76,13 +76,13 @@ public:
     bool IsForegroundWindow() const override;
 	void BringToFront(bool force = false) override;
 	void SetClientBounds(const Rectangle& clientArea) override;
-	void SetPosition(const Vector2& position) override;
-	void SetClientPosition(const Vector2& position) override;
-	Vector2 GetPosition() const override;
-	Vector2 GetSize() const override;
-	Vector2 GetClientSize() const override;
-	Vector2 ScreenToClient(const Vector2& screenPos) const override;
-	Vector2 ClientToScreen(const Vector2& clientPos) const override;
+	void SetPosition(const Float2& position) override;
+	void SetClientPosition(const Float2& position) override;
+	Float2 GetPosition() const override;
+	Float2 GetSize() const override;
+	Float2 GetClientSize() const override;
+	Float2 ScreenToClient(const Float2& screenPos) const override;
+	Float2 ClientToScreen(const Float2& clientPos) const override;
 	void FlashWindow() override;
 	float GetOpacity() const override;
 	void SetOpacity(float opacity) override;

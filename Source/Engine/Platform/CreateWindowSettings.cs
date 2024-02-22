@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine
 {
@@ -9,10 +9,10 @@ namespace FlaxEngine
         /// </summary>
         public static CreateWindowSettings Default => new CreateWindowSettings
         {
-            Position = new Vector2(100, 100),
-            Size = new Vector2(640, 480),
-            MinimumSize = Vector2.One,
-            MaximumSize = new Vector2(4100, 4100),
+            Position = new Float2(100, 100),
+            Size = new Float2(640, 480),
+            MinimumSize = Float2.One,
+            MaximumSize = Float2.Zero, // Unlimited size
             StartPosition = WindowStartPosition.CenterParent,
             HasBorder = true,
             ShowInTaskbar = true,
@@ -23,6 +23,7 @@ namespace FlaxEngine
             AllowDragAndDrop = true,
             IsRegularWindow = true,
             HasSizingFrame = true,
+            ShowAfterFirstPaint = true,
         };
     }
 }

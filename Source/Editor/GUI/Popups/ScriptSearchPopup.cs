@@ -1,9 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
-using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.GUI
 {
@@ -78,7 +78,7 @@ namespace FlaxEditor.GUI
             {
                 Find(Level.GetScene(i));
             }
-            SortChildren();
+            SortItems();
         }
 
         private void OnItemClicked(Item item)
@@ -114,7 +114,7 @@ namespace FlaxEditor.GUI
         /// <param name="isValid">Event called to check if a given script item is valid to be used.</param>
         /// <param name="selected">Event called on script item pick.</param>
         /// <returns>The dialog.</returns>
-        public static ScriptSearchPopup Show(Control showTarget, Vector2 showTargetLocation, IsValidDelegate isValid, Action<Script> selected)
+        public static ScriptSearchPopup Show(Control showTarget, Float2 showTargetLocation, IsValidDelegate isValid, Action<Script> selected)
         {
             var popup = new ScriptSearchPopup(isValid, selected);
             popup.Show(showTarget, showTargetLocation);

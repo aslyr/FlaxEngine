@@ -1,11 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "FontTextureAtlas.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/Types/DataContainer.h"
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
 #include "Engine/Graphics/PixelFormat.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
 #include "Engine/Graphics/GPUDevice.h"
+#include "Engine/Graphics/Async/GPUTask.h"
 
 REGISTER_BINARY_ASSET(FontTextureAtlas, "FlaxEngine.FontTextureAtlas", true);
 
@@ -38,7 +40,7 @@ void FontTextureAtlas::Init(uint32 width, uint32 height)
     uint32 padding = GetPaddingAmount();
     _width = width;
     _height = height;
-    _root = New<Slot>(padding, padding, _width - padding, _height - padding);
+    _root = New<FontTextureAtlasSlot>(padding, padding, _width - padding, _height - padding);
     _isDirty = false;
 
     // Reserve upload data memory
@@ -46,19 +48,19 @@ void FontTextureAtlas::Init(uint32 width, uint32 height)
     Platform::MemoryClear(_data.Get(), _data.Capacity());
 }
 
-FontTextureAtlas::Slot* FontTextureAtlas::AddEntry(uint32 targetWidth, uint32 targetHeight, const Array<byte>& data)
+FontTextureAtlasSlot* FontTextureAtlas::AddEntry(uint32 targetWidth, uint32 targetHeight, const Array<byte>& data)
 {
     // Check for invalid size
     if (targetWidth == 0 || targetHeight == 0)
         return nullptr;
 
     // Try to find slot for the texture
-    Slot* slot = nullptr;
+    FontTextureAtlasSlot* slot = nullptr;
     const uint32 padding = GetPaddingAmount();
     const uint32 allPadding = padding * 2;
     for (int32 i = 0; i < _freeSlots.Count(); i++)
     {
-        Slot* e = _freeSlots[i];
+        FontTextureAtlasSlot* e = _freeSlots[i];
         if (e->Width == targetWidth + allPadding && e->Height == targetHeight + allPadding)
         {
             slot = e;
@@ -87,7 +89,7 @@ FontTextureAtlas::Slot* FontTextureAtlas::AddEntry(uint32 targetWidth, uint32 ta
 
 bool FontTextureAtlas::Invalidate(uint32 x, uint32 y, uint32 width, uint32 height)
 {
-    Slot* slot = invalidate(_root, x, y, width, height);
+    FontTextureAtlasSlot* slot = invalidate(_root, x, y, width, height);
     if (slot)
     {
         _freeSlots.Add(slot);
@@ -95,7 +97,7 @@ bool FontTextureAtlas::Invalidate(uint32 x, uint32 y, uint32 width, uint32 heigh
     return slot != nullptr;
 }
 
-void FontTextureAtlas::CopyDataIntoSlot(const Slot* slot, const Array<byte>& data)
+void FontTextureAtlas::CopyDataIntoSlot(const FontTextureAtlasSlot* slot, const Array<byte>& data)
 {
     uint8* start = &_data[slot->Y * _width * _bytesPerPixel + slot->X * _bytesPerPixel];
     const uint32 padding = GetPaddingAmount();
@@ -144,6 +146,17 @@ void FontTextureAtlas::CopyDataIntoSlot(const Slot* slot, const Array<byte>& dat
         else
             zeroRow(rowData);
     }
+}
+
+byte* FontTextureAtlas::GetSlotData(const FontTextureAtlasSlot* slot, uint32& width, uint32& height, uint32& stride)
+{
+    const uint32 padding = GetPaddingAmount();
+    uint32 x = slot->X + padding;
+    uint32 y = slot->Y + padding;
+    width = slot->Width - padding * 2;
+    height = slot->Height - padding * 2;
+    stride = _width * _bytesPerPixel;
+    return &_data[y * _width * _bytesPerPixel + x * _bytesPerPixel];
 }
 
 void FontTextureAtlas::copyRow(const RowData& copyRowData) const
@@ -210,7 +223,9 @@ void FontTextureAtlas::Flush()
         // Upload data to the GPU
         BytesContainer data;
         data.Link(_data);
-        _texture->UploadMipMapAsync(data, 0)->Start();
+        auto task = _texture->UploadMipMapAsync(data, 0);
+        if (task)
+            task->Start();
 
         // Clear dirty flag
         _isDirty = false;
@@ -234,13 +249,13 @@ bool FontTextureAtlas::HasDataSyncWithGPU() const
     return _isDirty == false;
 }
 
-FontTextureAtlas::Slot* FontTextureAtlas::invalidate(Slot* parent, uint32 x, uint32 y, uint32 width, uint32 height)
+FontTextureAtlasSlot* FontTextureAtlas::invalidate(FontTextureAtlasSlot* parent, uint32 x, uint32 y, uint32 width, uint32 height)
 {
     if (parent->X == x && parent->Y == y && parent->Width == width && parent->Height == height)
     {
         return parent;
     }
-    Slot* result = parent->Left ? invalidate(parent->Left, x, y, width, height) : nullptr;
+    FontTextureAtlasSlot* result = parent->Left ? invalidate(parent->Left, x, y, width, height) : nullptr;
     if (result)
         return result;
     return parent->Right ? invalidate(parent->Right, x, y, width, height) : nullptr;

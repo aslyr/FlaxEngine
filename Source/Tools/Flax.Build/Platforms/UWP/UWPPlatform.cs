@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Linq;
 using Flax.Build.Projects.VisualStudio;
@@ -15,6 +15,9 @@ namespace Flax.Build.Platforms
         /// <inheritdoc />
         public override TargetPlatform Target => TargetPlatform.UWP;
 
+        /// <inheritdoc />
+        public override bool HasDynamicCodeExecutionSupport => false;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="UWPPlatform"/> class.
         /// </summary>
@@ -28,7 +31,7 @@ namespace Flax.Build.Platforms
             }
 
             // Visual Studio 2017+ supported only
-            var visualStudio = VisualStudioInstance.GetInstances().FirstOrDefault(x => x.Version == VisualStudioVersion.VisualStudio2017 || x.Version == VisualStudioVersion.VisualStudio2019);
+            var visualStudio = VisualStudioInstance.GetInstances().FirstOrDefault(x => x.Version == VisualStudioVersion.VisualStudio2017 || x.Version == VisualStudioVersion.VisualStudio2019 || x.Version == VisualStudioVersion.VisualStudio2022);
             if (visualStudio == null)
                 _hasRequiredSDKsInstalled = false;
 
@@ -39,11 +42,11 @@ namespace Flax.Build.Platforms
                 _hasRequiredSDKsInstalled = false;
 
             // Need v141+ toolset
-            if (!GetToolsets().ContainsKey(WindowsPlatformToolset.v141) &&
-                !GetToolsets().ContainsKey(WindowsPlatformToolset.v142))
-            {
+            var toolsets = GetToolsets();
+            if (!toolsets.ContainsKey(WindowsPlatformToolset.v141) &&
+                !toolsets.ContainsKey(WindowsPlatformToolset.v142) &&
+                !toolsets.ContainsKey(WindowsPlatformToolset.v143))
                 _hasRequiredSDKsInstalled = false;
-            }
         }
 
         /// <inheritdoc />

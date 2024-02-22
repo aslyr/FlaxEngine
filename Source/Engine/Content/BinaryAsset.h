@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -21,30 +21,26 @@
 /// <seealso cref="Asset" />
 API_CLASS(Abstract, NoSpawn) class FLAXENGINE_API BinaryAsset : public Asset
 {
-DECLARE_ASSET_HEADER(BinaryAsset);
+    DECLARE_ASSET_HEADER(BinaryAsset);
 protected:
-
     AssetHeader _header;
     FlaxStorageReference _storageRef; // Allow asset to have missing storage reference but only before asset is loaded or if it's virtual
     bool _isSaving;
     Array<BinaryAsset*> _dependantAssets;
 
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="BinaryAsset"/> class.
     /// </summary>
     ~BinaryAsset();
 
 public:
-
     /// <summary>
     /// The asset storage container.
     /// </summary>
     FlaxStorage* Storage;
 
 #if USE_EDITOR
-
     /// <summary>
     /// The asset metadata information. Stored in a Json format.
     /// </summary>
@@ -54,15 +50,12 @@ public:
     /// Asset dependencies list used by the asset for tracking (eg. material functions used by material asset). The pair of asset ID and cached file edit time (for tracking modification).
     /// </summary>
     Array<Pair<Guid, DateTime>> Dependencies;
-
 #endif
 
 public:
-
     /// <summary>
     /// Gets the asset serialized version.
     /// </summary>
-    /// <returns>Version number.</returns>
     virtual uint32 GetSerializedVersion() const = 0;
 
     /// <summary>
@@ -87,16 +80,12 @@ public:
     bool InitVirtual(AssetInitData& initData);
 
 public:
-
 #if USE_EDITOR
-
 #if COMPILE_WITH_ASSETS_IMPORTER
-
     /// <summary>
     /// Reimports asset from the source file.
     /// </summary>
     API_FUNCTION() void Reimport() const;
-
 #endif
 
     /// <summary>
@@ -128,7 +117,6 @@ public:
     bool HasDependenciesModified() const;
 
 protected:
-
     /// <summary>
     /// Called when one of the asset dependencies gets modified (it was saved or reloaded or reimported).
     /// </summary>
@@ -136,11 +124,9 @@ protected:
     virtual void OnDependencyModified(BinaryAsset* asset)
     {
     }
-
 #endif
 
 protected:
-
     /// <summary>
     /// Initializes the specified asset.
     /// </summary>
@@ -161,7 +147,6 @@ protected:
     }
 
 public:
-
     /// <summary>
     /// Gets the asset chunk.
     /// </summary>
@@ -263,7 +248,6 @@ public:
     bool LoadChunks(AssetChunksFlag chunks);
 
 #if USE_EDITOR
-
     /// <summary>
     /// Saves this asset to the storage container.
     /// </summary>
@@ -289,11 +273,9 @@ public:
     /// <param name="silentMode">In silent mode don't reload opened storage container that is using target file.</param>
     /// <returns>True if failed, otherwise false.</returns>
     static bool SaveToAsset(const StringView& path, AssetInitData& data, bool silentMode = false);
-
 #endif
 
 protected:
-
     /// <summary>
     /// Load data from the chunks
     /// </summary>
@@ -301,21 +283,19 @@ protected:
     virtual LoadResult load() = 0;
 
 private:
-
 #if USE_EDITOR
     void OnStorageReloaded(FlaxStorage* storage, bool failed);
 #endif
 
 public:
-
     // [Asset]
 #if USE_EDITOR
     void OnDeleteObject() override;
 #endif
     const String& GetPath() const final override;
+    uint64 GetMemoryUsage() const override;
 
 protected:
-
     // [Asset]
     ContentLoadTask* createLoadingTask() override;
     LoadResult loadAsset() override;

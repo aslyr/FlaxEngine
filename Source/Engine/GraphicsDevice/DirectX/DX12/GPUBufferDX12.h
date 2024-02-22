@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -113,7 +113,7 @@ private:
 
     GPUBufferViewDX12 _view;
     GPUBufferDX12* _counter = nullptr;
-    GPUResourceMapMode _lastMapMode;
+    GPUResourceMapMode _lastMapMode = (GPUResourceMapMode)255;
 
 public:
 

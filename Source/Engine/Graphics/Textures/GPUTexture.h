@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -19,9 +19,8 @@ class Task;
 /// </summary>
 API_CLASS(Sealed, NoSpawn) class FLAXENGINE_API GPUTextureView : public GPUResourceView
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUTextureView);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUTextureView);
 protected:
-
     GPUResource* _parent = nullptr;
     PixelFormat _format = PixelFormat::Unknown;
     MSAALevel _msaa = MSAALevel::None;
@@ -36,11 +35,11 @@ protected:
         _parent = parent;
         _format = format;
         _msaa = msaa;
-        LastRenderTime = &parent->LastRenderTime;
+        if (parent)
+            LastRenderTime = &parent->LastRenderTime;
     }
 
 public:
-
     /// <summary>
     /// Gets parent GPU resource owning that view.
     /// </summary>
@@ -71,23 +70,18 @@ public:
 /// </summary>
 API_CLASS(Sealed) class FLAXENGINE_API GPUTexture : public GPUResource
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUTexture);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUTexture);
     static GPUTexture* Spawn(const SpawnParams& params);
     static GPUTexture* New();
 
 protected:
-
     int32 _residentMipLevels;
     bool _sRGB, _isBlockCompressed;
     GPUTextureDescription _desc;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="GPUTexture"/> class.
-    /// </summary>
     GPUTexture();
 
 public:
-
     /// <summary>
     /// Gets a value indicating whether this texture has any resided mip (data already uploaded to the GPU).
     /// </summary>
@@ -153,7 +147,7 @@ public:
     }
 
     /// <summary>	
-    /// Gets the number of resident mipmap levels in the texture. (already uploaded to the GPU).
+    /// Gets the number of resident mipmap levels in the texture (already uploaded to the GPU).
     /// </summary>	
     API_PROPERTY() FORCE_INLINE int32 ResidentMipLevels() const
     {
@@ -201,7 +195,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets a value indicating whether this texture is a render target.
     /// </summary>
@@ -283,27 +276,24 @@ public:
     }
 
     /// <summary>
-    /// Checks if texture contains sRGB colors data
+    /// Checks if texture contains sRGB colors data.
     /// </summary>
-    /// <returns>True if texture contains sRGB colors data, otherwise false</returns>
     FORCE_INLINE bool IsSRGB() const
     {
         return _sRGB;
     }
 
     /// <summary>
-    /// Checks if texture is normal texture asset (not render target or unordered access or depth buffer or sth else)
+    /// Checks if texture is normal texture asset (not render target or unordered access or depth buffer or sth else).
     /// </summary>
-    /// <returns>True if it is a regular texture, otherwise false</returns>
     FORCE_INLINE bool IsRegularTexture() const
     {
         return _desc.Flags == GPUTextureFlags::ShaderResource;
     }
 
     /// <summary>
-    /// Checks if texture is a staging buffer (supports direct CPU access)
+    /// Checks if texture is a staging buffer (supports direct CPU access).
     /// </summary>
-    /// <returns>True if texture is a staging buffer (supports direct CPU access), otherwise false</returns>
     FORCE_INLINE bool IsStaging() const
     {
         return _desc.Usage == GPUResourceUsage::StagingUpload || _desc.Usage == GPUResourceUsage::StagingReadback;
@@ -318,16 +308,15 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the texture total size in pixels.
     /// </summary>
-    API_PROPERTY() Vector2 Size() const;
+    API_PROPERTY() Float2 Size() const;
 
     /// <summary>
     /// Gets the texture total size in pixels (with depth).
     /// </summary>
-    API_PROPERTY() Vector3 Size3() const;
+    API_PROPERTY() Float3 Size3() const;
 
     /// <summary>
     /// Returns true if texture has size that is power of two.
@@ -368,7 +357,6 @@ public:
     void GetResidentSize(int32& width, int32& height, int32& depth) const;
 
 public:
-
     /// <summary>
     /// Calculates mip map row pitch (in bytes).
     /// </summary>
@@ -400,7 +388,6 @@ public:
     int32 CalculateMipSize(int32 size, int32 mipLevel) const;
 
 public:
-
     int32 ComputeSubresourceSize(int32 subresource, int32 rowAlign, int32 sliceAlign) const;
     int32 ComputeBufferOffset(int32 subresource, int32 rowAlign, int32 sliceAlign) const;
     int32 ComputeBufferTotalSize(int32 rowAlign, int32 sliceAlign) const;
@@ -408,7 +395,6 @@ public:
     int32 ComputeRowPitch(int32 mipLevel, int32 rowAlign) const;
 
 public:
-
     /// <summary>
     /// Gets the view to the first surface (only for 2D textures).
     /// </summary>
@@ -473,7 +459,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Initializes a texture resource (allocates the GPU memory and performs the resource setup).
     /// </summary>
@@ -498,11 +483,12 @@ public:
     /// </summary>
     /// <param name="width">The width.</param>
     /// <param name="height">The height.</param>
+    /// <param name="format">The new texture format. Use Unknown to remain texture format unchanged.</param>
     /// <returns>True if fails, otherwise false.</returns>
-    API_FUNCTION() bool Resize(int32 width, int32 height)
+    API_FUNCTION() bool Resize(int32 width, int32 height, PixelFormat format = PixelFormat::Unknown)
     {
         const auto depth = IsAllocated() ? Depth() : 1;
-        return Resize(width, height, depth);
+        return Resize(width, height, depth, format);
     }
 
     /// <summary>
@@ -511,11 +497,11 @@ public:
     /// <param name="width">The width.</param>
     /// <param name="height">The height.</param>
     /// <param name="depth">The depth.</param>
+    /// <param name="format">The new texture format. Use Unknown to remain texture format unchanged.</param>
     /// <returns>True if fails, otherwise false.</returns>
-    API_FUNCTION() bool Resize(int32 width, int32 height, int32 depth);
+    API_FUNCTION() bool Resize(int32 width, int32 height, int32 depth, PixelFormat format = PixelFormat::Unknown);
 
 public:
-
     /// <summary>
     /// Gets the native pointer to the underlying resource. It's a low-level platform-specific handle.
     /// </summary>
@@ -527,8 +513,20 @@ public:
     /// </summary>
     /// <param name="data">Data to upload (it must be valid for the next a few frames due to GPU latency and async works executing)</param>
     /// <param name="mipIndex">Mip level index.</param>
+    /// <param name="copyData">If true, the data will be copied to the async execution task instead of using the input pointer provided.</param>
     /// <returns>Created async task or null if cannot.</returns>
-    GPUTask* UploadMipMapAsync(const BytesContainer& data, int32 mipIndex);
+    GPUTask* UploadMipMapAsync(const BytesContainer& data, int32 mipIndex, bool copyData = false);
+
+    /// <summary>
+    /// Uploads mip map data to the GPU. Creates async GPU task.
+    /// </summary>
+    /// <param name="data">Data to upload (it must be valid for the next a few frames due to GPU latency and async works executing)</param>
+    /// <param name="mipIndex">Mip level index.</param>
+    /// <param name="rowPitch">The data row pitch.</param>
+    /// <param name="slicePitch">The data slice pitch.</param>
+    /// <param name="copyData">If true, the data will be copied to the async execution task instead of using the input pointer provided.</param>
+    /// <returns>Created async task or null if cannot.</returns>
+    GPUTask* UploadMipMapAsync(const BytesContainer& data, int32 mipIndex, int32 rowPitch, int32 slicePitch, bool copyData = false);
 
     /// <summary>
     /// Stops current thread execution to gather texture data from the GPU.
@@ -554,25 +552,27 @@ public:
     /// <returns>True if failed, otherwise false.</returns>
     virtual bool GetData(int32 arrayOrDepthSliceIndex, int32 mipMapIndex, TextureMipData& data, uint32 mipRowPitch = 0) = 0;
 
-public:
+    /// <summary>
+    /// Sets the number of resident mipmap levels in the texture (already uploaded to the GPU).
+    /// </summary>
+    API_PROPERTY() void SetResidentMipLevels(int32 count);
 
-    void SetResidentMipLevels(int32 count);
+    /// <summary>
+    /// Event called when texture residency gets changed. Texture Mip gets loaded into GPU memory and is ready to use.
+    /// </summary>
+    Delegate<GPUTexture*> ResidentMipsChanged;
 
 protected:
-
     virtual bool OnInit() = 0;
     uint64 calculateMemoryUsage() const;
-    virtual void onResidentMipsChanged() = 0;
+    virtual void OnResidentMipsChanged() = 0;
 
 public:
-
     // [GPUResource]
     String ToString() const override;
-    ResourceType GetResourceType() const final override;
-    ObjectType GetObjectType() const final override;
+    GPUResourceType GetResourceType() const final override;
 
 protected:
-
     // [GPUResource]
     void OnReleaseGPU() override;
 };

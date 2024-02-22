@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content.Thumbnails;
@@ -15,6 +15,7 @@ namespace FlaxEditor.Content
     /// A <see cref="Material"/> asset proxy object.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.BinaryAssetProxy" />
+    [ContentContextMenu("New/Material/Material")]
     public class MaterialProxy : BinaryAssetProxy
     {
         private MaterialPreview _preview;
@@ -43,7 +44,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override void Create(string outputPath, object arg)
         {
-            if (Editor.CreateAsset(Editor.NewAssetType.Material, outputPath))
+            if (Editor.CreateAsset("Material", outputPath))
                 throw new Exception("Failed to create new asset.");
         }
 
@@ -71,11 +72,9 @@ namespace FlaxEditor.Content
         /// <param name="materialItem">The material item to use as a base material.</param>
         public static void CreateMaterialInstance(BinaryAssetItem materialItem)
         {
-            if (materialItem == null)
-                throw new ArgumentNullException();
-
+            var materialInstanceName = materialItem.ShortName + " Instance";
             var materialInstanceProxy = Editor.Instance.ContentDatabase.GetProxy<MaterialInstance>();
-            Editor.Instance.Windows.ContentWin.NewItem(materialInstanceProxy, null, item => OnMaterialInstanceCreated(item, materialItem));
+            Editor.Instance.Windows.ContentWin.NewItem(materialInstanceProxy, null, item => OnMaterialInstanceCreated(item, materialItem), materialInstanceName);
         }
 
         private static void OnMaterialInstanceCreated(ContentItem item, BinaryAssetItem materialItem)
@@ -97,19 +96,8 @@ namespace FlaxEditor.Content
         {
             if (_preview == null)
             {
-                _preview = new MaterialPreview(false)
-                {
-                    RenderOnlyWithWindow = false,
-                    UseAutomaticTaskManagement = false,
-                    AnchorPreset = AnchorPresets.StretchAll,
-                    Offsets = Margin.Zero,
-                };
-                _preview.Task.Enabled = false;
-
-                var eyeAdaptation = _preview.PostFxVolume.EyeAdaptation;
-                eyeAdaptation.Mode = EyeAdaptationMode.None;
-                eyeAdaptation.OverrideFlags |= EyeAdaptationSettingsOverride.Mode;
-                _preview.PostFxVolume.EyeAdaptation = eyeAdaptation;
+                _preview = new MaterialPreview(false);
+                InitAssetPreview(_preview);
             }
 
             // TODO: disable streaming for dependant assets during thumbnail rendering (and restore it after)
@@ -118,7 +106,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override bool CanDrawThumbnail(ThumbnailRequest request)
         {
-            return _preview.HasLoadedAssets;
+            return _preview.HasLoadedAssets && ThumbnailsModule.HasMinimumQuality((Material)request.Asset);
         }
 
         /// <inheritdoc />

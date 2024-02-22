@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.IO;
 using FlaxEngine;
@@ -24,8 +24,7 @@ namespace FlaxEditor.GUI.Timeline.Undo
             _options = new TrackCreateOptions
             {
                 Archetype = track.Archetype,
-                Loop = track.Loop,
-                Mute = track.Mute,
+                Flags = track.Flags,
             };
             _color = track.Color;
             _name = track.Name;

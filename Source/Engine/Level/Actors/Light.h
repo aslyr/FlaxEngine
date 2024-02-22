@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,9 +11,11 @@
 /// </summary>
 API_CLASS(Abstract) class FLAXENGINE_API Light : public Actor
 {
-DECLARE_SCENE_OBJECT_ABSTRACT(Light);
-public:
+    DECLARE_SCENE_OBJECT_ABSTRACT(Light);
+protected:
+    int32 _sceneRenderingKey = -1;
 
+public:
     /// <summary>
     /// Color of the light
     /// </summary>
@@ -27,7 +29,7 @@ public:
     float Brightness = 3.14f;
 
     /// <summary>
-    /// Controls light visibility range. The distance at which the light be completely faded. Use value 0 to always draw light.
+    /// Controls light visibility range. The distance at which the light becomes completely faded. Use a value of 0 to always draw light.
     /// </summary>
     API_FIELD(Attributes="EditorOrder(35), Limit(0, float.MaxValue, 10.0f), EditorDisplay(\"Light\")")
     float ViewDistance = 0.0f;
@@ -51,19 +53,21 @@ public:
     bool CastVolumetricShadow = true;
 
 protected:
-
     // Adjust the light brightness used during rendering (called by light types inside SetupLightData callback)
     void AdjustBrightness(const RenderView& view, float& brightness) const;
 
 public:
-
     // [Actor]
+    void OnEnable() override;
+    void OnDisable() override;
 #if USE_EDITOR
     BoundingBox GetEditorBox() const override
     {
         const Vector3 size(50);
         return BoundingBox(_transform.Translation - size, _transform.Translation + size);
     }
+    
+    virtual void DrawLightsDebug(RenderView& view);
 #endif
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
@@ -74,9 +78,8 @@ public:
 /// </summary>
 API_CLASS(Abstract) class FLAXENGINE_API LightWithShadow : public Light
 {
-DECLARE_SCENE_OBJECT_ABSTRACT(LightWithShadow);
+    DECLARE_SCENE_OBJECT_ABSTRACT(LightWithShadow);
 public:
-
     /// <summary>
     /// The minimum roughness value used to clamp material surface roughness during shading pixel.
     /// </summary>
@@ -84,19 +87,19 @@ public:
     float MinRoughness = 0.04f;
 
     /// <summary>
-    /// The light shadows casting distance from view.
+    /// Shadows casting distance from view.
     /// </summary>
     API_FIELD(Attributes="EditorOrder(80), EditorDisplay(\"Shadow\", \"Distance\"), Limit(0, 1000000)")
     float ShadowsDistance = 5000.0f;
 
     /// <summary>
-    /// The light shadows fade off distance
+    /// Shadows fade off distance.
     /// </summary>
     API_FIELD(Attributes="EditorOrder(90), EditorDisplay(\"Shadow\", \"Fade Distance\"), Limit(0.0f, 10000.0f, 0.1f)")
     float ShadowsFadeDistance = 500.0f;
 
     /// <summary>
-    /// The light shadows edges sharpness
+    /// TheShadows edges sharpness.
     /// </summary>
     API_FIELD(Attributes="EditorOrder(70), EditorDisplay(\"Shadow\", \"Sharpness\"), Limit(1.0f, 10.0f, 0.001f)")
     float ShadowsSharpness = 1.0f;
@@ -126,13 +129,12 @@ public:
     float ContactShadowsLength = 0.0f;
 
     /// <summary>
-    /// Shadows casting mode by this visual element
+    /// Describes how a visual element casts shadows.
     /// </summary>
     API_FIELD(Attributes="EditorOrder(60), EditorDisplay(\"Shadow\", \"Mode\")")
     ShadowsCastingMode ShadowsMode = ShadowsCastingMode::All;
 
 public:
-
     // [Light]
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;

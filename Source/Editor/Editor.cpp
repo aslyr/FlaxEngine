@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if USE_EDITOR
 
@@ -53,6 +53,7 @@ bool Editor::CheckProjectUpgrade()
     int32 lastMajor = FLAXENGINE_VERSION_MAJOR;
     int32 lastMinor = FLAXENGINE_VERSION_MINOR;
     int32 lastBuild = FLAXENGINE_VERSION_BUILD;
+    if (FileSystem::FileExists(versionFilePath))
     {
         auto file = FileReadStream::Open(versionFilePath);
         if (file)
@@ -77,10 +78,10 @@ bool Editor::CheckProjectUpgrade()
 
             Delete(file);
         }
-        else
-        {
-            LOG(Warning, "Missing version cache file");
-        }
+    }
+    else
+    {
+        LOG(Warning, "Missing version cache file");
     }
 
     // Check if project is in the old, deprecated layout
@@ -183,7 +184,7 @@ bool Editor::CheckProjectUpgrade()
                                "        BuildNativeCode = false;\n"
                                "    }}\n"
                                "}}\n"
-                           ), codeName), Encoding::Unicode);
+                           ), codeName), Encoding::UTF8);
         if (useEditorModule)
         {
             File::WriteAllText(gameEditorModuleFolder / String::Format(TEXT("{0}Editor.Build.cs"), codeName), String::Format(TEXT(
@@ -210,7 +211,7 @@ bool Editor::CheckProjectUpgrade()
                                    "        BuildNativeCode = false;\n"
                                    "    }}\n"
                                    "}}\n"
-                               ), codeName), Encoding::Unicode);
+                               ), codeName), Encoding::UTF8);
         }
 
         // Generate target files
@@ -228,7 +229,7 @@ bool Editor::CheckProjectUpgrade()
                                "        Modules.Add(\"{0}\");\n"
                                "    }}\n"
                                "}}\n"
-                           ), codeName), Encoding::Unicode);
+                           ), codeName), Encoding::UTF8);
         const String editorTargetGameEditorModule = useEditorModule ? String::Format(TEXT("        Modules.Add(\"{0}Editor\");\n"), codeName) : String::Empty;
         File::WriteAllText(sourceFolder / String::Format(TEXT("{0}EditorTarget.Build.cs"), codeName), String::Format(TEXT(
                                "using Flax.Build;\n"
@@ -245,7 +246,7 @@ bool Editor::CheckProjectUpgrade()
                                "{1}"
                                "    }}\n"
                                "}}\n"
-                           ), codeName, editorTargetGameEditorModule), Encoding::Unicode);
+                           ), codeName, editorTargetGameEditorModule), Encoding::UTF8);
 
         // Generate new project file
         Project->ProjectPath = root / String::Format(TEXT("{0}.flaxproj"), codeName);
@@ -258,13 +259,13 @@ bool Editor::CheckProjectUpgrade()
 
         LOG(Warning, "Project layout upgraded!");
     }
-        // Check if last version was the same
+    // Check if last version was the same
     else if (lastMajor == FLAXENGINE_VERSION_MAJOR && lastMinor == FLAXENGINE_VERSION_MINOR)
     {
         // Do nothing
         IsOldProjectOpened = false;
     }
-        // Check if last version was older
+    // Check if last version was older
     else if (lastMajor < FLAXENGINE_VERSION_MAJOR || (lastMajor == FLAXENGINE_VERSION_MAJOR && lastMinor < FLAXENGINE_VERSION_MINOR))
     {
         LOG(Warning, "The project was opened with the older editor version last time");
@@ -287,7 +288,7 @@ bool Editor::CheckProjectUpgrade()
             return true;
         }
     }
-        // Check if last version was newer
+    // Check if last version was newer
     else if (lastMajor > FLAXENGINE_VERSION_MAJOR || (lastMajor == FLAXENGINE_VERSION_MAJOR && lastMinor > FLAXENGINE_VERSION_MINOR))
     {
         LOG(Warning, "The project was opened with the newer editor version last time");
@@ -311,6 +312,14 @@ bool Editor::CheckProjectUpgrade()
         }
     }
 
+    // When changing between major/minor version clear some caches to prevent possible issues
+    if (lastMajor != FLAXENGINE_VERSION_MAJOR || lastMinor != FLAXENGINE_VERSION_MINOR)
+    {
+        LOG(Info, "Cleaning cache files from different engine version");
+        FileSystem::DeleteDirectory(Globals::ProjectFolder / TEXT("Cache/Cooker"));
+        FileSystem::DeleteDirectory(Globals::ProjectFolder / TEXT("Cache/Intermediate"));
+    }
+
     // Upgrade old 0.7 projects
     // [Deprecated: 01.11.2020, expires 01.11.2021]
     if (lastMajor == 0 && lastMinor == 7 && lastBuild <= 6197)
@@ -329,12 +338,11 @@ bool Editor::CheckProjectUpgrade()
             file->WriteInt32(FLAXENGINE_VERSION_MAJOR);
             file->WriteInt32(FLAXENGINE_VERSION_MINOR);
             file->WriteInt32(FLAXENGINE_VERSION_BUILD);
-
             Delete(file);
         }
         else
         {
-            LOG(Warning, "Failed to create version cache file");
+            LOG(Error, "Failed to create version cache file");
         }
     }
 
@@ -365,6 +373,12 @@ int32 Editor::LoadProduct()
     Globals::ProductName = TEXT("Flax Editor");
     Globals::CompanyName = TEXT("Flax");
 
+#if FLAX_TESTS
+    // Flax Tests use auto-generated temporary project
+    CommandLine::Options.Project = Globals::TemporaryFolder / TEXT("Project");
+    CommandLine::Options.NewProject = true;
+#endif
+
     // Gather project directory from the command line
     String projectPath = CommandLine::Options.Project.TrimTrailing();
     const int32 startIndex = projectPath.StartsWith('\"') || projectPath.StartsWith('\'') ? 1 : 0;
@@ -391,12 +405,22 @@ int32 Editor::LoadProduct()
     // Create new project option
     if (CommandLine::Options.NewProject)
     {
+        Array<String> projectFiles;
+        FileSystem::DirectoryGetFiles(projectFiles, projectPath, TEXT("*.flaxproj"), DirectorySearchOption::TopDirectoryOnly);
+        if (projectFiles.Count() == 1)
+        {
+            // Skip creating new project if it already exists
+            LOG(Info, "Skip creatinng new project because it already exists");
+            CommandLine::Options.NewProject.Reset();
+        }
+    }
+    if (CommandLine::Options.NewProject)
+    {
         if (projectPath.IsEmpty())
             projectPath = Platform::GetWorkingDirectory();
         else if (!FileSystem::DirectoryExists(projectPath))
             FileSystem::CreateDirectory(projectPath);
         FileSystem::NormalizePath(projectPath);
-
         String folderName = StringUtils::GetFileName(projectPath);
         String tmpName;
         for (int32 i = 0; i < folderName.Length(); i++)
@@ -440,7 +464,7 @@ int32 Editor::LoadProduct()
                                              "        // Reference the modules for game\n"
                                              "        Modules.Add(\"Game\");\n"
                                              "    }\n"
-                                             "}\n"), Encoding::Unicode);
+                                             "}\n"), Encoding::UTF8);
         failed |= File::WriteAllText(projectPath / TEXT("Source/GameEditorTarget.Build.cs"),TEXT(
                                          "using Flax.Build;\n"
                                          "\n"
@@ -454,7 +478,7 @@ int32 Editor::LoadProduct()
                                          "        // Reference the modules for editor\n"
                                          "        Modules.Add(\"Game\");\n"
                                          "    }\n"
-                                         "}\n"), Encoding::Unicode);
+                                         "}\n"), Encoding::UTF8);
         failed |= File::WriteAllText(projectPath / TEXT("Source/Game/Game.Build.cs"),TEXT(
                                          "using Flax.Build;\n"
                                          "using Flax.Build.NativeCpp;\n"
@@ -482,7 +506,7 @@ int32 Editor::LoadProduct()
                                          "        // To add C++ define use: options.PublicDefinitions.Add(\"COMPILE_WITH_FLAX\");\n"
                                          "        // To learn more see scripting documentation.\n"
                                          "    }\n"
-                                         "}\n"), Encoding::Unicode);
+                                         "}\n"), Encoding::UTF8);
         if (failed)
             return 12;
     }
@@ -621,10 +645,12 @@ bool Editor::Init()
     // Scripts project files generation from command line
     if (CommandLine::Options.GenProjectFiles)
     {
-        const bool failed = ScriptsBuilder::GenerateProject();
+        const String customArgs = TEXT("-verbose -log -logfile=\"Cache/Intermediate/ProjectFileLog.txt\"");
+        const bool failed = ScriptsBuilder::GenerateProject(customArgs);
         exit(failed ? 1 : 0);
         return true;
     }
+    PROFILE_CPU();
 
     // If during last lightmaps baking engine crashed we could try to restore the progress
     ShadowsOfMordor::Builder::Instance()->CheckIfRestoreState();
@@ -633,10 +659,13 @@ bool Editor::Init()
     Managed = New<ManagedEditor>();
 
     // Show splash screen
-    if (EditorImpl::Splash == nullptr)
-        EditorImpl::Splash = New<SplashScreen>();
-    EditorImpl::Splash->SetTitle(Project->Name);
-    EditorImpl::Splash->Show();
+    {
+        PROFILE_CPU_NAMED("Splash");
+        if (EditorImpl::Splash == nullptr)
+            EditorImpl::Splash = New<SplashScreen>();
+        EditorImpl::Splash->SetTitle(Project->Name);
+        EditorImpl::Splash->Show();
+    }
 
     // Initialize managed editor
     Managed->Init();
@@ -652,9 +681,7 @@ bool Editor::Init()
 
 void Editor::BeforeRun()
 {
-    // If during last lightmaps baking engine crashed we could try to restore the progress
-    if (ShadowsOfMordor::Builder::Instance()->RestoreState())
-        Managed->GetClass()->GetMethod("Internal_StartLightingBake")->Invoke(Managed->GetOrCreateManagedInstance(), nullptr, nullptr);
+    Managed->BeforeRun();
 }
 
 void Editor::BeforeExit()
@@ -683,12 +710,6 @@ void EditorImpl::OnUpdate()
     {
         // Boost our priority back to normal
         Platform::SetThreadPriority(ThreadPriority::Normal);
-    }
-    if (!hasFocus)
-    {
-        // Sleep for a bit to not eat up all CPU time
-        PROFILE_CPU_NAMED("Sleep");
-        Platform::Sleep(5);
     }
     HasFocus = hasFocus;
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -32,7 +32,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public Vector2 Size => Vector2.One;
+        public Float2 Size => Float2.One;
 
         /// <inheritdoc />
         public void Draw(Rectangle rect, Color color)

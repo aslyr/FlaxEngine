@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -19,7 +19,7 @@ API_CLASS() class FLAXENGINE_API Scene : public Actor
 {
     friend class Level;
     friend class ReloadScriptsAction;
-DECLARE_SCENE_OBJECT(Scene);
+    DECLARE_SCENE_OBJECT(Scene);
 
     /// <summary>
     /// Finalizes an instance of the <see cref="Scene"/> class.
@@ -27,7 +27,6 @@ DECLARE_SCENE_OBJECT(Scene);
     ~Scene();
 
 public:
-
     /// <summary>
     /// The scene metadata.
     /// </summary>
@@ -80,7 +79,6 @@ public:
     API_PROPERTY() void SetLightmapSettings(const LightmapSettings& value);
 
 public:
-
     /// <summary>
     /// Removes all baked lightmap textures from the scene.
     /// </summary>
@@ -110,10 +108,16 @@ public:
     /// </summary>
     API_PROPERTY() String GetDataFolderPath() const;
 
+    /// <summary>
+    /// Gets the asset references (scene asset). Supported only in Editor.
+    /// </summary>
+    /// <seealso cref="Asset.GetReferences"/>
+    /// <returns>The collection of the asset ids referenced by this asset.</returns>
+    API_FUNCTION() Array<Guid, HeapAllocation> GetAssetReferences() const;
+
 #endif
 
 private:
-
     MeshCollider* TryGetCsgCollider();
     StaticModel* TryGetCsgModel();
     void CreateCsgCollider();
@@ -125,7 +129,6 @@ private:
 #endif
 
 public:
-
     // [Actor]
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
@@ -133,10 +136,8 @@ public:
     void EndPlay() override;
 
 protected:
-
     // [Actor]
-    void PostLoad() override;
-    void PostSpawn() override;
+    void Initialize() override;
     void BeginPlay(SceneBeginData* data) override;
     void OnTransformChanged() override;
 };

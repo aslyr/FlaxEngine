@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -10,6 +10,7 @@ using FlaxEditor.GUI.Timeline.Tracks;
 using FlaxEditor.Utilities;
 using FlaxEditor.Viewport.Previews;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.GUI.Timeline
 {

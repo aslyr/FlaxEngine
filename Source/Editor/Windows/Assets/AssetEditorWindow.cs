@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content;
@@ -309,6 +309,19 @@ namespace FlaxEditor.Windows.Assets
         }
 
         /// <summary>
+        /// Drops any loaded asset data and refreshes the UI state.
+        /// </summary>
+        public void RefreshAsset()
+        {
+            if (_asset == null || _asset.WaitForLoaded())
+                return;
+
+            OnAssetLoaded();
+            MarkAsEdited();
+            Save();
+        }
+
+        /// <summary>
         /// Reloads the asset (window will receive <see cref="OnAssetLoaded"/> or <see cref="OnAssetLoadFailed"/> events).
         /// </summary>
         public void ReloadAsset()
@@ -375,14 +388,16 @@ namespace FlaxEditor.Windows.Assets
         protected override void OnShow()
         {
             // Check if has no asset (but has item linked)
-            if (_asset == null && _item != null)
+            var item = _item;
+            if (_asset == null && item != null)
             {
                 // Load asset
                 _asset = LoadAsset();
                 if (_asset == null)
                 {
-                    Editor.LogError(string.Format("Cannot load asset \'{0}\' ({1})", _item.Path, typeof(T)));
+                    Editor.LogError(string.Format("Cannot load asset \'{0}\' ({1})", item.Path, typeof(T)));
                     Close();
+                    Editor.ContentDatabase.RefreshFolder(item, false);
                     return;
                 }
 

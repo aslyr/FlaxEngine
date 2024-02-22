@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,9 +12,8 @@
 /// <seealso cref="FlaxEngine.BinaryAsset" />
 API_CLASS(Abstract, NoSpawn) class FLAXENGINE_API MaterialBase : public BinaryAsset, public IMaterial
 {
-DECLARE_ASSET_HEADER(MaterialBase);
+    DECLARE_ASSET_HEADER(MaterialBase);
 public:
-
     /// <summary>
     /// The material parameters collection.
     /// </summary>
@@ -28,11 +27,9 @@ public:
     /// <summary>
     /// Returns true if material is an material instance.
     /// </summary>
-    /// <returns>True if it's a material instance, otherwise false.</returns>
     virtual bool IsMaterialInstance() const = 0;
 
 public:
-
     /// <summary>
     /// Gets the material parameters collection.
     /// </summary>
@@ -78,7 +75,6 @@ public:
     API_FUNCTION() MaterialInstance* CreateVirtualInstance();
 
 public:
-
     // [BinaryAsset]
 #if USE_EDITOR
     void GetReferences(Array<Guid>& output) const override

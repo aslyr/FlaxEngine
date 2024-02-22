@@ -1,10 +1,20 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+
+#if USE_LARGE_WORLDS
+using Real = System.Double;
+#else
+using Real = System.Single;
+#endif
 
 using System;
-using FlaxEditor.GUI.ContextMenu;
+using System.Collections.Generic;
+using FlaxEditor.Actions;
 using FlaxEditor.Modules;
+using FlaxEditor.GUI.ContextMenu;
+using FlaxEditor.Windows;
 using FlaxEngine;
 using FlaxEngine.Json;
+using FlaxEngine.Utilities;
 using Object = FlaxEngine.Object;
 
 namespace FlaxEditor.SceneGraph.Actors
@@ -15,7 +25,7 @@ namespace FlaxEditor.SceneGraph.Actors
     [HideInEditor]
     public sealed class SplineNode : ActorNode
     {
-        private sealed class SplinePointNode : ActorChildNode<SplineNode>
+        internal sealed class SplinePointNode : ActorChildNode<SplineNode>
         {
             public unsafe SplinePointNode(SplineNode node, Guid id, int index)
             : base(node, id, index)
@@ -140,7 +150,18 @@ namespace FlaxEditor.SceneGraph.Actors
                     Time = newTime,
                     Value = actor.GetSplineLocalTransform(Index),
                 };
+
+                var oldkeyframe = actor.GetSplineKeyframe(Index);
+                var newKeyframe = new BezierCurve<Transform>.Keyframe();
+
+                // copy old curve point data to new curve point
+                newKeyframe.Value = oldkeyframe.Value;
+                newKeyframe.TangentIn = oldkeyframe.TangentIn;
+                newKeyframe.TangentOut = oldkeyframe.TangentOut;
+
                 actor.InsertSplineLocalPoint(newIndex, newTime, action.Value);
+                actor.SetSplineKeyframe(newIndex, newKeyframe);
+
                 undoAction = action;
                 var splineNode = (SplineNode)SceneGraphFactory.FindNode(action.SplineId);
                 splineNode.OnUpdate();
@@ -148,12 +169,13 @@ namespace FlaxEditor.SceneGraph.Actors
                 return splineNode.ActorChildNodes[newIndex];
             }
 
-            public override bool RayCastSelf(ref RayCastData ray, out float distance, out Vector3 normal)
+            public override bool RayCastSelf(ref RayCastData ray, out Real distance, out Vector3 normal)
             {
+                normal = -ray.Ray.Direction;
                 var actor = (Spline)_node.Actor;
                 var pos = actor.GetSplinePoint(Index);
-                normal = -ray.Ray.Direction;
-                return new BoundingSphere(pos, 7.0f).Intersects(ref ray.Ray, out distance);
+                var nodeSize = NodeSizeByDistance(Transform.Translation, PointNodeSize);
+                return new BoundingSphere(pos, nodeSize).Intersects(ref ray.Ray, out distance);
             }
 
             public override void OnDebugDraw(ViewportDebugDrawData data)
@@ -162,29 +184,32 @@ namespace FlaxEditor.SceneGraph.Actors
                 var pos = actor.GetSplinePoint(Index);
                 var tangentIn = actor.GetSplineTangent(Index, true).Translation;
                 var tangentOut = actor.GetSplineTangent(Index, false).Translation;
+                var pointSize = NodeSizeByDistance(pos, PointNodeSize);
+                var tangentInSize = NodeSizeByDistance(tangentIn, TangentNodeSize);
+                var tangentOutSize = NodeSizeByDistance(tangentOut, TangentNodeSize);
 
                 // Draw spline path
                 ParentNode.OnDebugDraw(data);
 
                 // Draw selected point highlight
-                DebugDraw.DrawSphere(new BoundingSphere(pos, 5.0f), Color.Yellow, 0, false);
+                DebugDraw.DrawSphere(new BoundingSphere(pos, pointSize), Color.Yellow, 0, false);
 
                 // Draw tangent points
                 if (tangentIn != pos)
                 {
-                    DebugDraw.DrawLine(pos, tangentIn, Color.White.AlphaMultiplied(0.6f), 0, false);
-                    DebugDraw.DrawWireSphere(new BoundingSphere(tangentIn, 4.0f), Color.White, 0, false);
+                    DebugDraw.DrawLine(pos, tangentIn, Color.Blue.AlphaMultiplied(0.6f), 0, false);
+                    DebugDraw.DrawWireSphere(new BoundingSphere(tangentIn, tangentInSize), Color.Blue, 0, false);
                 }
-                if (tangentIn != pos)
+                if (tangentOut != pos)
                 {
-                    DebugDraw.DrawLine(pos, tangentOut, Color.White.AlphaMultiplied(0.6f), 0, false);
-                    DebugDraw.DrawWireSphere(new BoundingSphere(tangentOut, 4.0f), Color.White, 0, false);
+                    DebugDraw.DrawLine(pos, tangentOut, Color.Red.AlphaMultiplied(0.6f), 0, false);
+                    DebugDraw.DrawWireSphere(new BoundingSphere(tangentOut, tangentOutSize), Color.Red, 0, false);
                 }
             }
 
-            public override void OnContextMenu(ContextMenu contextMenu)
+            public override void OnContextMenu(ContextMenu contextMenu, EditorWindow window)
             {
-                ParentNode.OnContextMenu(contextMenu);
+                ParentNode.OnContextMenu(contextMenu, window);
             }
 
             public static SceneGraphNode Create(StateData state)
@@ -202,7 +227,7 @@ namespace FlaxEditor.SceneGraph.Actors
             }
         }
 
-        private sealed class SplinePointTangentNode : ActorChildNode
+        internal sealed class SplinePointTangentNode : ActorChildNode
         {
             private SplineNode _node;
             private int _index;
@@ -230,12 +255,13 @@ namespace FlaxEditor.SceneGraph.Actors
                 }
             }
 
-            public override bool RayCastSelf(ref RayCastData ray, out float distance, out Vector3 normal)
+            public override bool RayCastSelf(ref RayCastData ray, out Real distance, out Vector3 normal)
             {
+                normal = -ray.Ray.Direction;
                 var actor = (Spline)_node.Actor;
                 var pos = actor.GetSplineTangent(_index, _isIn).Translation;
-                normal = -ray.Ray.Direction;
-                return new BoundingSphere(pos, 7.0f).Intersects(ref ray.Ray, out distance);
+                var tangentSize = NodeSizeByDistance(Transform.Translation, TangentNodeSize);
+                return new BoundingSphere(pos, tangentSize).Intersects(ref ray.Ray, out distance);
             }
 
             public override void OnDebugDraw(ViewportDebugDrawData data)
@@ -246,12 +272,13 @@ namespace FlaxEditor.SceneGraph.Actors
                 // Draw selected tangent highlight
                 var actor = (Spline)_node.Actor;
                 var pos = actor.GetSplineTangent(_index, _isIn).Translation;
-                DebugDraw.DrawSphere(new BoundingSphere(pos, 5.0f), Color.YellowGreen, 0, false);
+                var tangentSize = NodeSizeByDistance(Transform.Translation, TangentNodeSize);
+                DebugDraw.DrawSphere(new BoundingSphere(pos, tangentSize), Color.YellowGreen, 0, false);
             }
 
-            public override void OnContextMenu(ContextMenu contextMenu)
+            public override void OnContextMenu(ContextMenu contextMenu, EditorWindow window)
             {
-                ParentNode.OnContextMenu(contextMenu);
+                ParentNode.OnContextMenu(contextMenu, window);
             }
 
             public override void OnDispose()
@@ -262,6 +289,11 @@ namespace FlaxEditor.SceneGraph.Actors
             }
         }
 
+        private const Real PointNodeSize = 1.5f;
+        private const Real TangentNodeSize = 1.0f;
+        private const Real SnapIndicatorSize = 1.7f;
+        private const Real SnapPointIndicatorSize = 2f;
+
         /// <inheritdoc />
         public SplineNode(Actor actor)
         : base(actor)
@@ -270,9 +302,26 @@ namespace FlaxEditor.SceneGraph.Actors
             FlaxEngine.Scripting.Update += OnUpdate;
         }
 
-        private unsafe void OnUpdate()
+        private void OnUpdate()
         {
-            // Sync spline points with gizmo handles
+            // If this node's point is selected
+            var selection = Editor.Instance.SceneEditing.Selection;
+            if (selection.Count == 1 && selection[0] is SplinePointNode selectedPoint && selectedPoint.ParentNode == this)
+            {
+                if (Input.Keyboard.GetKey(KeyboardKeys.Shift))
+                    EditSplineWithSnap(selectedPoint);
+
+                var canAddSplinePoint = Input.Mouse.PositionDelta == Float2.Zero && Input.Mouse.Position != Float2.Zero;
+                var requestAddSplinePoint = Input.Keyboard.GetKey(KeyboardKeys.Control) && Input.Mouse.GetButtonDown(MouseButton.Right);
+                if (requestAddSplinePoint && canAddSplinePoint)
+                    AddSplinePoint(selectedPoint);
+            }
+
+            SyncSplineKeyframeWithNodes();
+        }
+
+        private unsafe void SyncSplineKeyframeWithNodes()
+        {
             var actor = (Spline)Actor;
             var dstCount = actor.SplinePointsCount;
             if (dstCount > 1 && actor.IsLoop)
@@ -302,21 +351,151 @@ namespace FlaxEditor.SceneGraph.Actors
             }
         }
 
+        private unsafe void AddSplinePoint(SplinePointNode selectedPoint)
+        {
+            // Check mouse hit on scene
+            var spline = (Spline)Actor;
+            var viewport = Editor.Instance.Windows.EditWin.Viewport;
+            var mouseRay = viewport.MouseRay;
+            var viewRay = viewport.ViewRay;
+            var flags = RayCastData.FlagTypes.SkipColliders | RayCastData.FlagTypes.SkipEditorPrimitives;
+            var hit = Editor.Instance.Scene.Root.RayCast(ref mouseRay, ref viewRay, out var closest, out var normal, flags);
+            if (hit == null)
+                return;
+
+            // Undo data
+            var oldSpline = spline.SplineKeyframes;
+            var editAction = new EditSplineAction(spline, oldSpline);
+            Root.Undo.AddAction(editAction);
+
+            // Get spline point to duplicate
+            var hitPoint = mouseRay.Position + mouseRay.Direction * closest;
+            var lastPointIndex = selectedPoint.Index;
+            var newPointIndex = lastPointIndex > 0 ? lastPointIndex + 1 : 0;
+            var lastKeyframe = spline.GetSplineKeyframe(lastPointIndex);
+            var isLastPoint = lastPointIndex == spline.SplinePointsCount - 1;
+            var isFirstPoint = lastPointIndex == 0;
+
+            // Get data to create new point
+            var lastPointTime = spline.GetSplineTime(lastPointIndex);
+            var nextPointTime = isLastPoint ? lastPointTime : spline.GetSplineTime(newPointIndex);
+            var newTime = isLastPoint ? lastPointTime + 1.0f : (lastPointTime + nextPointTime) * 0.5f;
+            var distanceFromLastPoint = Vector3.Distance(hitPoint, spline.GetSplinePoint(lastPointIndex));
+            var newPointDirection = spline.GetSplineTangent(lastPointIndex, false).Translation - hitPoint;
+
+            // Set correctly keyframe direction on spawn point
+            if (isFirstPoint)
+                newPointDirection = hitPoint - spline.GetSplineTangent(lastPointIndex, true).Translation;
+            else if (isLastPoint)
+                newPointDirection = spline.GetSplineTangent(lastPointIndex, false).Translation - hitPoint;
+            var newPointLocalPosition = spline.Transform.WorldToLocal(hitPoint);
+            var newPointLocalOrientation = Quaternion.LookRotation(newPointDirection);
+
+            // Add new point
+            spline.InsertSplinePoint(newPointIndex, newTime, Transform.Identity, false);
+            var newKeyframe = lastKeyframe.DeepClone();
+            var newKeyframeTransform = newKeyframe.Value;
+            newKeyframeTransform.Translation = newPointLocalPosition;
+            newKeyframeTransform.Orientation = newPointLocalOrientation;
+            newKeyframe.Value = newKeyframeTransform;
+
+            // Set new point keyframe
+            var newKeyframeTangentIn = Transform.Identity;
+            var newKeyframeTangentOut = Transform.Identity;
+            newKeyframeTangentIn.Translation = (Vector3.Forward * newPointLocalOrientation) * distanceFromLastPoint;
+            newKeyframeTangentOut.Translation = (Vector3.Backward * newPointLocalOrientation) * distanceFromLastPoint;
+            newKeyframe.TangentIn = newKeyframeTangentIn;
+            newKeyframe.TangentOut = newKeyframeTangentOut;
+            spline.SetSplineKeyframe(newPointIndex, newKeyframe);
+
+            for (int i = 1; i < spline.SplinePointsCount; i++)
+            {
+                // check all elements to don't left keyframe has invalid time
+                // because points can be added on start or on middle of spline
+                // conflicting with time of another keyframes
+                spline.SetSplinePointTime(i, i, false);
+            }
+
+            // Select new point node
+            SyncSplineKeyframeWithNodes();
+            Editor.Instance.SceneEditing.Select(ChildNodes[newPointIndex]);
+
+            spline.UpdateSpline();
+        }
+
+        private void EditSplineWithSnap(SplinePointNode selectedPoint)
+        {
+            var spline = (Spline)Actor;
+            var selectedPointBounds = new BoundingSphere(selectedPoint.Transform.Translation, 1f);
+            var allSplinesInView = GetSplinesInView();
+            allSplinesInView.Remove(spline);
+            if (allSplinesInView.Count == 0)
+                return;
+
+            var snappedOnSplinePoint = false;
+            for (int i = 0; i < allSplinesInView.Count; i++)
+            {
+                for (int x = 0; x < allSplinesInView[i].SplineKeyframes.Length; x++)
+                {
+                    var keyframePosition = allSplinesInView[i].GetSplinePoint(x);
+                    var pointIndicatorSize = NodeSizeByDistance(keyframePosition, SnapPointIndicatorSize);
+                    var keyframeBounds = new BoundingSphere(keyframePosition, pointIndicatorSize);
+                    DebugDraw.DrawSphere(keyframeBounds, Color.Red, 0, false);
+
+                    if (keyframeBounds.Intersects(selectedPointBounds))
+                    {
+                        spline.SetSplinePoint(selectedPoint.Index, keyframeBounds.Center);
+                        snappedOnSplinePoint = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!snappedOnSplinePoint)
+            {
+                var nearSplineSnapPoint = GetNearSplineSnapPosition(selectedPoint.Transform.Translation, allSplinesInView);
+                var snapIndicatorSize = NodeSizeByDistance(nearSplineSnapPoint, SnapIndicatorSize);
+                var snapBounds = new BoundingSphere(nearSplineSnapPoint, snapIndicatorSize);
+                if (snapBounds.Intersects(selectedPointBounds))
+                {
+                    spline.SetSplinePoint(selectedPoint.Index, snapBounds.Center);
+                }
+                DebugDraw.DrawSphere(snapBounds, Color.Yellow, 0, true);
+            }
+        }
+
         /// <inheritdoc />
         public override void PostSpawn()
         {
             base.PostSpawn();
 
+            if (Actor.HasPrefabLink)
+            {
+                return;
+            }
+
             // Setup for an initial spline
             var spline = (Spline)Actor;
             spline.AddSplineLocalPoint(Vector3.Zero, false);
             spline.AddSplineLocalPoint(new Vector3(0, 0, 100.0f));
+            spline.SetSplineKeyframe(0, new BezierCurve<Transform>.Keyframe()
+            {
+                Value = new Transform(Vector3.Zero, Quaternion.Identity, Vector3.One),
+                TangentIn = new Transform(Vector3.Backward * 100, Quaternion.Identity, Vector3.One),
+                TangentOut = new Transform(Vector3.Forward * 100, Quaternion.Identity, Vector3.One),
+            });
+            spline.SetSplineKeyframe(1, new BezierCurve<Transform>.Keyframe()
+            {
+                Value = new Transform(Vector3.Forward * 100, Quaternion.Identity, Vector3.One),
+                TangentIn = new Transform(Vector3.Backward * 100, Quaternion.Identity, Vector3.One),
+                TangentOut = new Transform(Vector3.Forward * 100, Quaternion.Identity, Vector3.One),
+            });
         }
 
         /// <inheritdoc />
-        public override void OnContextMenu(ContextMenu contextMenu)
+        public override void OnContextMenu(ContextMenu contextMenu, EditorWindow window)
         {
-            base.OnContextMenu(contextMenu);
+            base.OnContextMenu(contextMenu, window);
 
             contextMenu.AddButton("Add spline model", OnAddSplineModel);
             contextMenu.AddButton("Add spline collider", OnAddSplineCollider);
@@ -330,7 +509,7 @@ namespace FlaxEditor.SceneGraph.Actors
                 StaticFlags = Actor.StaticFlags,
                 Transform = Actor.Transform,
             };
-            Editor.Instance.SceneEditing.Spawn(actor, Actor);
+            Root.Spawn(actor, Actor);
         }
 
         private void OnAddSplineCollider()
@@ -341,7 +520,7 @@ namespace FlaxEditor.SceneGraph.Actors
                 Transform = Actor.Transform,
             };
             // TODO: auto pick the collision data if already using spline model
-            Editor.Instance.SceneEditing.Spawn(actor, Actor);
+            Root.Spawn(actor, Actor);
         }
 
         private void OnAddSplineRopeBody()
@@ -351,7 +530,7 @@ namespace FlaxEditor.SceneGraph.Actors
                 StaticFlags = StaticFlags.None,
                 Transform = Actor.Transform,
             };
-            Editor.Instance.SceneEditing.Spawn(actor, Actor);
+            Root.Spawn(actor, Actor);
         }
 
         internal static void OnSplineEdited(Spline spline)
@@ -367,12 +546,52 @@ namespace FlaxEditor.SceneGraph.Actors
             }
         }
 
+        private static List<Spline> GetSplinesInView()
+        {
+            var splines = Level.GetActors<Spline>(true);
+            var result = new List<Spline>();
+            var viewBounds = Editor.Instance.Windows.EditWin.Viewport.ViewFrustum;
+            foreach (var s in splines)
+            {
+                var contains = viewBounds.Contains(s.EditorBox);
+                if (contains == ContainmentType.Contains || contains == ContainmentType.Intersects)
+                    result.Add(s);
+            }
+            return result;
+        }
+
+        private static Vector3 GetNearSplineSnapPosition(Vector3 position, List<Spline> splines)
+        {
+            var nearPoint = splines[0].GetSplinePointClosestToPoint(position);
+            var nearDistance = Vector3.Distance(nearPoint, position);
+
+            for (int i = 1; i < splines.Count; i++)
+            {
+                var point = splines[i].GetSplinePointClosestToPoint(position);
+                var distance = Vector3.Distance(point, position);
+                if (distance < nearDistance)
+                {
+                    nearPoint = point;
+                    nearDistance = distance;
+                }
+            }
+
+            return nearPoint;
+        }
+
+        internal static Real NodeSizeByDistance(Vector3 nodePosition, Real nodeSize)
+        {
+            var cameraTransform = Editor.Instance.Windows.EditWin.Viewport.ViewportCamera.Viewport.ViewTransform;
+            var distance = Vector3.Distance(cameraTransform.Translation, nodePosition) / 100;
+            return distance * nodeSize;
+        }
+
         /// <inheritdoc />
-        public override bool RayCastSelf(ref RayCastData ray, out float distance, out Vector3 normal)
+        public override bool RayCastSelf(ref RayCastData ray, out Real distance, out Vector3 normal)
         {
             // Select only spline points
             normal = Vector3.Up;
-            distance = float.MaxValue;
+            distance = Real.MaxValue;
             return false;
         }
 

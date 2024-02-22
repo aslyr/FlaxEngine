@@ -1,12 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "JsonWriter.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Types/CommonValue.h"
 #include "Engine/Content/Content.h"
-#include "Engine/Core/Math/Int2.h"
-#include "Engine/Core/Math/Int3.h"
-#include "Engine/Core/Math/Int4.h"
 #include "Engine/Core/Math/Color.h"
 #include "Engine/Core/Math/Plane.h"
 #include "Engine/Core/Types/DateTime.h"
@@ -18,7 +15,7 @@ void JsonWriter::Blob(const void* data, int32 length)
 {
     ::Array<char> base64;
     base64.Resize(Encryption::Base64EncodeLength(length));
-    Encryption::Base64Encode((byte*)data, length, base64.Get());
+    Encryption::Base64Encode((const byte*)data, length, base64.Get());
     String(base64.Get(), base64.Count());
 }
 
@@ -31,13 +28,49 @@ void JsonWriter::Vector2(const ::Vector2& value)
 {
     StartObject();
     JKEY("X");
-    Float(value.X);
+    Real(value.X);
+    JKEY("Y");
+    Real(value.Y);
+    EndObject();
+}
+
+void JsonWriter::Vector3(const ::Vector3& value)
+{
+    StartObject();
+    JKEY("X");
+    Real(value.X);
+    JKEY("Y");
+    Real(value.Y);
+    JKEY("Z");
+    Real(value.Z);
+    EndObject();
+}
+
+void JsonWriter::Vector4(const ::Vector4& value)
+{
+    StartObject();
+    JKEY("X");
+    Real(value.X);
+    JKEY("Y");
+    Real(value.Y);
+    JKEY("Z");
+    Real(value.Z);
+    JKEY("W");
+    Real(value.W);
+    EndObject();
+}
+
+void JsonWriter::Float2(const ::Float2& value)
+{
+    StartObject();
+    JKEY("X");
+    Real(value.X);
     JKEY("Y");
     Float(value.Y);
     EndObject();
 }
 
-void JsonWriter::Vector3(const ::Vector3& value)
+void JsonWriter::Float3(const ::Float3& value)
 {
     StartObject();
     JKEY("X");
@@ -49,7 +82,7 @@ void JsonWriter::Vector3(const ::Vector3& value)
     EndObject();
 }
 
-void JsonWriter::Vector4(const ::Vector4& value)
+void JsonWriter::Float4(const ::Float4& value)
 {
     StartObject();
     JKEY("X");
@@ -60,6 +93,42 @@ void JsonWriter::Vector4(const ::Vector4& value)
     Float(value.Z);
     JKEY("W");
     Float(value.W);
+    EndObject();
+}
+
+void JsonWriter::Double2(const ::Double2& value)
+{
+    StartObject();
+    JKEY("X");
+    Double(value.X);
+    JKEY("Y");
+    Double(value.Y);
+    EndObject();
+}
+
+void JsonWriter::Double3(const ::Double3& value)
+{
+    StartObject();
+    JKEY("X");
+    Double(value.X);
+    JKEY("Y");
+    Double(value.Y);
+    JKEY("Z");
+    Double(value.Z);
+    EndObject();
+}
+
+void JsonWriter::Double4(const ::Double4& value)
+{
+    StartObject();
+    JKEY("X");
+    Double(value.X);
+    JKEY("Y");
+    Double(value.Y);
+    JKEY("Z");
+    Double(value.Z);
+    JKEY("W");
+    Double(value.W);
     EndObject();
 }
 
@@ -237,13 +306,8 @@ void JsonWriter::CommonValue(const ::CommonValue& value)
         Matrix(value.AsMatrix);
         break;
     case CommonType::Blob:
-    {
-        ::Array<char> base64;
-        base64.Resize(Encryption::Base64EncodeLength(value.AsBlob.Length));
-        Encryption::Base64Encode(value.AsBlob.Data, value.AsBlob.Length, base64.Get());
-        String(base64.Get(), base64.Count());
+        Blob(value.AsBlob.Data, value.AsBlob.Length);
         break;
-    }
     case CommonType::Object:
         Guid(value.GetObjectId());
         break;
@@ -271,7 +335,7 @@ void JsonWriter::Transform(const ::Transform& value)
     if (!value.Scale.IsOne())
     {
         JKEY("Scale");
-        Vector3(value.Scale);
+        Float3(value.Scale);
     }
     EndObject();
 }
@@ -279,20 +343,32 @@ void JsonWriter::Transform(const ::Transform& value)
 void JsonWriter::Transform(const ::Transform& value, const ::Transform* other)
 {
     StartObject();
-    if (!other || !Vector3::NearEqual(value.Translation, other->Translation))
+    if (other)
+    {
+        if (!Vector3::NearEqual(value.Translation, other->Translation))
+        {
+            JKEY("Translation");
+            Vector3(value.Translation);
+        }
+        if (!Quaternion::NearEqual(value.Orientation, other->Orientation))
+        {
+            JKEY("Orientation");
+            Quaternion(value.Orientation);
+        }
+        if (!Float3::NearEqual(value.Scale, other->Scale))
+        {
+            JKEY("Scale");
+            Float3(value.Scale);
+        }
+    }
+    else
     {
         JKEY("Translation");
         Vector3(value.Translation);
-    }
-    if (!other || !Quaternion::NearEqual(value.Orientation, other->Orientation))
-    {
         JKEY("Orientation");
         Quaternion(value.Orientation);
-    }
-    if (!other || !Vector3::NearEqual(value.Scale, other->Scale))
-    {
         JKEY("Scale");
-        Vector3(value.Scale);
+        Float3(value.Scale);
     }
     EndObject();
 }
@@ -303,7 +379,7 @@ void JsonWriter::Plane(const ::Plane& value)
     JKEY("Normal");
     Vector3(value.Normal);
     JKEY("D");
-    Float(value.D);
+    Real(value.D);
     EndObject();
 }
 
@@ -311,9 +387,9 @@ void JsonWriter::Rectangle(const ::Rectangle& value)
 {
     StartObject();
     JKEY("Location");
-    Vector2(value.Location);
+    Float2(value.Location);
     JKEY("Size");
-    Vector2(value.Size);
+    Float2(value.Size);
     EndObject();
 }
 
@@ -323,7 +399,7 @@ void JsonWriter::BoundingSphere(const ::BoundingSphere& value)
     JKEY("Center");
     Vector3(value.Center);
     JKEY("Radius");
-    Float(value.Radius);
+    Real(value.Radius);
     EndObject();
 }
 
@@ -402,7 +478,7 @@ void JsonWriter::SceneObject(::SceneObject* obj)
             prefab->GetDefaultInstance();
 
             // Get prefab object instance from the prefab
-            const void* prefabObject;
+            ::SceneObject* prefabObject;
             if (prefab->ObjectsCache.TryGet(obj->GetPrefabObjectID(), prefabObject))
             {
                 // Serialize modified properties compared with the default object from prefab
@@ -417,7 +493,7 @@ void JsonWriter::SceneObject(::SceneObject* obj)
         }
         else
         {
-            LOG(Warning, "Missing prefab with id={0}.", obj->GetPrefabID());
+            LOG(Warning, "Missing prefab {0}.", obj->GetPrefabID());
         }
     }
 

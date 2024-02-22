@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,9 +6,6 @@
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Core/Templates.h"
 
-class String;
-struct Vector3;
-struct Vector4;
 struct Color32;
 
 /// <summary>
@@ -16,9 +13,8 @@ struct Color32;
 /// </summary>
 API_STRUCT() struct FLAXENGINE_API Color
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(Color);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(Color);
 public:
-
     union
     {
         struct
@@ -51,13 +47,10 @@ public:
     };
 
 public:
-
     /// <summary>
     /// Empty constructor.
     /// </summary>
-    Color()
-    {
-    }
+    Color() = default;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Color"/> struct.
@@ -78,7 +71,7 @@ public:
     /// <param name="g">The green channel value.</param>
     /// <param name="b">The blue channel value.</param>
     /// <param name="a">The alpha channel value.</param>
-    Color(float r, float g, float b, float a = 1)
+    FORCE_INLINE Color(float r, float g, float b, float a = 1)
         : R(r)
         , G(g)
         , B(b)
@@ -104,13 +97,13 @@ public:
     /// </summary>
     /// <param name="rgb">The red, green and blue channels value.</param>
     /// <param name="a">The alpha channel value.</param>
-    Color(const Vector3& rgb, float a);
+    Color(const Float3& rgb, float a);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Color"/> struct.
     /// </summary>
     /// <param name="rgba">The red, green, blue and alpha channels value.</param>
-    explicit Color(const Vector4& rgba);
+    explicit Color(const Float4& rgba);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Color"/> struct.
@@ -119,7 +112,6 @@ public:
     explicit Color(const Color32& color);
 
 public:
-
     /// <summary>
     /// Initializes from values in range [0;255].
     /// </summary>
@@ -142,6 +134,16 @@ public:
     static Color FromRGB(uint32 rgb, float a = 1.0f)
     {
         return Color(static_cast<float>(rgb >> 16 & 0xff) / 255.0f, static_cast<float>(rgb >> 8 & 0xff) / 255.0f, static_cast<float>(rgb & 0xff) / 255.0f, a);
+    }
+
+    /// <summary>
+    /// Initializes from packed RGBA value.
+    /// </summary>
+    /// <param name="rgba">The packed RGBA value.</param>
+    /// <returns>The color.</returns>
+    static Color FromRGBA(uint32 rgba)
+    {
+        return Color(static_cast<float>(rgba >> 16 & 0xff) / 255.0f, static_cast<float>(rgba >> 8 & 0xff) / 255.0f, static_cast<float>(rgba & 0xff) / 255.0f, static_cast<float>(rgba >> 24 & 0xff) / 255.0f);
     }
 
     static Color FromHex(const String& hexString)
@@ -168,7 +170,7 @@ public:
     /// <param name="hsv">The HSV color.</param>
     /// <param name="alpha">The alpha value. Default is 1.</param>
     /// <returns>The RGB color.</returns>
-    static Color FromHSV(const Vector3& hsv, float alpha = 1.0f);
+    static Color FromHSV(const Float3& hsv, float alpha = 1.0f);
 
     /// <summary>
     /// Gets random color with opaque alpha.
@@ -177,12 +179,10 @@ public:
     static Color Random();
 
 public:
-
     String ToString() const;
     String ToHexString() const;
 
 public:
-
     bool operator==(const Color& other) const
     {
         return R == other.R && G == other.G && B == other.B && A == other.A;
@@ -203,7 +203,7 @@ public:
         return Color(R - b.R, G - b.G, B - b.B, A - b.A);
     }
 
-    Color operator*(const Color& b) const
+    FORCE_INLINE Color operator*(const Color& b) const
     {
         return Color(R * b.R, G * b.G, B * b.B, A * b.A);
     }
@@ -270,23 +270,21 @@ public:
     bool HasOpacity() const;
 
 public:
-
     static bool NearEqual(const Color& a, const Color& b);
     static bool NearEqual(const Color& a, const Color& b, float epsilon);
 
 public:
+    // Get color as vector structure.
+    Float3 ToFloat3() const;
 
     // Get color as vector structure.
-    Vector3 ToVector3() const;
-
-    // Get color as vector structure.
-    Vector4 ToVector4() const;
+    Float4 ToFloat4() const;
 
     /// <summary>
     /// Gets Hue[0-360], Saturation[0-1] and Value[0-1] from RGB color.
     /// </summary>
     /// <returns>HSV color</returns>
-    Vector3 ToHSV() const;
+    Float3 ToHSV() const;
 
     /// <summary>
     /// Performs a linear interpolation between two colors.
@@ -343,7 +341,6 @@ public:
     }
 
 public:
-
     uint32 GetHashCode() const;
 
     static uint32 GetHashCode(const Color& v)
@@ -352,7 +349,6 @@ public:
     }
 
 public:
-
     static Color Transparent;
     static Color AliceBlue;
     static Color AntiqueWhite;

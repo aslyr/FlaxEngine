@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -38,7 +38,7 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets the view bottom.
         /// </summary>
-        public Vector2 ViewBottom => Size + _viewOffset;
+        public Float2 ViewBottom => Size + _viewOffset;
 
         /// <summary>
         /// Gets the cached scroll area bounds. Used to scroll contents of the panel control. Cached during performing layout.
@@ -132,6 +132,22 @@ namespace FlaxEngine.GUI
                 if (_alwaysShowScrollbars != value)
                 {
                     _alwaysShowScrollbars = value;
+                    switch (_scrollBars)
+                    {
+                    case ScrollBars.None:
+                        break;
+                    case ScrollBars.Horizontal:
+                        HScrollBar.Visible = value;
+                        break;
+                    case ScrollBars.Vertical:
+                        VScrollBar.Visible = value;
+                        break;
+                    case ScrollBars.Both:
+                        HScrollBar.Visible = value;
+                        VScrollBar.Visible = value;
+                        break;
+                    default: break;
+                    }
                     PerformLayout();
                 }
             }
@@ -157,7 +173,6 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Initializes a new instance of the <see cref="Panel"/> class.
         /// </summary>
-        /// <inheritdoc />
         public Panel()
         : this(ScrollBars.None)
         {
@@ -175,17 +190,17 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        protected override void SetViewOffset(ref Vector2 value)
+        protected override void SetViewOffset(ref Float2 value)
         {
-            bool wasLocked = IsLayoutLocked;
-            IsLayoutLocked = true;
+            bool wasLocked = _isLayoutLocked;
+            _isLayoutLocked = true;
 
             if (HScrollBar != null)
                 HScrollBar.Value = -value.X;
             if (VScrollBar != null)
                 VScrollBar.Value = -value.Y;
 
-            IsLayoutLocked = wasLocked;
+            _isLayoutLocked = wasLocked;
             base.SetViewOffset(ref value);
         }
 
@@ -208,8 +223,8 @@ namespace FlaxEngine.GUI
             if (c == null)
                 throw new ArgumentNullException();
 
-            Vector2 location = c.Location;
-            Vector2 size = c.Size;
+            var location = c.Location;
+            var size = c.Size;
             while (c.HasParent && c.Parent != this)
             {
                 c = c.Parent;
@@ -227,9 +242,9 @@ namespace FlaxEngine.GUI
         /// </summary>
         /// <param name="location">The location.</param>
         /// <param name="fastScroll">True of scroll to the item quickly without smoothing.</param>
-        public void ScrollViewTo(Vector2 location, bool fastScroll = false)
+        public void ScrollViewTo(Float2 location, bool fastScroll = false)
         {
-            ScrollViewTo(new Rectangle(location, Vector2.Zero), fastScroll);
+            ScrollViewTo(new Rectangle(location, Float2.Zero), fastScroll);
         }
 
         /// <summary>
@@ -239,15 +254,15 @@ namespace FlaxEngine.GUI
         /// <param name="fastScroll">True of scroll to the item quickly without smoothing.</param>
         public void ScrollViewTo(Rectangle bounds, bool fastScroll = false)
         {
-            bool wasLocked = IsLayoutLocked;
-            IsLayoutLocked = true;
+            bool wasLocked = _isLayoutLocked;
+            _isLayoutLocked = true;
 
             if (HScrollBar != null && HScrollBar.Enabled)
                 HScrollBar.ScrollViewTo(bounds.Left, bounds.Right, fastScroll);
             if (VScrollBar != null && VScrollBar.Enabled)
                 VScrollBar.ScrollViewTo(bounds.Top, bounds.Bottom, fastScroll);
 
-            IsLayoutLocked = wasLocked;
+            _isLayoutLocked = wasLocked;
             PerformLayout();
         }
 
@@ -262,7 +277,15 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseWheel(Vector2 location, float delta)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseDown(location, button))
+                return true;
+            return AutoFocus && Focus(this);
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseWheel(Float2 location, float delta)
         {
             // Base
             if (base.OnMouseWheel(location, delta))
@@ -349,7 +372,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool IntersectsChildContent(Control child, Vector2 location, out Vector2 childSpaceLocation)
+        public override bool IntersectsChildContent(Control child, Float2 location, out Float2 childSpaceLocation)
         {
             // For not scroll bars we want to reject any collisions
             if (child != VScrollBar && child != HScrollBar)
@@ -357,10 +380,10 @@ namespace FlaxEngine.GUI
                 // Check if has v scroll bar to reject points on it
                 if (VScrollBar != null && VScrollBar.Enabled)
                 {
-                    Vector2 pos = VScrollBar.PointFromParent(ref location);
+                    var pos = VScrollBar.PointFromParent(ref location);
                     if (VScrollBar.ContainsPoint(ref pos))
                     {
-                        childSpaceLocation = Vector2.Zero;
+                        childSpaceLocation = Float2.Zero;
                         return false;
                     }
                 }
@@ -368,10 +391,10 @@ namespace FlaxEngine.GUI
                 // Check if has h scroll bar to reject points on it
                 if (HScrollBar != null && HScrollBar.Enabled)
                 {
-                    Vector2 pos = HScrollBar.PointFromParent(ref location);
+                    var pos = HScrollBar.PointFromParent(ref location);
                     if (HScrollBar.ContainsPoint(ref pos))
                     {
-                        childSpaceLocation = Vector2.Zero;
+                        childSpaceLocation = Float2.Zero;
                         return false;
                     }
                 }
@@ -398,14 +421,14 @@ namespace FlaxEngine.GUI
                 return;
             _layoutUpdateLock++;
 
-            if (!IsLayoutLocked)
+            if (!_isLayoutLocked)
             {
                 _layoutChanged = false;
             }
 
             base.PerformLayout(force);
 
-            if (!IsLayoutLocked && _layoutChanged)
+            if (!_isLayoutLocked && _layoutChanged)
             {
                 _layoutChanged = false;
                 PerformLayout(true);
@@ -488,19 +511,19 @@ namespace FlaxEngine.GUI
             Arrange();
 
             // Calculate scroll area bounds
-            Vector2 totalMin = Vector2.Zero;
-            Vector2 totalMax = Vector2.Zero;
+            var totalMin = Float2.Zero;
+            var totalMax = Float2.Zero;
             for (int i = 0; i < _children.Count; i++)
             {
                 var c = _children[i];
                 if (c.Visible && c.IsScrollable)
                 {
-                    Vector2 min = Vector2.Zero;
-                    Vector2 max = c.Size;
+                    var min = Float2.Zero;
+                    var max = c.Size;
                     Matrix3x3.Transform2D(ref min, ref c._cachedTransform, out min);
                     Matrix3x3.Transform2D(ref max, ref c._cachedTransform, out max);
-                    Vector2.Min(ref min, ref totalMin, out totalMin);
-                    Vector2.Max(ref max, ref totalMax, out totalMax);
+                    Float2.Min(ref min, ref totalMin, out totalMin);
+                    Float2.Max(ref max, ref totalMax, out totalMax);
                 }
             }
 
@@ -519,7 +542,7 @@ namespace FlaxEngine.GUI
         /// <inheritdoc />
         public override void GetDesireClientArea(out Rectangle rect)
         {
-            rect = new Rectangle(Vector2.Zero, Size);
+            rect = new Rectangle(Float2.Zero, Size);
 
             if (VScrollBar != null && VScrollBar.Visible)
             {
@@ -533,7 +556,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             var result = base.OnDragMove(ref location, data);
 
@@ -542,7 +565,7 @@ namespace FlaxEngine.GUI
             float MinSize = 70;
             float AreaSize = 25;
             float MoveScale = 4.0f;
-            Vector2 viewOffset = -_viewOffset;
+            var viewOffset = -_viewOffset;
 
             if (VScrollBar != null && VScrollBar.Enabled && height > MinSize)
             {

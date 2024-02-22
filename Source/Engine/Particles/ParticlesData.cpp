@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticlesData.h"
 #include "ParticleEmitter.h"
@@ -18,8 +18,7 @@ ParticleBuffer::~ParticleBuffer()
     SAFE_DELETE_GPU_RESOURCE(GPU.SortingKeysBuffer);
     SAFE_DELETE_GPU_RESOURCE(GPU.SortedIndices);
     SAFE_DELETE(GPU.RibbonIndexBufferDynamic);
-    for (auto& e : GPU.RibbonSegmentDistances)
-        SAFE_DELETE_GPU_RESOURCE(e);
+    SAFE_DELETE(GPU.RibbonVertexBufferDynamic);
 }
 
 bool ParticleBuffer::Init(ParticleEmitter* emitter)
@@ -71,7 +70,7 @@ bool ParticleBuffer::Init(ParticleEmitter* emitter)
     }
 #endif
     default:
-    CRASH;
+        CRASH;
     }
 
     return false;
@@ -107,7 +106,7 @@ bool ParticleBuffer::AllocateSortBuffer()
     }
 #endif
     default:
-    CRASH;
+        CRASH;
         return true;
     }
 
@@ -133,6 +132,6 @@ void ParticleBuffer::Clear()
     }
 #endif
     default:
-    CRASH;
+        CRASH;
     }
 }

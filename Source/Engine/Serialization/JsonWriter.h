@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -7,8 +7,6 @@
 #include "Engine/Utilities/StringConverter.h"
 
 struct CommonValue;
-struct Matrix;
-struct Transform;
 class ISerializable;
 
 // Helper macro for JSON serialization keys (reduces allocations count)
@@ -20,7 +18,6 @@ class ISerializable;
 class FLAXENGINE_API JsonWriter
 {
 public:
-
     typedef char CharType;
 
     virtual ~JsonWriter() = default;
@@ -42,7 +39,6 @@ public:
     virtual void EndArray(int32 count = 0) = 0;
 
 public:
-
     FORCE_INLINE void Key(const StringAnsiView& str)
     {
         Key(str.Get(), static_cast<unsigned>(str.Length()));
@@ -82,9 +78,26 @@ public:
         String(buf.Get());
     }
 
+    void String(const StringView& value)
+    {
+        const StringAsUTF8<256> buf(*value, value.Length());
+        String(buf.Get());
+    }
+
+    void String(const StringAnsi& value)
+    {
+        String(value.Get(), static_cast<unsigned>(value.Length()));
+    }
+
     FORCE_INLINE void RawValue(const StringAnsi& str)
     {
-        RawValue(str.Get(), static_cast<int32>(str.Length()));
+        RawValue(str.Get(), str.Length());
+    }
+
+    void RawValue(const StringView& str)
+    {
+        const StringAsUTF8<256> buf(*str, str.Length());
+        RawValue(buf.Get(), buf.Length());
     }
 
     FORCE_INLINE void RawValue(const CharType* json)
@@ -101,10 +114,25 @@ public:
         Int(static_cast<int32>(value));
     }
 
+    FORCE_INLINE void Real(Real d)
+    {
+#if USE_LARGE_WORLDS
+        Double(d);
+#else
+        Float(d);
+#endif
+    }
+
     void DateTime(const DateTime& value);
     void Vector2(const Vector2& value);
     void Vector3(const Vector3& value);
     void Vector4(const Vector4& value);
+    void Float2(const Float2& value);
+    void Float3(const Float3& value);
+    void Float4(const Float4& value);
+    void Double2(const Double2& value);
+    void Double3(const Double3& value);
+    void Double4(const Double4& value);
     void Int2(const Int2& value);
     void Int3(const Int3& value);
     void Int4(const Int4& value);

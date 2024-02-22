@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_ANDROID
 
@@ -50,6 +50,33 @@
 #include "Engine/Main/Android/android_native_app_glue.h"
 #include <android/window.h>
 #include <android/versioning.h>
+
+#if CRASH_LOG_ENABLE
+
+#include <unwind.h>
+#include <cxxabi.h>
+
+struct AndroidBacktraceState
+{
+    void** Current;
+    void** End;
+};
+
+_Unwind_Reason_Code AndroidUnwindCallback(struct _Unwind_Context* context, void* arg)
+{
+    AndroidBacktraceState* state = (AndroidBacktraceState*)arg;
+    uintptr_t pc = _Unwind_GetIP(context);
+    if (pc)
+    {
+        if (state->Current == state->End)
+            return _URC_END_OF_STACK;
+        else
+            *state->Current++ = reinterpret_cast<void*>(pc);
+    }
+    return _URC_NO_REASON;
+}
+
+#endif
 
 struct AndroidKeyEventType
 {
@@ -308,11 +335,11 @@ namespace
         return orientation;
     }
 
-    Vector2 GetWindowSize()
+    Float2 GetWindowSize()
     {
         const float width = (float)ANativeWindow_getWidth(AppWindow);
         const float height = (float)ANativeWindow_getHeight(AppWindow);
-        return Vector2(width, height);
+        return Float2(width, height);
     }
 
     void UpdateOrientation()
@@ -665,6 +692,7 @@ void AndroidPlatform::PreInit(android_app* app)
     app->onInputEvent = OnAppInput;
     ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_TURN_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN | AWINDOW_FLAG_DISMISS_KEYGUARD, 0);
     ANativeActivity_setWindowFormat(app->activity, WINDOW_FORMAT_RGBA_8888);
+    pthread_setname_np(pthread_self(), "Main");
 }
 
 bool AndroidPlatform::Is64BitPlatform()
@@ -707,11 +735,6 @@ ProcessMemoryStats AndroidPlatform::GetProcessMemoryStats()
     result.UsedPhysicalMemory = usage.ru_maxrss;
     result.UsedVirtualMemory = result.UsedPhysicalMemory;
     return result;
-}
-
-uint64 AndroidPlatform::GetCurrentThreadID()
-{
-    return static_cast<uint64>(pthread_self());
 }
 
 void AndroidPlatform::SetThreadPriority(ThreadPriority priority)
@@ -956,12 +979,6 @@ String AndroidPlatform::GetComputerName()
     return DeviceModel;
 }
 
-String AndroidPlatform::GetUserName()
-{
-    // TODO: add support for username on Android
-    return String::Empty;
-}
-
 bool AndroidPlatform::GetHasFocus()
 {
     return HasFocus;
@@ -993,28 +1010,18 @@ void AndroidPlatform::OpenUrl(const StringView& url)
     App->activity->vm->DetachCurrentThread();
 }
 
-Vector2 AndroidPlatform::GetMousePosition()
+Float2 AndroidPlatform::GetMousePosition()
 {
-    return Vector2::Zero;
+    return Float2::Zero;
 }
 
-void AndroidPlatform::SetMousePosition(const Vector2& pos)
+void AndroidPlatform::SetMousePosition(const Float2& pos)
 {
 }
 
-Vector2 AndroidPlatform::GetDesktopSize()
+Float2 AndroidPlatform::GetDesktopSize()
 {
-    return Vector2((float)ScreenWidth, (float)ScreenHeight);
-}
-
-Rectangle AndroidPlatform::GetMonitorBounds(const Vector2& screenPos)
-{
-    return Rectangle(Vector2::Zero, GetDesktopSize());
-}
-
-Rectangle AndroidPlatform::GetVirtualDesktopBounds()
-{
-    return Rectangle(Vector2::Zero, GetDesktopSize());
+    return Float2((float)ScreenWidth, (float)ScreenHeight);
 }
 
 String AndroidPlatform::GetMainDirectory()
@@ -1084,6 +1091,47 @@ void AndroidPlatform::FreeLibrary(void* handle)
 void* AndroidPlatform::GetProcAddress(void* handle, const char* symbol)
 {
     return dlsym(handle, symbol);
+}
+
+Array<AndroidPlatform::StackFrame> AndroidPlatform::GetStackFrames(int32 skipCount, int32 maxDepth, void* context)
+{
+    Array<StackFrame> result;
+#if CRASH_LOG_ENABLE
+    // Reference: https://stackoverflow.com/questions/8115192/android-ndk-getting-the-backtrace
+    void* callstack[120];
+    skipCount = Math::Min<int32>(skipCount, ARRAY_COUNT(callstack));
+    int32 maxCount = Math::Min<int32>(ARRAY_COUNT(callstack), skipCount + maxDepth);
+    AndroidBacktraceState state;
+    state.Current = callstack;
+    state.End = callstack + maxCount;
+    _Unwind_Backtrace(AndroidUnwindCallback, &state);
+    int32 count = (int32)(state.Current - callstack);
+    int32 useCount = count - skipCount;
+    if (useCount > 0)
+    {
+        result.Resize(useCount);
+        for (int32 i = 0; i < useCount; i++)
+        {
+            StackFrame& frame = result[i];
+            frame.ProgramCounter = callstack[skipCount + i];
+            frame.ModuleName[0] = 0;
+            frame.FileName[0] = 0;
+            frame.LineNumber = 0;
+            Dl_info info;
+            const char* symbol = "";
+            if (dladdr(frame.ProgramCounter, &info) && info.dli_sname) 
+                symbol = info.dli_sname;
+            int status = 0; 
+            char* demangled = __cxxabiv1::__cxa_demangle(symbol, 0, 0, &status); 
+            int32 nameLen = Math::Min<int32>(StringUtils::Length(demangled), ARRAY_COUNT(frame.FunctionName) - 1);
+            Platform::MemoryCopy(frame.FunctionName, demangled, nameLen);
+            frame.FunctionName[nameLen] = 0;
+            if (demangled)
+                free(demangled);
+        }
+    }
+#endif
+    return result;
 }
 
 #endif

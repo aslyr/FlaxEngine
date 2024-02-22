@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -9,30 +9,24 @@
 /// </summary>
 class FLAXENGINE_API AssetReferenceBase
 {
-public:
-
-    typedef Delegate<> EventType;
-
 protected:
-
     Asset* _asset = nullptr;
 
 public:
-
     /// <summary>
     /// The asset loaded event (fired when asset gets loaded or is already loaded after change).
     /// </summary>
-    EventType Loaded;
+    Action Loaded;
 
     /// <summary>
     /// The asset unloading event (should cleanup refs to it).
     /// </summary>
-    EventType Unload;
+    Action Unload;
 
     /// <summary>
     /// Action fired when field gets changed (link a new asset or change to the another value).
     /// </summary>
-    EventType Changed;
+    Action Changed;
 
 public:
     NON_COPYABLE(AssetReferenceBase);
@@ -48,7 +42,6 @@ public:
     ~AssetReferenceBase();
 
 public:
-
     /// <summary>
     /// Gets the asset ID or Guid::Empty if not set.
     /// </summary>
@@ -60,7 +53,7 @@ public:
     /// <summary>
     /// Gets managed instance object (or null if no asset set).
     /// </summary>
-    FORCE_INLINE MonoObject* GetManagedInstance() const
+    FORCE_INLINE MObject* GetManagedInstance() const
     {
         return _asset ? _asset->GetOrCreateManagedInstance() : nullptr;
     }
@@ -71,7 +64,6 @@ public:
     String ToString() const;
 
 protected:
-
     void OnSet(Asset* asset);
     void OnLoaded(Asset* asset);
     void OnUnloaded(Asset* asset);
@@ -84,12 +76,10 @@ template<typename T>
 API_CLASS(InBuild) class AssetReference : public AssetReferenceBase
 {
 public:
-
     typedef T AssetType;
     typedef AssetReference<T> Type;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AssetReference"/> class.
     /// </summary>
@@ -112,12 +102,12 @@ public:
     /// <param name="other">The other.</param>
     AssetReference(const AssetReference& other)
     {
-        OnSet(other.Get());
+        OnSet(other._asset);
     }
 
     AssetReference(AssetReference&& other)
     {
-        OnSet(other.Get());
+        OnSet(other._asset);
         other.OnSet(nullptr);
     }
 
@@ -125,7 +115,7 @@ public:
     {
         if (&other != this)
         {
-            OnSet(other.Get());
+            OnSet(other._asset);
             other.OnSet(nullptr);
         }
         return *this;
@@ -139,41 +129,40 @@ public:
     }
 
 public:
-
     FORCE_INLINE AssetReference& operator=(const AssetReference& other)
     {
-        OnSet(other.Get());
+        OnSet(other._asset);
         return *this;
     }
 
     FORCE_INLINE AssetReference& operator=(T* other)
     {
-        OnSet(other);
+        OnSet((Asset*)other);
         return *this;
     }
 
     FORCE_INLINE AssetReference& operator=(const Guid& id)
     {
-        OnSet((T*)::LoadAsset(id, T::TypeInitializer));
+        OnSet(::LoadAsset(id, T::TypeInitializer));
         return *this;
     }
 
-    FORCE_INLINE bool operator==(T* other)
+    FORCE_INLINE bool operator==(T* other) const
     {
         return _asset == other;
     }
 
-    FORCE_INLINE bool operator==(const AssetReference& other)
+    FORCE_INLINE bool operator==(const AssetReference& other) const
     {
         return _asset == other._asset;
     }
 
-    FORCE_INLINE bool operator!=(T* other)
+    FORCE_INLINE bool operator!=(T* other) const
     {
         return _asset != other;
     }
 
-    FORCE_INLINE bool operator!=(const AssetReference& other)
+    FORCE_INLINE bool operator!=(const AssetReference& other) const
     {
         return _asset != other._asset;
     }
@@ -220,7 +209,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Sets the asset reference.
     /// </summary>

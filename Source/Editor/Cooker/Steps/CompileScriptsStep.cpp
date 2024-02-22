@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "CompileScriptsStep.h"
 #include "Editor/Scripting/ScriptsBuilder.h"
@@ -12,6 +12,10 @@
 #include "Editor/Cooker/PlatformTools.h"
 #include "Editor/Editor.h"
 #include "Editor/ProjectInfo.h"
+#include "Engine/Engine/Globals.h"
+#if PLATFORM_MAC
+#include <sys/stat.h>
+#endif
 
 bool CompileScriptsStep::DeployBinaries(CookingData& data, const String& path, const String& projectFolderPath)
 {
@@ -91,8 +95,8 @@ bool CompileScriptsStep::DeployBinaries(CookingData& data, const String& path, c
             Scripting::ProcessBuildInfoPath(e.NativePath, projectFolderPath);
             Scripting::ProcessBuildInfoPath(e.ManagedPath, projectFolderPath);
 
-            e.NativePath = StringUtils::GetFileName(e.NativePath);
-            e.ManagedPath = StringUtils::GetFileName(e.ManagedPath);
+            e.NativePath = String(StringUtils::GetFileName(e.NativePath));
+            e.ManagedPath = String(StringUtils::GetFileName(e.ManagedPath));
 
             LOG(Info, "Collecting binary module {0}", e.Name);
         }
@@ -121,11 +125,22 @@ bool CompileScriptsStep::DeployBinaries(CookingData& data, const String& path, c
     {
         const String& dstPath = data.Tools->IsNativeCodeFile(data, file) ? data.NativeCodeOutputPath : data.ManagedCodeOutputPath;
         const String dst = dstPath / StringUtils::GetFileName(file);
-        if (dst != file && FileSystem::CopyFile(dst, file))
+        if (dst == file)
+            continue;
+        if (FileSystem::CopyFile(dst, file))
         {
-            data.Error(TEXT("Failed to copy file from {0} to {1}."), file, dst);
+            data.Error(String::Format(TEXT("Failed to copy file from {0} to {1}."), file, dst));
             return true;
         }
+
+#if PLATFORM_MAC
+        // Ensure to keep valid file permissions for executable files
+        const StringAsANSI<> fileANSI(*file, file.Length());
+        const StringAsANSI<> dstANSI(*dst, dst.Length());
+        struct stat st;
+        stat(fileANSI.Get(), &st);
+        chmod(dstANSI.Get(), st.st_mode);
+#endif
     }
 
     return false;
@@ -136,58 +151,18 @@ bool CompileScriptsStep::Perform(CookingData& data)
     data.StepProgress(TEXT("Compiling game scripts"), 0);
 
     const ProjectInfo* project = Editor::Project;
-    const String& target = project->GameTarget;
+    String target = project->GameTarget;
+    StringView workingDir;
+    const Char *platform, *architecture, *configuration = ::ToString(data.Configuration);
+    data.GetBuildPlatformName(platform, architecture);
+    String targetBuildInfo = project->ProjectFolderPath / TEXT("Binaries") / target / platform / architecture / configuration / target + TEXT(".Build.json");
     if (target.IsEmpty())
     {
-        LOG(Error, "Empty GameTarget in project.");
-        return true;
-    }
-    const Char *platform, *architecture, *configuration = ::ToString(data.Configuration);
-    switch (data.Platform)
-    {
-    case BuildPlatform::Windows32:
-        platform = TEXT("Windows");
-        architecture = TEXT("x86");
-        break;
-    case BuildPlatform::Windows64:
-        platform = TEXT("Windows");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::UWPx86:
-        platform = TEXT("UWP");
-        architecture = TEXT("x86");
-        break;
-    case BuildPlatform::UWPx64:
-        platform = TEXT("UWP");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::XboxOne:
-        platform = TEXT("XboxOne");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::LinuxX64:
-        platform = TEXT("Linux");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::PS4:
-        platform = TEXT("PS4");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::XboxScarlett:
-        platform = TEXT("XboxScarlett");
-        architecture = TEXT("x64");
-        break;
-    case BuildPlatform::AndroidARM64:
-        platform = TEXT("Android");
-        architecture = TEXT("ARM64");
-        break;
-    case BuildPlatform::Switch:
-        platform = TEXT("Switch");
-        architecture = TEXT("ARM64");
-        break;
-    default:
-        LOG(Error, "Unknown or unsupported build platform.");
-        return true;
+        // Fallback to engine-only if game has no code
+        LOG(Warning, "Empty GameTarget in project.");
+        target = TEXT("FlaxGame");
+        workingDir = Globals::StartupFolder;
+        targetBuildInfo = Globals::StartupFolder / TEXT("Source/Platforms") / platform / TEXT("Binaries") / TEXT("Game") / architecture / configuration / target + TEXT(".Build.json");
     }
     _extensionsToSkip.Clear();
     _extensionsToSkip.Add(TEXT(".exp"));
@@ -195,6 +170,7 @@ bool CompileScriptsStep::Perform(CookingData& data)
     _extensionsToSkip.Add(TEXT(".lib"));
     _extensionsToSkip.Add(TEXT(".a"));
     _extensionsToSkip.Add(TEXT(".Build.json"));
+    _extensionsToSkip.Add(TEXT(".DS_Store"));
     if (data.Configuration == BuildConfiguration::Release)
     {
         _extensionsToSkip.Add(TEXT(".xml"));
@@ -212,24 +188,28 @@ bool CompileScriptsStep::Perform(CookingData& data)
     LOG(Info, "Starting scripts compilation for game...");
     const String logFile = data.CacheDirectory / TEXT("CompileLog.txt");
     auto args = String::Format(
-        TEXT("-log -logfile=\"{4}\" -build -mutex -buildtargets={0} -platform={1} -arch={2} -configuration={3}"),
-        target, platform, architecture, configuration, logFile);
+        TEXT("-log -logfile=\"{4}\" -build -mutex -buildtargets={0} -platform={1} -arch={2} -configuration={3} -aotMode={5} {6}"),
+        target, platform, architecture, configuration, logFile, ToString(data.Tools->UseAOT()), GAME_BUILD_DOTNET_VER);
 #if PLATFORM_WINDOWS
     if (data.Platform == BuildPlatform::LinuxX64)
+#elif PLATFORM_LINUX
+    if (data.Platform == BuildPlatform::Windows64 || data.Platform == BuildPlatform::Windows32)
+#else
+    if (false)
+#endif
     {
-        // Skip building C++ for Linux on Windows (no need to install cross-toolchain to build C# game)
+        // Skip building C++ (no need to install cross-toolchain to build C#-only game)
         args += TEXT(" -BuildBindingsOnly");
 
-        // Assume FlaxGame was prebuilt for Linux
+        // Assume FlaxGame was prebuilt for target platform
         args += TEXT(" -SkipTargets=FlaxGame");
     }
-#endif
-    for (auto& define : data.CustomDefines)
+    for (const String& define : data.CustomDefines)
     {
         args += TEXT(" -D");
         args += define;
     }
-    if (ScriptsBuilder::RunBuildTool(args))
+    if (ScriptsBuilder::RunBuildTool(args, workingDir))
     {
         data.Error(TEXT("Failed to compile game scripts."));
         return true;
@@ -243,7 +223,6 @@ bool CompileScriptsStep::Perform(CookingData& data)
     data.StepProgress(TEXT("Exporting binaries"), 0.8f);
 
     // Deploy binary modules
-    const String targetBuildInfo = project->ProjectFolderPath / TEXT("Binaries") / project->GameTarget / platform / architecture / configuration / target + TEXT(".Build.json");
     if (DeployBinaries(data, targetBuildInfo, project->ProjectFolderPath))
         return true;
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -17,29 +17,26 @@ class GPUPipelineState;
 class LightmapUVsDensityMaterialShader : public IMaterial
 {
 private:
-
     AssetReference<Shader> _shader;
     AssetReference<Texture> _gridTexture;
     GPUPipelineState* _ps = nullptr;
     MaterialInfo _info;
 
 public:
-
     LightmapUVsDensityMaterialShader();
     virtual ~LightmapUVsDensityMaterialShader()
     {
     }
 
 private:
-
 #if COMPILE_WITH_DEV_ENV
     void OnShaderReloading(Asset* obj);
 #endif
 
 public:
-
     // [IMaterial]
     const MaterialInfo& GetInfo() const override;
+    GPUShader* GetShader() const override;
     bool IsReady() const override;
     DrawPass GetDrawModes() const override;
     void Bind(BindParameters& params) override;

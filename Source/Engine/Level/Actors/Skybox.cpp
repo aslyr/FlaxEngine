@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Skybox.h"
 #include "Engine/Core/Math/Color.h"
@@ -14,6 +14,8 @@
 Skybox::Skybox(const SpawnParams& params)
     : Actor(params)
 {
+    _drawNoCulling = 1;
+    _drawCategory = SceneRendering::PreRender;
 }
 
 void Skybox::setupProxy()
@@ -31,14 +33,14 @@ void Skybox::Draw(RenderContext& renderContext)
     bool isReady;
     if (CustomMaterial)
     {
-        isReady = CustomMaterial->IsLoaded() && CustomMaterial->IsSurface() && CustomMaterial->GetDrawModes() & DrawPass::GBuffer;
+        isReady = CustomMaterial->IsLoaded() && CustomMaterial->IsSurface() && EnumHasAnyFlags(CustomMaterial->GetDrawModes(), DrawPass::GBuffer);
     }
     else
     {
         setupProxy();
         isReady = _proxyMaterial && _proxyMaterial->IsReady();
     }
-    if (isReady)
+    if (isReady && EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::Sky))
     {
         renderContext.List->Sky = this;
     }
@@ -81,22 +83,28 @@ bool Skybox::HasContentLoaded() const
     return true;
 }
 
-bool Skybox::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool Skybox::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     return false;
+}
+
+bool Skybox::IsDynamicSky() const
+{
+    return !IsStatic();
 }
 
 void Skybox::ApplySky(GPUContext* context, RenderContext& renderContext, const Matrix& world)
 {
     // Prepare mock draw call data
     DrawCall drawCall;
-    Platform::MemoryClear(&drawCall, sizeof(DrawCall));
     drawCall.World = world;
     drawCall.ObjectPosition = drawCall.World.GetTranslation();
+    drawCall.ObjectRadius = _sphere.Radius;
     drawCall.Surface.GeometrySize = _box.GetSize();
     drawCall.WorldDeterminantSign = Math::FloatSelect(world.RotDeterminant(), 1, -1);
     drawCall.PerInstanceRandom = GetPerInstanceRandom();
     MaterialBase::BindParameters bindParams(context, renderContext, drawCall);
+    bindParams.BindViewData();
 
     // Check if use custom material
     if (CustomMaterial)
@@ -121,7 +129,7 @@ void Skybox::ApplySky(GPUContext* context, RenderContext& renderContext, const M
 
 void Skybox::OnEnable()
 {
-    GetSceneRendering()->AddCommonNoCulling(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 #if USE_EDITOR
     GetSceneRendering()->AddViewportIcon(this);
 #endif
@@ -135,7 +143,7 @@ void Skybox::OnDisable()
 #if USE_EDITOR
     GetSceneRendering()->RemoveViewportIcon(this);
 #endif
-    GetSceneRendering()->RemoveCommonNoCulling(this);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
 
     // Base
     Actor::OnDisable();

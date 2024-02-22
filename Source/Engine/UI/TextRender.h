@@ -1,9 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Level/Actor.h"
-#include "Engine/Core/Math/Matrix.h"
 #include "Engine/Render2D/TextLayoutOptions.h"
 #include "Engine/Render2D/FontAsset.h"
 #include "Engine/Renderer/DrawCall.h"
@@ -19,11 +18,11 @@
 /// <summary>
 /// Text rendering object.
 /// </summary>
-API_CLASS() class FLAXENGINE_API TextRender : public Actor
+API_CLASS(Attributes="ActorContextMenu(\"New/UI/Text Render\"), ActorToolbox(\"GUI\")")
+class FLAXENGINE_API TextRender : public Actor
 {
-DECLARE_SCENE_OBJECT(TextRender);
+    DECLARE_SCENE_OBJECT(TextRender);
 private:
-
     struct DrawChunk
     {
         TextRender* Actor;
@@ -39,11 +38,10 @@ private:
     LocalizedString _text;
     Color _color;
     TextLayoutOptions _layoutOptions;
-    int32 _size;
+    float _size;
     int32 _sceneRenderingKey = -1;
 
     BoundingBox _localBox;
-    Matrix _world;
     GeometryDrawStateData _drawState;
     DynamicIndexBuffer _ib;
     DynamicVertexBuffer _vb0;
@@ -55,11 +53,10 @@ private:
     Array<DrawChunk, InlinedAllocation<8>> _drawChunks;
 
 public:
-
     /// <summary>
     /// Gets the text.
     /// </summary>
-    API_PROPERTY(Attributes="EditorOrder(0), EditorDisplay(\"Text\")")
+    API_PROPERTY(Attributes="EditorOrder(0), MultilineText, EditorDisplay(\"Text\")")
     const LocalizedString& GetText() const;
 
     /// <summary>
@@ -94,12 +91,12 @@ public:
     /// Gets the font characters size.
     /// </summary>
     API_PROPERTY(Attributes="EditorOrder(40), DefaultValue(32), Limit(1, 1000), EditorDisplay(\"Text\")")
-    int32 GetFontSize() const;
+    float GetFontSize() const;
 
     /// <summary>
     /// Sets the font characters size.
     /// </summary>
-    API_PROPERTY() void SetFontSize(int32 value);
+    API_PROPERTY() void SetFontSize(float value);
 
     /// <summary>
     /// The draw passes to use for rendering this object.
@@ -112,6 +109,12 @@ public:
     /// </summary>
     API_FIELD(Attributes="EditorOrder(80), DefaultValue(ShadowsCastingMode.All), EditorDisplay(\"Text\")")
     ShadowsCastingMode ShadowsMode = ShadowsCastingMode::All;
+
+    /// <summary>
+    /// The object sort order key used when sorting drawable objects during rendering. Use lower values to draw object before others, higher values are rendered later (on top). Can be use to control transparency drawing.
+    /// </summary>
+    API_FIELD(Attributes="EditorOrder(85), DefaultValue(0), EditorDisplay(\"Text\")")
+    int16 SortOrder = 0;
 
     /// <summary>
     /// Gets the layout options. Layout is defined in local space of the object (on XY plane).
@@ -141,20 +144,16 @@ public:
     API_FUNCTION() void UpdateLayout();
 
 #if USE_PRECISE_MESH_INTERSECTS
-
     /// <summary>
     /// Gets the collision proxy used by the text geometry.
     /// </summary>
-    /// <returns>The collisions proxy container object reference.</returns>
     FORCE_INLINE const CollisionProxy& GetCollisionProxy() const
     {
         return _collisionProxy;
     }
-
 #endif
 
 private:
-
     void Invalidate()
     {
         // Invalidate data
@@ -162,21 +161,18 @@ private:
     }
 
 public:
-
     // [Actor]
     bool HasContentLoaded() const override;
     void Draw(RenderContext& renderContext) override;
-    void DrawGeneric(RenderContext& renderContext) override;
 #if USE_EDITOR
     void OnDebugDrawSelected() override;
 #endif
     void OnLayerChanged() override;
-    bool IntersectsItself(const Ray& ray, float& distance, Vector3& normal) override;
+    bool IntersectsItself(const Ray& ray, Real& distance, Vector3& normal) override;
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
 
 protected:
-
     // [Actor]
     void OnEnable() override;
     void OnDisable() override;

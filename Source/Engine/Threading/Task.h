@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,12 +13,20 @@
 /// <summary>
 /// Represents the current stage in the lifecycle of a Task.
 /// </summary>
-DECLARE_ENUM_EX_6(TaskState, int64, 0, Created, Failed, Canceled, Queued, Running, Finished);
+enum class TaskState : int64
+{
+    Created = 0,
+    Failed,
+    Canceled,
+    Queued,
+    Running,
+    Finished
+};
 
 /// <summary>
 /// Represents an asynchronous operation.
 /// </summary>
-class FLAXENGINE_API Task : public RemovableObject, public NonCopyable
+class FLAXENGINE_API Task : public Object, public NonCopyable
 {
     //
     // Tasks execution and states flow:
@@ -213,7 +221,7 @@ public:
     /// <param name="action">Action to run.</param>
     /// <param name="target">The action target object.</param>
     /// <returns>Enqueued task.</returns>
-    Task* ContinueWith(Function<void()> action, Object* target = nullptr);
+    Task* ContinueWith(const Function<void()>& action, Object* target = nullptr);
 
     /// <summary>
     /// Continues that task execution with a given action (will spawn new async action).
@@ -221,7 +229,7 @@ public:
     /// <param name="action">Action to run.</param>
     /// <param name="target">The action target object.</param>
     /// <returns>Enqueued task.</returns>
-    Task* ContinueWith(Function<bool()> action, Object* target = nullptr);
+    Task* ContinueWith(const Function<bool()>& action, Object* target = nullptr);
 
 public:
 
@@ -238,7 +246,7 @@ public:
     /// <param name="action">The action.</param>
     /// <param name="target">The action target object.</param>
     /// <returns>Task</returns>
-    static Task* StartNew(Function<void()>& action, Object* target = nullptr);
+    static Task* StartNew(const Function<void()>& action, Object* target = nullptr);
 
     /// <summary>
     /// Starts the new task.
@@ -251,10 +259,23 @@ public:
     /// <summary>
     /// Starts the new task.
     /// </summary>
+    /// <param name="callee">The callee object.</param>
+    /// <returns>Task</returns>
+    template<class T, void(T::* Method)()>
+    static Task* StartNew(T* callee)
+    {
+        Function<void()> action;
+        action.Bind<T, Method>(callee);
+        return StartNew(action, dynamic_cast<Object*>(callee));
+    }
+
+    /// <summary>
+    /// Starts the new task.
+    /// </summary>
     /// <param name="action">The action.</param>
     /// <param name="target">The action target object.</param>
     /// <returns>Task</returns>
-    static Task* StartNew(Function<bool()>& action, Object* target = nullptr);
+    static Task* StartNew(const Function<bool()>& action, Object* target = nullptr);
 
     /// <summary>
     /// Starts the new task.

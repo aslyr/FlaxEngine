@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -31,10 +31,13 @@ public:
         if (Asset)
         {
             Asset->Locker.Lock();
-            Asset->_loadFailed = true;
-            Asset->_isLoaded = false;
-            LOG(Error, "Loading asset \'{0}\' result: {1}.", ToString(), ToString(Result::TaskFailed));
-            Asset->_loadingTask = nullptr;
+            if (Asset->_loadingTask == this)
+            {
+                Asset->_loadFailed = true;
+                Asset->_isLoaded = false;
+                LOG(Error, "Loading asset \'{0}\' result: {1}.", ToString(), ToString(Result::TaskFailed));
+                Asset->_loadingTask = nullptr;
+            }
             Asset->Locker.Unlock();
         }
     }
@@ -69,9 +72,30 @@ protected:
 
         return Result::Ok;
     }
+    void OnFail() override
+    {
+        if (Asset)
+        {
+            Asset->Locker.Lock();
+            if (Asset->_loadingTask == this)
+                Asset->_loadingTask = nullptr;
+            Asset->Locker.Unlock();
+            Asset = nullptr;
+        }
+
+        // Base
+        ContentLoadTask::OnFail();
+    }
     void OnEnd() override
     {
-        Asset = nullptr;
+        if (Asset)
+        {
+            Asset->Locker.Lock();
+            if (Asset->_loadingTask == this)
+                Asset->_loadingTask = nullptr;
+            Asset->Locker.Unlock();
+            Asset = nullptr;
+        }
 
         // Base
         ContentLoadTask::OnEnd();

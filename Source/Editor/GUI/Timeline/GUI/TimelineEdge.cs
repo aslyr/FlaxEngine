@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.GUI.Timeline.Undo;
 using FlaxEngine;
@@ -14,7 +14,7 @@ namespace FlaxEditor.GUI.Timeline.GUI
     {
         private Timeline _timeline;
         private bool _isMoving;
-        private Vector2 _startMoveLocation;
+        private Float2 _startMoveLocation;
         private int _startMoveDuration;
         private bool _isStart;
         private bool _canEdit;
@@ -47,7 +47,7 @@ namespace FlaxEditor.GUI.Timeline.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (base.OnMouseDown(location, button))
                 return true;
@@ -67,12 +67,12 @@ namespace FlaxEditor.GUI.Timeline.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
-            if (_isMoving)
+            if (_isMoving && !_timeline.RootWindow.Window.IsMouseFlippingHorizontally)
             {
                 var moveLocation = Root.MousePosition;
-                var moveLocationDelta = moveLocation - _startMoveLocation;
+                var moveLocationDelta = moveLocation - _startMoveLocation + _timeline.Root.TrackingMouseOffset.X;
                 var moveDelta = (int)(moveLocationDelta.X / (Timeline.UnitsPerSecond * _timeline.Zoom) * _timeline.FramesPerSecond);
                 var durationFrames = _timeline.DurationFrames;
 
@@ -83,6 +83,7 @@ namespace FlaxEditor.GUI.Timeline.GUI
                 else
                 {
                     _timeline.DurationFrames = _startMoveDuration + moveDelta;
+                    _timeline.MediaBackground.HScrollBar.Value = _timeline.MediaBackground.HScrollBar.Maximum;
                 }
 
                 if (_timeline.DurationFrames != durationFrames)
@@ -97,7 +98,7 @@ namespace FlaxEditor.GUI.Timeline.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left && _isMoving)
             {
@@ -140,6 +141,7 @@ namespace FlaxEditor.GUI.Timeline.GUI
                     _timeline.DurationFrames = duration;
             }
             _isMoving = false;
+            _timeline.MediaBackground.HScrollBar.Value = _timeline.MediaBackground.HScrollBar.Maximum;
 
             EndMouseCapture();
         }

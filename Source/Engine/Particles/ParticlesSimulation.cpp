@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticlesSimulation.h"
 #include "ParticleSystem.h"
@@ -6,6 +6,7 @@
 #include "Particles.h"
 #include "Engine/Graphics/GPUBuffer.h"
 #include "Engine/Graphics/GPUDevice.h"
+#include "Engine/Core/Types/CommonValue.h"
 
 ParticleEmitterInstance::ParticleEmitterInstance()
 {
@@ -104,15 +105,18 @@ int32 ParticleSystemInstance::GetParticlesCount() const
     if (GPUParticlesCountReadback && GPUParticlesCountReadback->IsAllocated())
     {
         auto data = static_cast<uint32*>(GPUParticlesCountReadback->Map(GPUResourceMapMode::Read));
-        for (const auto& emitter : Emitters)
+        if (data)
         {
-            if (emitter.Buffer && emitter.Buffer->Mode == ParticlesSimulationMode::GPU && emitter.Buffer->GPU.HasValidCount)
+            for (const auto& emitter : Emitters)
             {
-                result += *data;
+                if (emitter.Buffer && emitter.Buffer->Mode == ParticlesSimulationMode::GPU && emitter.Buffer->GPU.HasValidCount)
+                {
+                    result += *data;
+                }
+                ++data;
             }
-            ++data;
+            GPUParticlesCountReadback->Unmap();
         }
-        GPUParticlesCountReadback->Unmap();
     }
     else if (Emitters.HasItems())
     {

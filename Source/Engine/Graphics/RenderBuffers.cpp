@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "RenderBuffers.h"
 #include "Engine/Graphics/GPUDevice.h"
@@ -7,8 +7,11 @@
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Engine/Engine.h"
 
+// How many frames keep cached buffers for temporal or optional effects?
+#define LAZY_FRAMES_COUNT 4
+
 RenderBuffers::RenderBuffers(const SpawnParams& params)
-    : PersistentScriptingObject(params)
+    : ScriptingObject(params)
 {
 #define CREATE_TEXTURE(name) name = GPUDevice::Instance->CreateTexture(TEXT(#name)); _resources.Add(name)
     CREATE_TEXTURE(DepthBuffer);
@@ -17,9 +20,12 @@ RenderBuffers::RenderBuffers(const SpawnParams& params)
     CREATE_TEXTURE(GBuffer1);
     CREATE_TEXTURE(GBuffer2);
     CREATE_TEXTURE(GBuffer3);
-    CREATE_TEXTURE(RT1_FloatRGB);
-    CREATE_TEXTURE(RT2_FloatRGB);
 #undef CREATE_TEXTURE
+}
+
+String RenderBuffers::CustomBuffer::ToString() const
+{
+    return Name;
 }
 
 RenderBuffers::~RenderBuffers()
@@ -35,8 +41,7 @@ void RenderBuffers::Prepare()
     if (VolumetricFog)
     {
         ASSERT(VolumetricFogHistory);
-
-        if (frameIndex - LastFrameVolumetricFog >= 4)
+        if (frameIndex - LastFrameVolumetricFog >= LAZY_FRAMES_COUNT)
         {
             RenderTargetPool::Release(VolumetricFog);
             VolumetricFog = nullptr;
@@ -48,7 +53,7 @@ void RenderBuffers::Prepare()
         }
     }
 #define UPDATE_LAZY_KEEP_RT(name) \
-	if (name && frameIndex - LastFrame##name >= 4) \
+	if (name && frameIndex - LastFrame##name >= LAZY_FRAMES_COUNT) \
 	{ \
 		RenderTargetPool::Release(name); \
 		name = nullptr; \
@@ -59,6 +64,15 @@ void RenderBuffers::Prepare()
     UPDATE_LAZY_KEEP_RT(HalfResDepth);
     UPDATE_LAZY_KEEP_RT(LuminanceMap);
 #undef UPDATE_LAZY_KEEP_RT
+    for (int32 i = CustomBuffers.Count() - 1; i >= 0; i--)
+    {
+        CustomBuffer* e = CustomBuffers[i];
+        if (frameIndex - e->LastFrameUsed >= LAZY_FRAMES_COUNT)
+        {
+            Delete(e);
+            CustomBuffers.RemoveAt(i);
+        }
+    }
 }
 
 GPUTexture* RenderBuffers::RequestHalfResDepth(GPUContext* context)
@@ -79,6 +93,7 @@ GPUTexture* RenderBuffers::RequestHalfResDepth(GPUContext* context)
         auto tempDesc = GPUTextureDescription::New2D(halfDepthWidth, halfDepthHeight, halfDepthFormat);
         tempDesc.Flags = GPUTextureFlags::ShaderResource | GPUTextureFlags::DepthStencil;
         HalfResDepth = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(HalfResDepth, "HalfResDepth");
     }
     else if (HalfResDepth->Width() != halfDepthWidth || HalfResDepth->Height() != halfDepthHeight || HalfResDepth->Format() != halfDepthFormat)
     {
@@ -87,12 +102,40 @@ GPUTexture* RenderBuffers::RequestHalfResDepth(GPUContext* context)
         auto tempDesc = GPUTextureDescription::New2D(halfDepthWidth, halfDepthHeight, halfDepthFormat);
         tempDesc.Flags = GPUTextureFlags::ShaderResource | GPUTextureFlags::DepthStencil;
         HalfResDepth = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(HalfResDepth, "HalfResDepth");
     }
 
     // Generate depth
     MultiScaler::Instance()->DownscaleDepth(context, halfDepthWidth, halfDepthHeight, DepthBuffer, HalfResDepth->View());
 
     return HalfResDepth;
+}
+
+PixelFormat RenderBuffers::GetOutputFormat() const
+{
+    return _useAlpha ? PixelFormat::R16G16B16A16_Float : PixelFormat::R11G11B10_Float;
+}
+
+bool RenderBuffers::GetUseAlpha() const
+{
+    return _useAlpha;
+}
+
+void RenderBuffers::SetUseAlpha(bool value)
+{
+    _useAlpha = value;
+}
+
+const RenderBuffers::CustomBuffer* RenderBuffers::FindCustomBuffer(const StringView& name) const
+{
+    if (LinkedCustomBuffers)
+        return LinkedCustomBuffers->FindCustomBuffer(name);
+    for (const CustomBuffer* e : CustomBuffers)
+    {
+        if (e->Name == name)
+            return e;
+    }
+    return nullptr;
 }
 
 uint64 RenderBuffers::GetMemoryUsage() const
@@ -142,12 +185,6 @@ bool RenderBuffers::Init(int32 width, int32 height)
     desc.DefaultClearColor = Color::Transparent;
     result |= GBuffer3->Init(desc);
 
-    // Helper HDR buffers
-    desc.Format = PixelFormat::R11G11B10_Float;
-    desc.DefaultClearColor = Color::Transparent;
-    result |= RT1_FloatRGB->Init(desc);
-    result |= RT2_FloatRGB->Init(desc);
-
     // Cache data
     _width = width;
     _height = height;
@@ -155,12 +192,16 @@ bool RenderBuffers::Init(int32 width, int32 height)
     _viewport = Viewport(0, 0, static_cast<float>(width), static_cast<float>(height));
     LastEyeAdaptationTime = 0;
 
+    // Flush any pool render targets to prevent over-allocating GPU memory when resizing game viewport
+    RenderTargetPool::Flush(false, 4);
+
     return result;
 }
 
 void RenderBuffers::Release()
 {
     LastEyeAdaptationTime = 0;
+    LinkedCustomBuffers = nullptr;
 
     for (int32 i = 0; i < _resources.Count(); i++)
         _resources[i]->ReleaseGPU();
@@ -182,9 +223,5 @@ void RenderBuffers::Release()
     UPDATE_LAZY_KEEP_RT(HalfResDepth);
     UPDATE_LAZY_KEEP_RT(LuminanceMap);
 #undef UPDATE_LAZY_KEEP_RT
-}
-
-String RenderBuffers::ToString() const
-{
-    return TEXT("RenderBuffers");
+    CustomBuffers.ClearDelete();
 }

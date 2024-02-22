@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MaterialInstance.h"
 #include "Engine/Core/Log.h"
@@ -143,6 +143,11 @@ const MaterialInfo& MaterialInstance::GetInfo() const
     return EmptyInfo;
 }
 
+GPUShader* MaterialInstance::GetShader() const
+{
+    return _baseMaterial ? _baseMaterial->GetShader() : nullptr;
+}
+
 bool MaterialInstance::IsReady() const
 {
     return IsLoaded() && _baseMaterial && _baseMaterial->IsReady();
@@ -200,8 +205,6 @@ void MaterialInstance::Bind(BindParameters& params)
 
 Asset::LoadResult MaterialInstance::load()
 {
-    ASSERT(_baseMaterial == nullptr);
-
     // Get main chunk
     auto chunk0 = GetChunk(0);
     if (chunk0 == nullptr || chunk0->IsMissing())
@@ -210,7 +213,7 @@ Asset::LoadResult MaterialInstance::load()
 
     // Load base material
     Guid baseMaterialId;
-    headerStream.Read(&baseMaterialId);
+    headerStream.Read(baseMaterialId);
     auto baseMaterial = Content::LoadAsync<MaterialBase>(baseMaterialId);
 
     // Load parameters
@@ -224,6 +227,7 @@ Asset::LoadResult MaterialInstance::load()
     else
     {
         // Clear parameters if has no material loaded
+        _baseMaterial = nullptr;
         Params.Dispose();
         ParamsChanged();
     }
@@ -258,6 +262,20 @@ void MaterialInstance::SetBaseMaterial(MaterialBase* baseMaterial)
 
     if (baseMaterial == _baseMaterial)
         return;
+
+#if !BUILD_RELEASE
+    // Prevent recursion
+    auto mi = Cast<MaterialInstance>(baseMaterial);
+    while (mi)
+    {
+        if (mi == this)
+        {
+            LOG(Error, "Cannot set base material of {0} to {1} because it's recursive.", ToString(), baseMaterial->ToString());
+            return;
+        }
+        mi = Cast<MaterialInstance>(mi->GetBaseMaterial());
+    }
+#endif
 
     // Release previous parameters
     Params.Dispose();
@@ -297,8 +315,8 @@ bool MaterialInstance::Save(const StringView& path)
     MemoryWriteStream stream(512);
     {
         // Save base material ID
-        const auto baseMaterialId = _baseMaterial ? _baseMaterial->GetID() : Guid::Empty;
-        stream.Write(&baseMaterialId);
+        const Guid baseMaterialId = _baseMaterial ? _baseMaterial->GetID() : Guid::Empty;
+        stream.Write(baseMaterialId);
 
         // Save parameters
         Params.Save(&stream);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Sky.h"
 #include "DirectionalLight.h"
@@ -19,6 +19,8 @@
 
 PACK_STRUCT(struct Data {
     Matrix WVP;
+    Float3 ViewOffset;
+    float Padding;
     GBufferData GBuffer;
     AtmosphericFogData Fog;
     });
@@ -29,6 +31,9 @@ Sky::Sky(const SpawnParams& params)
     , _psSky(nullptr)
     , _psFog(nullptr)
 {
+    _drawNoCulling = 1;
+    _drawCategory = SceneRendering::PreRender;
+
     // Load shader
     _shader = Content::LoadAsyncInternal<Shader>(TEXT("Shaders/Sky"));
     if (_shader == nullptr)
@@ -65,18 +70,18 @@ void Sky::InitConfig(AtmosphericFogData& config) const
     if (SunLight)
     {
         config.AtmosphericFogSunDirection = -SunLight->GetDirection();
-        config.AtmosphericFogSunColor = SunLight->Color.ToVector3();
+        config.AtmosphericFogSunColor = SunLight->Color.ToFloat3() * SunLight->Color.A;
     }
     else
     {
-        config.AtmosphericFogSunDirection = Vector3::UnitY;
-        config.AtmosphericFogSunColor = Vector3::One;
+        config.AtmosphericFogSunDirection = Float3::UnitY;
+        config.AtmosphericFogSunColor = Float3::One;
     }
 }
 
 void Sky::Draw(RenderContext& renderContext)
 {
-    if (HasContentLoaded())
+    if (HasContentLoaded() && EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::Sky))
     {
         // Ensure to have pipeline state cache created
         if (_psSky == nullptr || _psFog == nullptr)
@@ -152,7 +157,7 @@ bool Sky::HasContentLoaded() const
     return _shader && _shader->IsLoaded() && AtmospherePreCompute::GetCache(nullptr);
 }
 
-bool Sky::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool Sky::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     return false;
 }
@@ -176,9 +181,10 @@ void Sky::DrawFog(GPUContext* context, RenderContext& renderContext, GPUTextureV
     // Setup constants data
     Data data;
     GBufferPass::SetInputs(renderContext.View, data.GBuffer);
+    data.ViewOffset = renderContext.View.Origin + GetPosition();
     InitConfig(data.Fog);
     data.Fog.AtmosphericFogSunPower *= SunLight ? SunLight->Brightness : 1.0f;
-    bool useSpecularLight = (renderContext.View.Flags & ViewFlags::SpecularLight) != 0;
+    bool useSpecularLight = EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::SpecularLight);
     if (!useSpecularLight)
     {
         data.Fog.AtmosphericFogSunDiscScale = 0;
@@ -191,6 +197,11 @@ void Sky::DrawFog(GPUContext* context, RenderContext& renderContext, GPUTextureV
     context->SetState(_psFog);
     context->SetRenderTarget(output);
     context->DrawFullscreenTriangle();
+}
+
+bool Sky::IsDynamicSky() const
+{
+    return !IsStatic() || (SunLight && !SunLight->IsStatic());
 }
 
 void Sky::ApplySky(GPUContext* context, RenderContext& renderContext, const Matrix& world)
@@ -209,9 +220,10 @@ void Sky::ApplySky(GPUContext* context, RenderContext& renderContext, const Matr
     Matrix::Multiply(world, renderContext.View.Frustum.GetMatrix(), m);
     Matrix::Transpose(m, data.WVP);
     GBufferPass::SetInputs(renderContext.View, data.GBuffer);
+    data.ViewOffset = renderContext.View.Origin + GetPosition();
     InitConfig(data.Fog);
     //data.Fog.AtmosphericFogSunPower *= SunLight ? SunLight->Brightness : 1.0f;
-    bool useSpecularLight = (renderContext.View.Flags & ViewFlags::SpecularLight) != 0;
+    bool useSpecularLight = EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::SpecularLight);
     if (!useSpecularLight)
     {
         // Hide sun disc if specular light is disabled
@@ -237,7 +249,7 @@ void Sky::EndPlay()
 
 void Sky::OnEnable()
 {
-    GetSceneRendering()->AddCommonNoCulling(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 #if USE_EDITOR
     GetSceneRendering()->AddViewportIcon(this);
 #endif
@@ -251,7 +263,7 @@ void Sky::OnDisable()
 #if USE_EDITOR
     GetSceneRendering()->RemoveViewportIcon(this);
 #endif
-    GetSceneRendering()->RemoveCommonNoCulling(this);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
 
     // Base
     Actor::OnDisable();

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content;
@@ -23,6 +23,11 @@ namespace FlaxEditor.Windows
         /// Gets a value indicating whether this window can open content finder popup.
         /// </summary>
         protected virtual bool CanOpenContentFinder => true;
+
+        /// <summary>
+        /// Gets a value indicating whether this window can use UI navigation (tab/enter).
+        /// </summary>
+        protected virtual bool CanUseNavigation => true;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="EditorWindow"/> class.
@@ -185,8 +190,44 @@ namespace FlaxEditor.Windows
         #endregion
 
         /// <inheritdoc />
+        public override bool OnKeyDown(KeyboardKeys key)
+        {
+            // Prevent closing the editor window when using RMB + Ctrl + W to slow down the camera flight
+            if (Editor.Options.Options.Input.CloseTab.Process(this, key))
+            {
+                if (Root.GetMouseButton(MouseButton.Right))
+                    return true;
+            }
+
+            if (base.OnKeyDown(key))
+                return true;
+
+            switch (key)
+            {
+            case KeyboardKeys.Return:
+                if (CanUseNavigation && Root?.FocusedControl != null)
+                {
+                    Root.SubmitFocused();
+                    return true;
+                }
+                break;
+            case KeyboardKeys.Tab:
+                if (CanUseNavigation && Root != null)
+                {
+                    bool shiftDown = Root.GetKey(KeyboardKeys.Shift);
+                    Root.Navigate(shiftDown ? NavDirection.Previous : NavDirection.Next);
+                    return true;
+                }
+                break;
+            }
+            return false;
+        }
+
+        /// <inheritdoc />
         public override void OnDestroy()
         {
+            if (IsDisposing)
+                return;
             OnExit();
 
             // Unregister

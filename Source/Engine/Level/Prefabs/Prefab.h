@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -15,14 +15,12 @@ class SceneObject;
 /// <seealso cref="JsonAssetBase" />
 API_CLASS(NoSpawn) class FLAXENGINE_API Prefab : public JsonAssetBase
 {
-DECLARE_ASSET_HEADER(Prefab);
+    DECLARE_ASSET_HEADER(Prefab);
 private:
-
     bool _isCreatingDefaultInstance;
     Actor* _defaultInstance;
 
 public:
-
     /// <summary>
     /// The serialized scene objects amount (actors and scripts).
     /// </summary>
@@ -46,19 +44,13 @@ public:
     /// <summary>
     /// The objects cache maps the id of the object contained in the prefab asset (actor or script) to the default instance deserialized from prefab data. Valid only if asset is loaded and GetDefaultInstance was called.
     /// </summary>
-    Dictionary<Guid, const void*> ObjectsCache;
+    Dictionary<Guid, SceneObject*> ObjectsCache;
 
 public:
-
     /// <summary>
     /// Gets the root object identifier (prefab object ID). Asset must be loaded.
     /// </summary>
-    /// <returns>The ID.</returns>
-    Guid GetRootObjectId() const
-    {
-        ASSERT(IsLoaded());
-        return ObjectsIds[0];
-    }
+    Guid GetRootObjectId() const;
 
     /// <summary>
     /// Requests the default prefab object instance. Deserializes the prefab objects from the asset. Skips if already done.
@@ -74,7 +66,6 @@ public:
     API_FUNCTION() SceneObject* GetDefaultInstance(API_PARAM(Ref) const Guid& objectId);
 
 #if USE_EDITOR
-
     /// <summary>
     /// Applies the difference from the prefab object instance, saves the changes and synchronizes them with the active instances of the prefab asset.
     /// </summary>
@@ -83,23 +74,20 @@ public:
     /// </remarks>
     /// <param name="targetActor">The root actor of spawned prefab instance to use as modified changes sources.</param>
     bool ApplyAll(Actor* targetActor);
-
 #endif
 
 private:
-
 #if USE_EDITOR
+    typedef Array<class PrefabInstanceData> PrefabInstancesData;
     typedef Array<AssetReference<Prefab>> NestedPrefabsList;
-    bool ApplyAllInternal(Actor* targetActor, bool linkTargetActorObjectToPrefab);
+    bool ApplyAllInternal(Actor* targetActor, bool linkTargetActorObjectToPrefab, PrefabInstancesData& prefabInstancesData);
     bool UpdateInternal(const Array<SceneObject*>& defaultInstanceObjects, rapidjson_flax::StringBuffer& tmpBuffer);
-    bool SyncChanges(const NestedPrefabsList& allPrefabs);
-    bool SyncChangesInternal();
-    void SyncNestedPrefabs(const NestedPrefabsList& allPrefabs);
+    bool SyncChangesInternal(PrefabInstancesData& prefabInstancesData);
+    void SyncNestedPrefabs(const NestedPrefabsList& allPrefabs, Array<PrefabInstancesData>& allPrefabsInstancesData) const;
 #endif
     void DeleteDefaultInstance();
 
 protected:
-
     // [JsonAssetBase]
     LoadResult loadAsset() override;
     void unload(bool isReloading) override;

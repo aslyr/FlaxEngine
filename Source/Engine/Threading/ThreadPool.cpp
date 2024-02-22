@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ThreadPool.h"
 #include "IRunnable.h"
@@ -7,6 +7,7 @@
 #include "ConcurrentTaskQueue.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Math.h"
+#include "Engine/Core/Types/String.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Platform/ConditionVariable.h"
@@ -24,6 +25,12 @@ namespace ThreadPoolImpl
     Array<Thread*> Threads;
     ConcurrentTaskQueue<ThreadPoolTask> Jobs; // Hello Steve!
     ConditionVariable JobsSignal;
+    CriticalSection JobsMutex;
+}
+
+String ThreadPoolTask::ToString() const
+{
+    return String::Format(TEXT("Thread Pool Task ({0})"), (int32)GetState());
 }
 
 void ThreadPoolTask::Enqueue()
@@ -51,7 +58,7 @@ ThreadPoolService ThreadPoolServiceInstance;
 bool ThreadPoolService::Init()
 {
     // Spawn threads
-    const int32 numThreads = Math::Clamp<int32>(Platform::GetCPUInfo().ProcessorCoreCount - 1, 2, PLATFORM_THREADS_LIMIT);
+    const int32 numThreads = Math::Clamp<int32>(Platform::GetCPUInfo().ProcessorCoreCount - 1, 2, PLATFORM_THREADS_LIMIT / 2);
     LOG(Info, "Spawning {0} Thread Pool workers", numThreads);
     for (int32 i = ThreadPoolImpl::Threads.Count(); i < numThreads; i++)
     {
@@ -91,10 +98,7 @@ void ThreadPoolService::Dispose()
     // Delete threads
     for (int32 i = 0; i < ThreadPoolImpl::Threads.Count(); i++)
     {
-        if (ThreadPoolImpl::Threads[i]->IsRunning())
-        {
-            ThreadPoolImpl::Threads[i]->Kill(true);
-        }
+        ThreadPoolImpl::Threads[i]->Kill(true);
     }
     ThreadPoolImpl::Threads.ClearDelete();
 }
@@ -104,7 +108,6 @@ int32 ThreadPool::ThreadProc()
     ThreadPoolTask* task;
 
     // Work until end
-    CriticalSection mutex;
     while (Platform::AtomicRead(&ThreadPoolImpl::ExitFlag) == 0)
     {
         // Try to get a job
@@ -114,9 +117,9 @@ int32 ThreadPool::ThreadProc()
         }
         else
         {
-            mutex.Lock();
-            ThreadPoolImpl::JobsSignal.Wait(mutex);
-            mutex.Unlock();
+            ThreadPoolImpl::JobsMutex.Lock();
+            ThreadPoolImpl::JobsSignal.Wait(ThreadPoolImpl::JobsMutex);
+            ThreadPoolImpl::JobsMutex.Unlock();
         }
     }
 

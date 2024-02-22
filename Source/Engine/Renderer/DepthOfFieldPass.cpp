@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "DepthOfFieldPass.h"
 #include "RenderList.h"
@@ -9,17 +9,37 @@
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPULimits.h"
-#include "Engine/Graphics/PostProcessBase.h"
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 
 // This must match hlsl defines
-#define DOF_MAX_SAMPLE_RADIUS 10
 #define DOF_GRID_SIZE 450
-#define DOF_APRON_SIZE DOF_MAX_SAMPLE_RADIUS
-#define DOF_THREAD_GROUP_SIZE (DOF_GRID_SIZE + (DOF_APRON_SIZE * 2))
+#define DOF_DEPTH_BLUR_FORMAT PixelFormat::R16G16_Float
+
+PACK_STRUCT(struct Data {
+    Float2 ProjectionAB;
+    float BokehDepthCullThreshold;
+    float BokehDepthCutoff;
+
+    Float4 DOFDepths;
+
+    float MaxBokehSize;
+    float BokehBrightnessThreshold;
+    float BokehBlurThreshold;
+    float BokehFalloff;
+
+    Float2 BokehTargetSize;
+    Float2 DOFTargetSize;
+
+    Float2 InputSize;
+    float DepthLimit;
+    float BlurStrength;
+
+    Float3 Dummy;
+    float BokehBrightness;
+    });
 
 DepthOfFieldPass::DepthOfFieldPass()
 {
@@ -137,7 +157,7 @@ bool DepthOfFieldPass::setupResources()
             psDesc.GS = shader->GetGS("GS_Bokeh");
             psDesc.PS = shader->GetPS("PS_Bokeh");
             psDesc.BlendMode = BlendingMode::Additive;
-            psDesc.PrimitiveTopologyType = PrimitiveTopologyType::Point;
+            psDesc.PrimitiveTopology = PrimitiveTopologyType::Point;
             if (_psBokeh->Init(psDesc))
                 return true;
         }
@@ -147,7 +167,7 @@ bool DepthOfFieldPass::setupResources()
             _bokehBuffer = GPUDevice::Instance->CreateBuffer(TEXT("Bokeh Buffer"));
         if (_bokehIndirectArgsBuffer == nullptr)
             _bokehIndirectArgsBuffer = GPUDevice::Instance->CreateBuffer(TEXT("Bokeh Indirect Args Buffer"));
-        GPUDrawIndirectArgs indirectArgsBufferInitData{0, 1, 0, 0};
+        GPUDrawIndirectArgs indirectArgsBufferInitData{ 0, 1, 0, 0 };
         if (_bokehIndirectArgsBuffer->Init(GPUBufferDescription::Argument(&indirectArgsBufferInitData, sizeof(indirectArgsBufferInitData))))
             return true;
     }
@@ -180,24 +200,16 @@ GPUTexture* DepthOfFieldPass::getDofBokehShape(DepthOfFieldSettings& dofSettings
     return result ? result->GetTexture() : nullptr;
 }
 
-GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* input)
+void DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture*& frame, GPUTexture*& tmp)
 {
-    // Ensure to have valid data
-    if (!_platformSupportsDoF || checkIfSkipPass())
-        return nullptr;
-
-    // Cache data
+    DepthOfFieldSettings& dofSettings = renderContext.List->Settings.DepthOfField;
+    const bool useDoF = EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::DepthOfField) && dofSettings.Enabled;
+    if (!useDoF || !_platformSupportsDoF || checkIfSkipPass())
+        return;
     auto device = GPUDevice::Instance;
     auto context = device->GetMainContext();
     const auto depthBuffer = renderContext.Buffers->DepthBuffer;
     const auto shader = _shader->GetShader();
-    DepthOfFieldSettings& dofSettings = renderContext.List->Settings.DepthOfField;
-    const bool useDoF = _platformSupportsDoF && (renderContext.View.Flags & ViewFlags::DepthOfField) != 0 && dofSettings.Enabled;
-
-    // Skip if disabled
-    if (!useDoF)
-        return nullptr;
-
     PROFILE_GPU_CPU("Depth Of Field");
 
     context->ResetSR();
@@ -207,25 +219,27 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
     const int32 cocResolutionDivider = 1;
     const int32 dofResolutionDivider = 1;
     const int32 bokehResolutionDivider = 1;
-
     // TODO: in low-res DoF maybe use shared HalfResDepth?
-
-    // Cache viewport sizes
-    const int32 w1 = input->Width();
-    const int32 h1 = input->Height();
+    const int32 w1 = frame->Width();
+    const int32 h1 = frame->Height();
     const int32 cocWidth = w1 / cocResolutionDivider;
     const int32 cocHeight = h1 / cocResolutionDivider;
     const int32 dofWidth = w1 / dofResolutionDivider;
     const int32 dofHeight = h1 / dofResolutionDivider;
     const int32 bokehTargetWidth = w1 / bokehResolutionDivider;
     const int32 bokehTargetHeight = h1 / bokehResolutionDivider;
+    float textureSizeScale = (float)Math::Max(w1, h1) * (1.0f / 1920.0f); // Keep DOF blur the same no matter the image resolution is (reference FullHD res)
+    int32 blurScalePermutationOffset = 0;
+    const float sampleRadius[] = { 1.0f, 3.6f }; // This has to match CS_DepthOfField permutations
+    if (textureSizeScale > sampleRadius[0])
+    {
+        blurScalePermutationOffset += 2;
+        textureSizeScale /= sampleRadius[1];
+    }
 
     // TODO: maybe we could render particles (whole transparency in general) to the depth buffer to apply DoF on them as well?
 
-    // TODO: reduce amount of used temporary render targets, we could plan rendering steps in more static way and hardcode some logic to make it run faster with less memory usage (less bandwitch)
-
     // Setup constant buffer
-    Data cbData;
     {
         float nearPlane = renderContext.View.Near;
         float farPlane = renderContext.View.Far;
@@ -237,6 +251,7 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
         float farFocusEnd = Math::Min(farPlane - 5.0f, farFocusStart + dofSettings.FarTransitionRange);
         float depthLimitMax = farPlane - 10.0f;
 
+        Data cbData;
         cbData.DOFDepths.X = nearFocusStart;
         cbData.DOFDepths.Y = nearFocusEnd;
         cbData.DOFDepths.Z = farFocusStart;
@@ -247,7 +262,7 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
         cbData.BokehFalloff = dofSettings.BokehFalloff;
         cbData.BokehDepthCutoff = dofSettings.BokehDepthCutoff;
         cbData.DepthLimit = dofSettings.DepthLimit > ZeroTolerance ? Math::Min(dofSettings.DepthLimit, depthLimitMax) : depthLimitMax;
-        cbData.BlurStrength = Math::Saturate(dofSettings.BlurStrength);
+        cbData.BlurStrength = Math::Saturate(dofSettings.BlurStrength) * Math::Min(textureSizeScale, 1.0f);
         cbData.BokehBrightness = dofSettings.BokehBrightness;
 
         cbData.DOFTargetSize.X = static_cast<float>(dofWidth); // TODO: check if this param is binded right. maybe use w1 or bokehTargetWidth?
@@ -260,16 +275,16 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
         // TODO: use projection matrix instead of this far and near stuff?
         cbData.ProjectionAB.X = farPlane / (farPlane - nearPlane);
         cbData.ProjectionAB.Y = (-farPlane * nearPlane) / (farPlane - nearPlane);
-    }
 
-    // Bind constant buffer
-    auto cb = shader->GetCB(0);
-    context->UpdateCB(cb, &cbData);
-    context->BindCB(0, cb);
+        auto cb = shader->GetCB(0);
+        context->UpdateCB(cb, &cbData);
+        context->BindCB(0, cb);
+    }
 
     // Depth/blur generation pass
     auto tempDesc = GPUTextureDescription::New2D(cocWidth, cocHeight, DOF_DEPTH_BLUR_FORMAT, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::UnorderedAccess);
     GPUTexture* depthBlurTarget = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(depthBlurTarget, "DOF.Blur");
     context->SetViewportAndScissors((float)cocWidth, (float)cocHeight);
     context->SetRenderTarget(*depthBlurTarget);
     context->BindSR(0, depthBuffer);
@@ -277,54 +292,12 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
     context->DrawFullscreenTriangle();
     context->ResetRenderTarget();
 
-    // CoC Spread pass
-    // todo: add config for CoC spread in postFx settings?
-    // TODO: test it out
-    bool isCoCSpreadEnabled = false;
-    if (isCoCSpreadEnabled)
-    {
-        context->ResetRenderTarget();
-        context->ResetSR();
-        context->ResetUA();
-        context->FlushState();
-
-        tempDesc = GPUTextureDescription::New2D(cocWidth, cocHeight, DOF_DEPTH_BLUR_FORMAT, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::UnorderedAccess);
-        GPUTexture* tempTarget = RenderTargetPool::Get(tempDesc);
-
-        // Horizontal pass
-        context->BindSR(0, depthBlurTarget);
-        //
-        context->BindUA(0, tempTarget->View());
-        //
-        uint32 groupCountX = (cocWidth / DOF_GRID_SIZE) + ((cocWidth % DOF_GRID_SIZE) > 0 ? 1 : 0);
-        uint32 groupCountY = cocHeight;
-        //
-        context->Dispatch(shader->GetCS("CS_CoCSpreadH"), groupCountX, groupCountY, 1);
-
-        // Vertical pass
-        context->BindSR(0, tempTarget);
-        //
-        context->BindUA(0, depthBlurTarget->View());
-        //
-        groupCountX = cocWidth;
-        groupCountY = (cocHeight / DOF_GRID_SIZE) + (cocHeight % DOF_GRID_SIZE) > 0 ? 1 : 0;
-        //
-        context->Dispatch(shader->GetCS("CS_CoCSpreadV"), groupCountX, groupCountY, 1);
-
-        // Cleanup
-        context->ResetRenderTarget();
-        context->UnBindSR(0);
-        context->UnBindUA(0);
-        context->FlushState();
-        RenderTargetPool::Release(tempTarget);
-    }
-
     // Peek temporary render target for dof pass
-    tempDesc = GPUTextureDescription::New2D(dofWidth, dofHeight, DOF_RT_FORMAT);
-    GPUTexture* dofInput = RenderTargetPool::Get(tempDesc);
+    auto dofFormat = renderContext.Buffers->GetOutputFormat();
+    tempDesc = GPUTextureDescription::New2D(dofWidth, dofHeight, dofFormat);
 
     // Do the bokeh point generation, or just do a copy if disabled
-    bool isBokehGenerationEnabled = dofSettings.BokehEnabled && _platformSupportsBokeh && dofSettings.BokehBrightness > 0.0f;
+    bool isBokehGenerationEnabled = dofSettings.BokehEnabled && _platformSupportsBokeh && dofSettings.BokehBrightness > 0.0f && dofSettings.BokehSize > 0.0f;
     if (isBokehGenerationEnabled)
     {
         // Update bokeh buffer to have enough size for points
@@ -339,7 +312,7 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
             if (_bokehBuffer->Init(GPUBufferDescription::StructuredAppend(minRequiredElements, elementStride)))
             {
                 LOG(Fatal, "Cannot create buffer {0}.", TEXT("Bokeh Buffer"));
-                return nullptr;
+                return;
             }
         }
 
@@ -347,9 +320,10 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
         context->ResetCounter(_bokehBuffer);
 
         // Generate bokeh points
-        context->BindSR(0, input);
+        context->BindSR(0, frame);
         context->BindSR(1, depthBlurTarget);
-        context->SetRenderTarget(*dofInput, _bokehBuffer);
+        context->BindUA(1, _bokehBuffer->View());
+        context->SetRenderTarget(*tmp);
         context->SetViewportAndScissors((float)dofWidth, (float)dofHeight);
         context->SetState(_psBokehGeneration);
         context->DrawFullscreenTriangle();
@@ -357,74 +331,61 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
     else
     {
         // Generate bokeh points
-        context->BindSR(0, input);
+        context->BindSR(0, frame);
         context->BindSR(1, depthBlurTarget);
-        context->SetRenderTarget(*dofInput);
+        context->SetRenderTarget(*tmp);
         context->SetViewportAndScissors((float)dofWidth, (float)dofHeight);
         context->SetState(_psDoNotGenerateBokeh);
         context->DrawFullscreenTriangle();
     }
+    Swap(frame, tmp);
 
     // Do depth of field (using compute shaders in full resolution)
-    GPUTexture* dofOutput;
     context->ResetRenderTarget();
     context->ResetSR();
     context->ResetUA();
     context->FlushState();
     {
-        // Peek temporary targets for two blur passes
-        tempDesc = GPUTextureDescription::New2D(dofWidth, dofHeight, DOF_RT_FORMAT, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::UnorderedAccess);
-        auto dofTargetH = RenderTargetPool::Get(tempDesc);
-        auto dofTargetV = RenderTargetPool::Get(tempDesc);
-
         // Horizontal pass
-        context->BindSR(0, dofInput);
+        context->BindSR(0, frame);
         context->BindSR(1, depthBlurTarget);
         //
-        context->BindUA(0, dofTargetH->View());
+        context->BindUA(0, tmp->View());
         //
         uint32 groupCountX = (dofWidth / DOF_GRID_SIZE) + ((dofWidth % DOF_GRID_SIZE) > 0 ? 1 : 0);
         uint32 groupCountY = dofHeight;
         //
-        context->Dispatch(shader->GetCS("CS_DepthOfFieldH"), groupCountX, groupCountY, 1);
+        context->Dispatch(shader->GetCS("CS_DepthOfField", blurScalePermutationOffset + 0), groupCountX, groupCountY, 1);
 
         // Cleanup
         context->ResetRenderTarget();
-        context->UnBindSR(0);
-        context->UnBindUA(0);
-        context->FlushState();
+        context->ResetUA();
+        context->ResetSR();
 
         // Vertical pass
-        context->BindUA(0, dofTargetV->View());
+        context->BindUA(0, frame->View());
         //
-        context->BindSR(0, dofTargetH);
+        context->BindSR(0, tmp);
         context->BindSR(1, depthBlurTarget);
         //
         groupCountX = dofWidth;
         groupCountY = (dofHeight / DOF_GRID_SIZE) + ((dofHeight % DOF_GRID_SIZE) > 0 ? 1 : 0);
         //
         // TODO: cache Compute Shaders
-        context->Dispatch(shader->GetCS("CS_DepthOfFieldV"), groupCountX, groupCountY, 1);
+        context->Dispatch(shader->GetCS("CS_DepthOfField", blurScalePermutationOffset + 1), groupCountX, groupCountY, 1);
         context->ResetRenderTarget();
 
         // Cleanup
-        context->UnBindSR(0);
-        context->UnBindSR(1);
-        context->UnBindUA(0);
-        context->FlushState();
-        RenderTargetPool::Release(dofTargetH);
-
-        dofOutput = dofTargetV;
+        context->ResetUA();
+        context->ResetSR();
     }
-
-    // Cleanup temporary texture
-    RenderTargetPool::Release(dofInput);
 
     // Render the bokeh points
     if (isBokehGenerationEnabled)
     {
-        tempDesc = GPUTextureDescription::New2D(bokehTargetWidth, bokehTargetHeight, DOF_RT_FORMAT);
+        tempDesc = GPUTextureDescription::New2D(bokehTargetWidth, bokehTargetHeight, dofFormat);
         auto bokehTarget = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(bokehTarget, "DOF.Bokeh");
         context->Clear(*bokehTarget, Color::Black);
 
         {
@@ -446,23 +407,17 @@ GPUTexture* DepthOfFieldPass::Render(RenderContext& renderContext, GPUTexture* i
         }
 
         // Composite the bokeh rendering results with the depth of field result
-        tempDesc = GPUTextureDescription::New2D(dofWidth, dofHeight, DOF_RT_FORMAT);
-        auto compositeTarget = RenderTargetPool::Get(tempDesc);
         context->BindSR(0, bokehTarget);
-        context->BindSR(1, dofOutput);
-        context->SetRenderTarget(*compositeTarget);
+        context->BindSR(1, frame);
+        context->SetRenderTarget(*tmp);
         context->SetViewportAndScissors((float)dofWidth, (float)dofHeight);
         context->SetState(_psBokehComposite);
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
         RenderTargetPool::Release(bokehTarget);
-        RenderTargetPool::Release(dofOutput);
-        dofOutput = compositeTarget;
+        Swap(frame, tmp);
     }
 
     RenderTargetPool::Release(depthBlurTarget);
-
-    // Return output temporary render target
-    return dofOutput;
 }

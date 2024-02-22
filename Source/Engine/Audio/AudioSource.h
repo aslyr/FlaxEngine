@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,13 +13,13 @@
 /// <remarks>
 /// Whether or not an audio source is spatial is controlled by the assigned AudioClip.The volume and the pitch of a spatial audio source is controlled by its position and the AudioListener's position/direction/velocity.
 /// </remarks>
-API_CLASS() class FLAXENGINE_API AudioSource : public Actor
+API_CLASS(Attributes="ActorContextMenu(\"New/Audio/Audio Source\"), ActorToolbox(\"Other\")")
+class FLAXENGINE_API AudioSource : public Actor
 {
-DECLARE_SCENE_OBJECT(AudioSource);
+    DECLARE_SCENE_OBJECT(AudioSource);
     friend class AudioStreamingHandler;
     friend class AudioClip;
 public:
-
     /// <summary>
     /// Valid states in which AudioSource can be in.
     /// </summary>
@@ -42,15 +42,19 @@ public:
     };
 
 private:
-
     Vector3 _velocity;
     Vector3 _prevPos;
     float _volume;
     float _pitch;
+    float _pan = 0.0f;
     float _minDistance;
-    float _attenuation;
+    float _attenuation = 1.0f;
+    float _dopplerFactor = 1.0f;
     bool _loop;
     bool _playOnStart;
+    float _startTime;
+    bool _allowSpatialization;
+    bool _clipChanged = false;
 
     bool _isActuallyPlayingSth = false;
     bool _needToUpdateStreamingBuffers = false;
@@ -61,7 +65,6 @@ private:
     int32 _streamingFirstChunk = 0;
 
 public:
-
     /// <summary>
     /// The internal IDs of this audio source used by the audio backend (unique ID per context/listener).
     /// </summary>
@@ -76,7 +79,6 @@ public:
     /// <summary>
     /// Gets the velocity of the source. Determines pitch in relation to AudioListener's position. Only relevant for spatial (3D) sources.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY() FORCE_INLINE const Vector3& GetVelocity() const
     {
         return _velocity;
@@ -85,7 +87,6 @@ public:
     /// <summary>
     /// Gets the volume of the audio played from this source, in [0, 1] range.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY(Attributes="EditorOrder(20), DefaultValue(1.0f), Limit(0, 1, 0.01f), EditorDisplay(\"Audio Source\")")
     FORCE_INLINE float GetVolume() const
     {
@@ -95,13 +96,11 @@ public:
     /// <summary>
     /// Sets the volume of the audio played from this source, in [0, 1] range.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetVolume(float value);
 
     /// <summary>
     /// Gets the pitch of the played audio. The default is 1.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY(Attributes="EditorOrder(30), DefaultValue(1.0f), Limit(0.5f, 2.0f, 0.01f), EditorDisplay(\"Audio Source\")")
     FORCE_INLINE float GetPitch() const
     {
@@ -111,13 +110,25 @@ public:
     /// <summary>
     /// Sets the pitch of the played audio. The default is 1.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetPitch(float value);
+
+    /// <summary>
+    /// Gets the stereo pan of the played audio (-1 is left speaker, 1 is right speaker, 0 is balanced). The default is 1. Used by non-spatial audio only.
+    /// </summary>
+    API_PROPERTY(Attributes="EditorOrder(30), DefaultValue(0.0f), Limit(-1.0f, 1.0f), EditorDisplay(\"Audio Source\")")
+    FORCE_INLINE float GetPan() const
+    {
+        return _pan;
+    }
+
+    /// <summary>
+    /// Sets the stereo pan of the played audio (-1 is left speaker, 1 is right speaker, 0 is balanced). The default is 0. Used by non-spatial audio only.
+    /// </summary>
+    API_PROPERTY() void SetPan(float value);
 
     /// <summary>
     /// Determines whether the audio clip should loop when it finishes playing.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY(Attributes="EditorOrder(40), DefaultValue(false), EditorDisplay(\"Audio Source\")")
     FORCE_INLINE bool GetIsLooping() const
     {
@@ -127,13 +138,11 @@ public:
     /// <summary>
     /// Determines whether the audio clip should loop when it finishes playing.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetIsLooping(bool value);
 
     /// <summary>
     /// Determines whether the audio clip should auto play on level start.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY(Attributes="EditorOrder(50), DefaultValue(false), EditorDisplay(\"Audio Source\", \"Play On Start\")")
     FORCE_INLINE bool GetPlayOnStart() const
     {
@@ -141,16 +150,28 @@ public:
     }
 
     /// <summary>
+    /// Determines the time (in seconds) at which the audio clip starts playing if Play On Start is enabled.
+    /// </summary>
+    API_PROPERTY(Attributes = "EditorOrder(51), DefaultValue(0.0f), Limit(0, float.MaxValue, 0.01f), EditorDisplay(\"Audio Source\", \"Start Time\"), VisibleIf(nameof(PlayOnStart))")
+    FORCE_INLINE float GetStartTime() const
+    {
+        return _startTime;
+    }
+
+    /// <summary>
     /// Determines whether the audio clip should auto play on game start.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetPlayOnStart(bool value);
+
+    /// <summary>
+    /// Determines the time (in seconds) at which the audio clip starts playing if Play On Start is enabled.
+    /// </summary>
+    API_PROPERTY() void SetStartTime(float value);
 
     /// <summary>
     /// Gets the minimum distance at which audio attenuation starts. When the listener is closer to the source than this value, audio is heard at full volume. Once farther away the audio starts attenuating.
     /// </summary>
-    /// <returns>The value.</returns>
-    API_PROPERTY(Attributes="EditorOrder(60), DefaultValue(1.0f), Limit(0, float.MaxValue, 0.1f), EditorDisplay(\"Audio Source\")")
+    API_PROPERTY(Attributes="EditorOrder(60), DefaultValue(1000.0f), Limit(0, float.MaxValue, 0.1f), EditorDisplay(\"Audio Source\")")
     FORCE_INLINE float GetMinDistance() const
     {
         return _minDistance;
@@ -159,13 +180,11 @@ public:
     /// <summary>
     /// Sets the minimum distance at which audio attenuation starts. When the listener is closer to the source than this value, audio is heard at full volume. Once farther away the audio starts attenuating.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetMinDistance(float value);
 
     /// <summary>
     /// Gets the attenuation that controls how quickly does audio volume drop off as the listener moves further from the source.
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY(Attributes="EditorOrder(70), DefaultValue(1.0f), Limit(0, float.MaxValue, 0.1f), EditorDisplay(\"Audio Source\")")
     FORCE_INLINE float GetAttenuation() const
     {
@@ -173,13 +192,39 @@ public:
     }
 
     /// <summary>
-    /// Sets the attenuation that controls how quickly does audio volume drop off as the listener moves further from the source.
+    /// Sets the attenuation that controls how quickly does audio volume drop off as the listener moves further from the source. At 0, no distance attenuation ever occurs.
     /// </summary>
-    /// <param name="value">The value.</param>
     API_PROPERTY() void SetAttenuation(float value);
 
-public:
+    /// <summary>
+    /// Gets the doppler effect factor. Scale for source velocity. Default is 1.
+    /// </summary>
+    API_PROPERTY(Attributes="EditorOrder(75), DefaultValue(1.0f), Limit(0, float.MaxValue, 0.1f), EditorDisplay(\"Audio Source\")")
+    FORCE_INLINE float GetDopplerFactor() const
+    {
+        return _dopplerFactor;
+    }
 
+    /// <summary>
+    /// Sets the doppler effect factor. Scale for source velocity. Default is 1.
+    /// </summary>
+    API_PROPERTY() void SetDopplerFactor(float value);
+
+    /// <summary>
+    /// If checked, source can play spatial 3d audio (when audio clip supports it), otherwise will always play as 2d sound. At 0, no distance attenuation ever occurs.
+    /// </summary>
+    API_PROPERTY(Attributes="EditorOrder(80), DefaultValue(true), EditorDisplay(\"Audio Source\")")
+    FORCE_INLINE bool GetAllowSpatialization() const
+    {
+        return _allowSpatialization;
+    }
+
+    /// <summary>
+    /// If checked, source can play spatial 3d audio (when audio clip supports it), otherwise will always play as 2d sound.
+    /// </summary>
+    API_PROPERTY() void SetAllowSpatialization(bool value);
+
+public:
     /// <summary>
     /// Starts playing the currently assigned audio clip.
     /// </summary>
@@ -198,7 +243,6 @@ public:
     /// <summary>
     /// Gets the current state of the audio playback (playing/paused/stopped).
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY() FORCE_INLINE AudioSource::States GetState() const
     {
         return _state;
@@ -207,7 +251,6 @@ public:
     /// <summary>
     /// Gets the current time of playback. If playback has not yet started, it specifies the time at which playback will start at. The time is in seconds, in range [0, ClipLength].
     /// </summary>
-    /// <returns>The time.</returns>
     API_PROPERTY(Attributes="HideInEditor") float GetTime() const;
 
     /// <summary>
@@ -219,13 +262,11 @@ public:
     /// <summary>
     /// Returns true if the sound source is three dimensional (volume and pitch varies based on listener distance and velocity).
     /// </summary>
-    /// <returns>The value.</returns>
     API_PROPERTY() bool Is3D() const;
 
     /// <summary>
     /// Returns true if audio clip is valid, loaded and uses dynamic data streaming.
     /// </summary>
-    /// <returns>True if audio clip is using streaming, false otherwise.</returns>
     API_PROPERTY() bool UseStreaming() const;
 
     /// <summary>
@@ -234,11 +275,9 @@ public:
     void Restore();
 
 public:
-
     /// <summary>
     /// Determines whether this audio source started playing audio via audio backend. After audio play it may wait for audio clip data to be loaded or streamed.
     /// </summary>
-    /// <returns><c>true</c> if audio source is actually playing something; otherwise, <c>false</c>.</returns>
     API_PROPERTY() FORCE_INLINE bool IsActuallyPlayingSth() const
     {
         return _isActuallyPlayingSth;
@@ -247,10 +286,7 @@ public:
     /// <summary>
     /// Requests the audio streaming buffers update. Rises tha flag to synchronize audio backend buffers of the emitter during next game logic update.
     /// </summary>
-    void RequestStreamingBuffersUpdate()
-    {
-        _needToUpdateStreamingBuffers = true;
-    }
+    void RequestStreamingBuffersUpdate();
 
     /// <summary>
     /// Cleanups the cached data. Called by the Audio manager.
@@ -258,7 +294,6 @@ public:
     void Cleanup();
 
 private:
-
     void OnClipChanged();
     void OnClipLoaded();
 
@@ -275,7 +310,6 @@ private:
     void Update();
 
 public:
-
     // [Actor]
 #if USE_EDITOR
     BoundingBox GetEditorBox() const override
@@ -284,13 +318,15 @@ public:
         return BoundingBox(_transform.Translation - size, _transform.Translation + size);
     }
 #endif
+#if USE_EDITOR
+    void OnDebugDrawSelected() override;
+#endif
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
     bool HasContentLoaded() const override;
-    bool IntersectsItself(const Ray& ray, float& distance, Vector3& normal) override;
+    bool IntersectsItself(const Ray& ray, Real& distance, Vector3& normal) override;
 
 protected:
-
     // [Actor]
     void OnEnable() override;
     void OnDisable() override;

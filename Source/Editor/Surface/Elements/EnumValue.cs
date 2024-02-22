@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Surface.Elements
 {
@@ -26,7 +27,7 @@ namespace FlaxEditor.Surface.Elements
 
         /// <inheritdoc />
         public EnumValue(SurfaceNode parentNode, NodeElementArchetype archetype)
-        : base(Scripting.TypeUtils.GetType(archetype.Text).Type)
+        : base(TypeUtils.GetType(archetype.Text).Type)
         {
             X = archetype.ActualPositionX;
             Y = archetype.ActualPositionY;

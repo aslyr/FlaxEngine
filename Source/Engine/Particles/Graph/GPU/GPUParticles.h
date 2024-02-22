@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -23,14 +23,12 @@ class GPUShaderProgramCS;
 class GPUParticles
 {
 private:
-
     GPUShader* _shader = nullptr;
     GPUShaderProgramCS* _mainCS = nullptr;
     Array<byte> _cbData;
     MaterialParams _params;
 
 public:
-
     /// <summary>
     /// The custom data size (in bytes) required by the nodes to store the additional global state for the simulation in the particles buffer on a GPU.
     /// </summary>

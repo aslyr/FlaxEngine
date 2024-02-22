@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using FlaxEditor.Scripting;
 using FlaxEditor.Surface;
 using FlaxEditor.Viewport.Previews;
 using FlaxEngine;
+using FlaxEngine.Windows.Search;
 
 // ReSharper disable UnusedMember.Local
 // ReSharper disable UnusedMember.Global
@@ -21,7 +22,7 @@ namespace FlaxEditor.Windows.Assets
     /// <seealso cref="ParticleEmitter" />
     /// <seealso cref="ParticleEmitterSurface" />
     /// <seealso cref="ParticleEmitterPreview" />
-    public sealed class ParticleEmitterWindow : VisjectSurfaceWindow<ParticleEmitter, ParticleEmitterSurface, ParticleEmitterPreview>
+    public sealed class ParticleEmitterWindow : VisjectSurfaceWindow<ParticleEmitter, ParticleEmitterSurface, ParticleEmitterPreview>, ISearchWindow
     {
         private readonly ScriptType[] _newParameterTypes =
         {
@@ -32,6 +33,9 @@ namespace FlaxEditor.Windows.Assets
             new ScriptType(typeof(ChannelMask)),
             new ScriptType(typeof(bool)),
             new ScriptType(typeof(int)),
+            new ScriptType(typeof(Float2)),
+            new ScriptType(typeof(Float3)),
+            new ScriptType(typeof(Float4)),
             new ScriptType(typeof(Vector2)),
             new ScriptType(typeof(Vector3)),
             new ScriptType(typeof(Vector4)),
@@ -219,7 +223,7 @@ namespace FlaxEditor.Windows.Assets
                 if (_asset.SaveSurface(value))
                 {
                     _surface.MarkAsEdited();
-                    Editor.LogError("Failed to save Particle Emitter surface data");
+                    Editor.LogError("Failed to save surface data");
                 }
                 _asset.Reload();
                 _asset.WaitForLoaded();
@@ -234,7 +238,6 @@ namespace FlaxEditor.Windows.Assets
             // Load surface graph
             if (_surface.Load())
             {
-                // Error
                 Editor.LogError("Failed to load Particle Emitter surface.");
                 return true;
             }
@@ -262,6 +265,9 @@ namespace FlaxEditor.Windows.Assets
         }
 
         /// <inheritdoc />
+        protected override bool CanEditSurfaceOnAssetLoadError => true;
+
+        /// <inheritdoc />
         protected override bool SaveToOriginal()
         {
             // Copy shader cache from the temporary Particle Emitter (will skip compilation on Reload - faster)
@@ -271,5 +277,8 @@ namespace FlaxEditor.Windows.Assets
 
             return base.SaveToOriginal();
         }
+
+        /// <inheritdoc />
+        public SearchAssetTypes AssetType => SearchAssetTypes.ParticleEmitter;
     }
 }

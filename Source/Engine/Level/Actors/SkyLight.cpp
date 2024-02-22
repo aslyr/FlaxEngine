@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SkyLight.h"
 #include "Engine/Core/Log.h"
@@ -17,6 +17,7 @@ SkyLight::SkyLight(const SpawnParams& params)
     : Light(params)
     , _radius(1000000.0f)
 {
+    _drawNoCulling = 1;
     Brightness = 2.0f;
     UpdateBounds();
 }
@@ -36,13 +37,18 @@ float SkyLight::GetScaledRadius() const
     return _radius * _transform.Scale.MaxValue();
 }
 
+CubeTexture* SkyLight::GetSource() const
+{
+    if (Mode == Modes::CaptureScene)
+        return _bakedProbe;
+    if (Mode == Modes::CustomTexture)
+        return CustomTexture.Get();
+    return nullptr;
+}
+
 void SkyLight::Bake(float timeout)
 {
-#if COMPILE_WITH_PROBES_BAKING
     ProbesRenderer::Bake(this, timeout);
-#else
-    LOG(Warning, "Baking probes is not supported.");
-#endif
 }
 
 void SkyLight::SetProbeData(TextureData& data)
@@ -93,25 +99,32 @@ void SkyLight::UpdateBounds()
 {
     _sphere = BoundingSphere(GetPosition(), GetScaledRadius());
     BoundingBox::FromSphere(_sphere, _box);
+    if (_sceneRenderingKey != -1)
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
 void SkyLight::Draw(RenderContext& renderContext)
 {
     float brightness = Brightness;
     AdjustBrightness(renderContext.View, brightness);
-    if ((renderContext.View.Flags & ViewFlags::SkyLights) != 0
+    const Float3 position = GetPosition() - renderContext.View.Origin;
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::SkyLights)
+        && EnumHasAnyFlags(renderContext.View.Pass, DrawPass::GBuffer)
         && brightness > ZeroTolerance
-        && (ViewDistance < ZeroTolerance || Vector3::DistanceSquared(renderContext.View.Position, GetPosition()) < ViewDistance * ViewDistance))
+        && (ViewDistance < ZeroTolerance || Vector3::DistanceSquared(renderContext.View.Position, position) < ViewDistance * ViewDistance))
     {
         RendererSkyLightData data;
-        data.Position = GetPosition();
-        data.Color = Color.ToVector3() * (Color.A * brightness);
+        data.Position = position;
+        data.Color = Color.ToFloat3() * (Color.A * brightness);
         data.VolumetricScatteringIntensity = VolumetricScatteringIntensity;
         data.CastVolumetricShadow = CastVolumetricShadow;
         data.RenderedVolumetricFog = 0;
-        data.AdditiveColor = AdditiveColor.ToVector3() * (AdditiveColor.A * brightness);
+        data.AdditiveColor = AdditiveColor.ToFloat3() * (AdditiveColor.A * brightness);
+        data.IndirectLightingIntensity = IndirectLightingIntensity;
         data.Radius = GetScaledRadius();
         data.Image = GetSource();
+        data.StaticFlags = GetStaticFlags();
+        data.ID = GetID();
         renderContext.List->SkyLights.Add(data);
     }
 }
@@ -166,28 +179,6 @@ bool SkyLight::HasContentLoaded() const
     if (Mode == Modes::CustomTexture)
         return CustomTexture == nullptr || CustomTexture->IsLoaded();
     return true;
-}
-
-void SkyLight::OnEnable()
-{
-    GetSceneRendering()->AddCommonNoCulling(this);
-#if USE_EDITOR
-    GetSceneRendering()->AddViewportIcon(this);
-#endif
-
-    // Base
-    Light::OnEnable();
-}
-
-void SkyLight::OnDisable()
-{
-#if USE_EDITOR
-    GetSceneRendering()->RemoveViewportIcon(this);
-#endif
-    GetSceneRendering()->RemoveCommonNoCulling(this);
-
-    // Base
-    Light::OnDisable();
 }
 
 void SkyLight::OnTransformChanged()

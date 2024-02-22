@@ -1,11 +1,15 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using FlaxEditor.Gizmo;
+using FlaxEditor.Content;
 using FlaxEditor.GUI.Tree;
+using FlaxEditor.GUI.Drag;
+using FlaxEditor.GUI.Input;
 using FlaxEditor.SceneGraph;
 using FlaxEditor.SceneGraph.GUI;
+using FlaxEditor.Scripting;
 using FlaxEditor.States;
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -18,144 +22,56 @@ namespace FlaxEditor.Windows
     /// <seealso cref="FlaxEditor.Windows.SceneEditorWindow" />
     public partial class SceneTreeWindow : SceneEditorWindow
     {
-        /// <summary>
-        /// The spawnable actors group.
-        /// </summary>
-        public struct ActorsGroup
-        {
-            /// <summary>
-            /// The group name.
-            /// </summary>
-            public string Name;
-
-            /// <summary>
-            /// The types to spawn (name and type).
-            /// </summary>
-            public KeyValuePair<string, Type>[] Types;
-        }
-
-        /// <summary>
-        /// The Spawnable actors (groups with single entry are inlined without a child menu)
-        /// </summary>
-        public static readonly ActorsGroup[] SpawnActorsGroups =
-        {
-            new ActorsGroup
-            {
-                Types = new[] { new KeyValuePair<string, Type>("Actor", typeof(EmptyActor)) }
-            },
-            new ActorsGroup
-            {
-                Types = new[] { new KeyValuePair<string, Type>("Model", typeof(StaticModel)) }
-            },
-            new ActorsGroup
-            {
-                Types = new[] { new KeyValuePair<string, Type>("Camera", typeof(Camera)) }
-            },
-            new ActorsGroup
-            {
-                Name = "Lights",
-                Types = new[]
-                {
-                    new KeyValuePair<string, Type>("Directional Light", typeof(DirectionalLight)),
-                    new KeyValuePair<string, Type>("Point Light", typeof(PointLight)),
-                    new KeyValuePair<string, Type>("Spot Light", typeof(SpotLight)),
-                    new KeyValuePair<string, Type>("Sky Light", typeof(SkyLight)),
-                }
-            },
-            new ActorsGroup
-            {
-                Name = "Visuals",
-                Types = new[]
-                {
-                    new KeyValuePair<string, Type>("Environment Probe", typeof(EnvironmentProbe)),
-                    new KeyValuePair<string, Type>("Sky", typeof(Sky)),
-                    new KeyValuePair<string, Type>("Skybox", typeof(Skybox)),
-                    new KeyValuePair<string, Type>("Exponential Height Fog", typeof(ExponentialHeightFog)),
-                    new KeyValuePair<string, Type>("PostFx Volume", typeof(PostFxVolume)),
-                    new KeyValuePair<string, Type>("Decal", typeof(Decal)),
-                    new KeyValuePair<string, Type>("Particle Effect", typeof(ParticleEffect)),
-                }
-            },
-            new ActorsGroup
-            {
-                Name = "Physics",
-                Types = new[]
-                {
-                    new KeyValuePair<string, Type>("Rigid Body", typeof(RigidBody)),
-                    new KeyValuePair<string, Type>("Character Controller", typeof(CharacterController)),
-                    new KeyValuePair<string, Type>("Box Collider", typeof(BoxCollider)),
-                    new KeyValuePair<string, Type>("Sphere Collider", typeof(SphereCollider)),
-                    new KeyValuePair<string, Type>("Capsule Collider", typeof(CapsuleCollider)),
-                    new KeyValuePair<string, Type>("Mesh Collider", typeof(MeshCollider)),
-                    new KeyValuePair<string, Type>("Fixed Joint", typeof(FixedJoint)),
-                    new KeyValuePair<string, Type>("Distance Joint", typeof(DistanceJoint)),
-                    new KeyValuePair<string, Type>("Slider Joint", typeof(SliderJoint)),
-                    new KeyValuePair<string, Type>("Spherical Joint", typeof(SphericalJoint)),
-                    new KeyValuePair<string, Type>("Hinge Joint", typeof(HingeJoint)),
-                    new KeyValuePair<string, Type>("D6 Joint", typeof(D6Joint)),
-                }
-            },
-            new ActorsGroup
-            {
-                Name = "Other",
-                Types = new[]
-                {
-                    new KeyValuePair<string, Type>("Animated Model", typeof(AnimatedModel)),
-                    new KeyValuePair<string, Type>("Bone Socket", typeof(BoneSocket)),
-                    new KeyValuePair<string, Type>("CSG Box Brush", typeof(BoxBrush)),
-                    new KeyValuePair<string, Type>("Audio Source", typeof(AudioSource)),
-                    new KeyValuePair<string, Type>("Audio Listener", typeof(AudioListener)),
-                    new KeyValuePair<string, Type>("Scene Animation", typeof(SceneAnimationPlayer)),
-                    new KeyValuePair<string, Type>("Nav Mesh Bounds Volume", typeof(NavMeshBoundsVolume)),
-                    new KeyValuePair<string, Type>("Nav Link", typeof(NavLink)),
-                    new KeyValuePair<string, Type>("Nav Modifier Volume", typeof(NavModifierVolume)),
-                    new KeyValuePair<string, Type>("Spline", typeof(Spline)),
-                }
-            },
-            new ActorsGroup
-            {
-                Name = "GUI",
-                Types = new[]
-                {
-                    new KeyValuePair<string, Type>("UI Control", typeof(UIControl)),
-                    new KeyValuePair<string, Type>("UI Canvas", typeof(UICanvas)),
-                    new KeyValuePair<string, Type>("Text Render", typeof(TextRender)),
-                    new KeyValuePair<string, Type>("Sprite Render", typeof(SpriteRender)),
-                }
-            },
-        };
-
         private TextBox _searchBox;
         private Tree _tree;
+        private Panel _sceneTreePanel;
         private bool _isUpdatingSelection;
         private bool _isMouseDown;
+
+        private DragAssets _dragAssets;
+        private DragActorType _dragActorType;
+        private DragScriptItems _dragScriptItems;
+        private DragHandlers _dragHandlers;
+
+        /// <summary>
+        /// Scene tree panel.
+        /// </summary>
+        public Panel SceneTreePanel => _sceneTreePanel;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="SceneTreeWindow"/> class.
         /// </summary>
         /// <param name="editor">The editor.</param>
         public SceneTreeWindow(Editor editor)
-        : base(editor, true, ScrollBars.Both)
+        : base(editor, true, ScrollBars.None)
         {
             Title = "Scene";
-            ScrollMargin = new Margin(0, 0, 0, 100.0f);
 
             // Scene searching query input box
             var headerPanel = new ContainerControl
             {
                 AnchorPreset = AnchorPresets.HorizontalStretchTop,
-                IsScrollable = true,
+                BackgroundColor = Style.Current.Background,
+                IsScrollable = false,
                 Offsets = new Margin(0, 0, 0, 18 + 6),
-                Parent = this,
             };
-            _searchBox = new TextBox
+            _searchBox = new SearchBox
             {
                 AnchorPreset = AnchorPresets.HorizontalStretchMiddle,
-                WatermarkText = "Search...",
                 Parent = headerPanel,
                 Bounds = new Rectangle(4, 4, headerPanel.Width - 8, 18),
             };
             _searchBox.TextChanged += OnSearchBoxTextChanged;
+
+            // Scene tree panel
+            _sceneTreePanel = new Panel
+            {
+                AnchorPreset = AnchorPresets.StretchAll,
+                Offsets = new Margin(0, 0, headerPanel.Bottom, 0),
+                IsScrollable = true,
+                ScrollBars = ScrollBars.Both,
+                Parent = this,
+            };
 
             // Create scene structure tree
             var root = editor.Scene.Root;
@@ -163,13 +79,14 @@ namespace FlaxEditor.Windows
             root.TreeNode.Expand();
             _tree = new Tree(true)
             {
-                Y = headerPanel.Bottom,
-                Margin = new Margin(0.0f, 0.0f, -16.0f, 0.0f), // Hide root node
+                Margin = new Margin(0.0f, 0.0f, -16.0f, _sceneTreePanel.ScrollBarsSize), // Hide root node
+                IsScrollable = true,
             };
             _tree.AddChild(root.TreeNode);
             _tree.SelectedChanged += Tree_OnSelectedChanged;
-            _tree.RightClick += Tree_OnRightClick;
-            _tree.Parent = this;
+            _tree.RightClick += OnTreeRightClick;
+            _tree.Parent = _sceneTreePanel;
+            headerPanel.Parent = this;
 
             // Setup input actions
             InputActions.Add(options => options.TranslateMode, () => Editor.MainTransformGizmo.ActiveMode = TransformGizmoBase.Mode.Translate);
@@ -179,20 +96,46 @@ namespace FlaxEditor.Windows
             InputActions.Add(options => options.Rename, Rename);
         }
 
+        /// <summary>
+        /// Enables or disables vertical and horizontal scrolling on the scene tree panel.
+        /// </summary>
+        /// <param name="enabled">The state to set scrolling to</param>
+        public void ScrollingOnSceneTreeView(bool enabled)
+        {
+            if (_sceneTreePanel.VScrollBar != null)
+                _sceneTreePanel.VScrollBar.ThumbEnabled = enabled;
+            if (_sceneTreePanel.HScrollBar != null)
+                _sceneTreePanel.HScrollBar.ThumbEnabled = enabled;
+        }
+
+        /// <summary>
+        /// Scrolls to the selected node in the scene tree.
+        /// </summary>
+        public void ScrollToSelectedNode()
+        {
+            // Scroll to node
+            var nodeSelection = _tree.Selection;
+            if (nodeSelection.Count != 0)
+            {
+                var scrollControl = nodeSelection[nodeSelection.Count - 1];
+                _sceneTreePanel.ScrollViewTo(scrollControl);
+            }
+        }
+
         private void OnSearchBoxTextChanged()
         {
             // Skip events during setup or init stuff
             if (IsLayoutLocked)
                 return;
 
-            var root = Editor.Scene.Root;
-            root.TreeNode.LockChildrenRecursive();
+            _tree.LockChildrenRecursive();
 
             // Update tree
             var query = _searchBox.Text;
+            var root = Editor.Scene.Root;
             root.TreeNode.UpdateFilter(query);
 
-            root.TreeNode.UnlockChildrenRecursive();
+            _tree.UnlockChildrenRecursive();
             PerformLayout();
             PerformLayout();
         }
@@ -204,7 +147,7 @@ namespace FlaxEditor.Windows
             {
                 if (selection.Count != 0)
                     Editor.SceneEditing.Select(actor);
-                actor.TreeNode.StartRenaming();
+                actor.TreeNode.StartRenaming(this, _sceneTreePanel);
             }
         }
 
@@ -230,11 +173,14 @@ namespace FlaxEditor.Windows
                 actor.Transform = parentActor.Transform;
 
                 // Rename actor to identify it easily
-                actor.Name = StringUtils.IncrementNameNumber(type.Name, x => parentActor.GetChild(x) == null);
+                actor.Name = Utilities.Utils.IncrementNameNumber(type.Name, x => parentActor.GetChild(x) == null);
             }
 
             // Spawn it
             Editor.SceneEditing.Spawn(actor, parentActor);
+
+            Editor.SceneEditing.Select(actor);
+            Rename();
         }
 
         /// <summary>
@@ -271,7 +217,7 @@ namespace FlaxEditor.Windows
             }
         }
 
-        private void Tree_OnRightClick(TreeNode node, Vector2 location)
+        private void OnTreeRightClick(TreeNode node, Float2 location)
         {
             if (!Editor.StateMachine.CurrentState.CanEditScene)
                 return;
@@ -313,11 +259,28 @@ namespace FlaxEditor.Windows
                 if (nodes.Count == 1)
                 {
                     nodes[0].ExpandAllParents(true);
-                    ScrollViewTo(nodes[0]);
+                    _sceneTreePanel.ScrollViewTo(nodes[0]);
                 }
             }
 
             _isUpdatingSelection = false;
+        }
+
+        private bool ValidateDragAsset(AssetItem assetItem)
+        {
+            if (assetItem.IsOfType<SceneAsset>())
+                return true;
+            return assetItem.OnEditorDrag(this);
+        }
+
+        private static bool ValidateDragActorType(ScriptType actorType)
+        {
+            return true;
+        }
+
+        private static bool ValidateDragScriptItem(ScriptItem script)
+        {
+            return Editor.Instance.CodeEditing.Actors.Get(script) != ScriptType.Null;
         }
 
         /// <inheritdoc />
@@ -351,7 +314,7 @@ namespace FlaxEditor.Windows
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton buttons)
+        public override bool OnMouseDown(Float2 location, MouseButton buttons)
         {
             if (base.OnMouseDown(location, buttons))
                 return true;
@@ -366,7 +329,7 @@ namespace FlaxEditor.Windows
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton buttons)
+        public override bool OnMouseUp(Float2 location, MouseButton buttons)
         {
             if (base.OnMouseUp(location, buttons))
                 return true;
@@ -385,6 +348,15 @@ namespace FlaxEditor.Windows
                 return true;
             }
 
+            if (buttons == MouseButton.Left)
+            {
+                if (Editor.StateMachine.CurrentState.CanEditScene)
+                {
+                    Editor.SceneEditing.Deselect();
+                }
+                return true;
+            }
+
             return false;
         }
 
@@ -397,8 +369,135 @@ namespace FlaxEditor.Windows
         }
 
         /// <inheritdoc />
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
+        {
+            var result = base.OnDragEnter(ref location, data);
+            if (Editor.StateMachine.CurrentState.CanEditScene)
+            {
+                if (_dragHandlers == null)
+                    _dragHandlers = new DragHandlers();
+                if (_dragAssets == null)
+                {
+                    _dragAssets = new DragAssets(ValidateDragAsset);
+                    _dragHandlers.Add(_dragAssets);
+                }
+                if (_dragAssets.OnDragEnter(data) && result == DragDropEffect.None)
+                    return _dragAssets.Effect;
+                if (_dragActorType == null)
+                {
+                    _dragActorType = new DragActorType(ValidateDragActorType);
+                    _dragHandlers.Add(_dragActorType);
+                }
+                if (_dragActorType.OnDragEnter(data) && result == DragDropEffect.None)
+                    return _dragActorType.Effect;
+                if (_dragScriptItems == null)
+                {
+                    _dragScriptItems = new DragScriptItems(ValidateDragScriptItem);
+                    _dragHandlers.Add(_dragScriptItems);
+                }
+                if (_dragScriptItems.OnDragEnter(data) && result == DragDropEffect.None)
+                    return _dragScriptItems.Effect;
+            }
+            return result;
+        }
+
+        /// <inheritdoc />
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
+        {
+            var result = base.OnDragMove(ref location, data);
+            if (result == DragDropEffect.None && Editor.StateMachine.CurrentState.CanEditScene && _dragHandlers != null)
+            {
+                result = _dragHandlers.Effect;
+            }
+            return result;
+        }
+
+        /// <inheritdoc />
+        public override void OnDragLeave()
+        {
+            base.OnDragLeave();
+
+            _dragHandlers?.OnDragLeave();
+        }
+
+        /// <inheritdoc />
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
+        {
+            var result = base.OnDragDrop(ref location, data);
+            if (result == DragDropEffect.None)
+            {
+                // Drag assets
+                if (_dragAssets != null && _dragAssets.HasValidDrag)
+                {
+                    for (int i = 0; i < _dragAssets.Objects.Count; i++)
+                    {
+                        var item = _dragAssets.Objects[i];
+                        if (item.IsOfType<SceneAsset>())
+                        {
+                            Editor.Instance.Scene.OpenScene(item.ID, true);
+                            continue;
+                        }
+                        var actor = item.OnEditorDrop(this);
+                        actor.Name = item.ShortName;
+                        Level.SpawnActor(actor);
+                        Editor.Scene.MarkSceneEdited(actor.Scene);
+                    }
+                    result = DragDropEffect.Move;
+                }
+                // Drag actor type
+                else if (_dragActorType != null && _dragActorType.HasValidDrag)
+                {
+                    for (int i = 0; i < _dragActorType.Objects.Count; i++)
+                    {
+                        var item = _dragActorType.Objects[i];
+                        var actor = item.CreateInstance() as Actor;
+                        if (actor == null)
+                        {
+                            Editor.LogWarning("Failed to spawn actor of type " + item.TypeName);
+                            continue;
+                        }
+                        actor.Name = item.Name;
+                        Level.SpawnActor(actor);
+                        Editor.Scene.MarkSceneEdited(actor.Scene);
+                    }
+                    result = DragDropEffect.Move;
+                }
+                // Drag script item
+                else if (_dragScriptItems != null && _dragScriptItems.HasValidDrag)
+                {
+                    for (int i = 0; i < _dragScriptItems.Objects.Count; i++)
+                    {
+                        var item = _dragScriptItems.Objects[i];
+                        var actorType = Editor.Instance.CodeEditing.Actors.Get(item);
+                        if (actorType != ScriptType.Null)
+                        {
+                            var actor = actorType.CreateInstance() as Actor;
+                            if (actor == null)
+                            {
+                                Editor.LogWarning("Failed to spawn actor of type " + actorType.TypeName);
+                                continue;
+                            }
+                            actor.Name = actorType.Name;
+                            Level.SpawnActor(actor);
+                            Editor.Scene.MarkSceneEdited(actor.Scene);
+                        }
+                    }
+                    result = DragDropEffect.Move;
+                }
+
+                _dragHandlers.OnDragDrop(null);
+            }
+            return result;
+        }
+
+        /// <inheritdoc />
         public override void OnDestroy()
         {
+            _dragAssets = null;
+            _dragActorType = null;
+            _dragScriptItems = null;
+            _dragHandlers?.Clear();
+            _dragHandlers = null;
             _tree = null;
             _searchBox = null;
 

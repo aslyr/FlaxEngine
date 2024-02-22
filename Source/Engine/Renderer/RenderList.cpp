@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "RenderList.h"
 #include "Engine/Core/Collections/Sorting.h"
@@ -6,21 +6,18 @@
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
-#include "Engine/Graphics/PostProcessBase.h"
 #include "Engine/Graphics/GPULimits.h"
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Graphics/RenderTools.h"
+#include "Engine/Graphics/Graphics.h"
+#include "Engine/Graphics/PostProcessEffect.h"
 #include "Engine/Profiler/Profiler.h"
 #include "Engine/Content/Assets/CubeTexture.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Level/Scene/Lightmap.h"
 #include "Engine/Level/Actors/PostFxVolume.h"
 
-// Amount of bits to use for draw calls batches hash key
-#define USE_BATCH_KEY_MASK 0
-#define BATCH_KEY_BITS 32
-#define BATCH_KEY_MASK ((1 << BATCH_KEY_BITS) - 1)
-
-static_assert(sizeof(DrawCall) <= 280, "Too big draw call data size.");
+static_assert(sizeof(DrawCall) <= 288, "Too big draw call data size.");
 static_assert(sizeof(DrawCall::Surface) >= sizeof(DrawCall::Terrain), "Wrong draw call data size.");
 static_assert(sizeof(DrawCall::Surface) >= sizeof(DrawCall::Particle), "Wrong draw call data size.");
 static_assert(sizeof(DrawCall::Surface) >= sizeof(DrawCall::Custom), "Wrong draw call data size.");
@@ -39,9 +36,10 @@ namespace
     };
 
     Array<MemPoolEntry> MemPool;
+    CriticalSection MemPoolLocker;
 }
 
-void RendererDirectionalLightData::SetupLightData(LightData* data, const RenderView& view, bool useShadow) const
+void RendererDirectionalLightData::SetupLightData(LightData* data, bool useShadow) const
 {
     data->SpotAngles.X = -2.0f;
     data->SpotAngles.Y = 1.0f;
@@ -49,7 +47,7 @@ void RendererDirectionalLightData::SetupLightData(LightData* data, const RenderV
     data->SourceLength = 0;
     data->Color = Color;
     data->MinRoughness = Math::Max(MinRoughness, MIN_ROUGHNESS);
-    data->Position = Vector3::Zero;
+    data->Position = Float3::Zero;
     data->CastShadows = useShadow ? 1.0f : 0.0f;
     data->Direction = -Direction;
     data->Radius = 0;
@@ -58,7 +56,7 @@ void RendererDirectionalLightData::SetupLightData(LightData* data, const RenderV
     data->RadiusInv = 0;
 }
 
-void RendererSpotLightData::SetupLightData(LightData* data, const RenderView& view, bool useShadow) const
+void RendererSpotLightData::SetupLightData(LightData* data, bool useShadow) const
 {
     data->SpotAngles.X = CosOuterCone;
     data->SpotAngles.Y = InvCosConeDifference;
@@ -75,7 +73,7 @@ void RendererSpotLightData::SetupLightData(LightData* data, const RenderView& vi
     data->RadiusInv = 1.0f / Radius;
 }
 
-void RendererPointLightData::SetupLightData(LightData* data, const RenderView& view, bool useShadow) const
+void RendererPointLightData::SetupLightData(LightData* data, bool useShadow) const
 {
     data->SpotAngles.X = -2.0f;
     data->SpotAngles.Y = 1.0f;
@@ -92,7 +90,7 @@ void RendererPointLightData::SetupLightData(LightData* data, const RenderView& v
     data->RadiusInv = 1.0f / Radius;
 }
 
-void RendererSkyLightData::SetupLightData(LightData* data, const RenderView& view, bool useShadow) const
+void RendererSkyLightData::SetupLightData(LightData* data, bool useShadow) const
 {
     data->SpotAngles.X = AdditiveColor.X;
     data->SpotAngles.Y = AdditiveColor.Y;
@@ -102,16 +100,17 @@ void RendererSkyLightData::SetupLightData(LightData* data, const RenderView& vie
     data->MinRoughness = MIN_ROUGHNESS;
     data->Position = Position;
     data->CastShadows = useShadow ? 1.0f : 0.0f;
-    data->Direction = Vector3::Forward;
+    data->Direction = Float3::Forward;
     data->Radius = Radius;
     data->FalloffExponent = 0;
     data->InverseSquared = 0;
     data->RadiusInv = 1.0f / Radius;
 }
 
-void* RenderListAllocation::Allocate(uintptr size)
+void* RendererAllocation::Allocate(uintptr size)
 {
     void* result = nullptr;
+    MemPoolLocker.Lock();
     for (int32 i = 0; i < MemPool.Count(); i++)
     {
         if (MemPool[i].Size == size)
@@ -121,6 +120,7 @@ void* RenderListAllocation::Allocate(uintptr size)
             break;
         }
     }
+    MemPoolLocker.Unlock();
     if (!result)
     {
         result = Platform::Allocate(size, 16);
@@ -128,9 +128,11 @@ void* RenderListAllocation::Allocate(uintptr size)
     return result;
 }
 
-void RenderListAllocation::Free(void* ptr, uintptr size)
+void RendererAllocation::Free(void* ptr, uintptr size)
 {
+    MemPoolLocker.Lock();
     MemPool.Add({ ptr, size });
+    MemPoolLocker.Unlock();
 }
 
 RenderList* RenderList::GetFromPool()
@@ -192,9 +194,8 @@ void RenderList::AddSettingsBlend(IPostFxSettingsProvider* provider, float weigh
 void RenderList::BlendSettings()
 {
     PROFILE_CPU();
-
-    Sorting::QuickSort(Blendable.Get(), Blendable.Count());
-
+    Sorting::QuickSort(Blendable);
+    Settings = Graphics::PostProcessSettings;
     for (auto& b : Blendable)
     {
         b.Provider->Blend(Settings, b.Weight);
@@ -218,15 +219,14 @@ void RenderList::RunPostFxPass(GPUContext* context, RenderContext& renderContext
             needTempTarget = true;
         }
     }
-    if (renderContext.View.Flags & ViewFlags::CustomPostProcess)
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::CustomPostProcess))
     {
-        for (int32 i = 0; i < renderContext.List->PostFx.Count(); i++)
+        for (const PostProcessEffect* fx : renderContext.List->PostFx)
         {
-            const auto fx = renderContext.List->PostFx[i];
-            if (fx->IsReady() && fx->GetLocation() == locationB)
+            if (fx->Location == locationB)
             {
                 skipPass = false;
-                needTempTarget |= !fx->GetUseSingleTarget();
+                needTempTarget |= !fx->UseSingleTarget;
             }
         }
     }
@@ -235,6 +235,10 @@ void RenderList::RunPostFxPass(GPUContext* context, RenderContext& renderContext
 
     auto tempDesc = inputOutput->GetDescription();
     auto temp = needTempTarget ? RenderTargetPool::Get(tempDesc) : nullptr;
+    if (needTempTarget)
+    {
+        RENDER_TARGET_POOL_SET_NAME(temp, "RenderList.RunPostFxPassTemp");
+    }
 
     auto input = inputOutput;
     auto output = temp;
@@ -256,21 +260,20 @@ void RenderList::RunPostFxPass(GPUContext* context, RenderContext& renderContext
             Swap(output, input);
         }
     }
-    if (renderContext.View.Flags & ViewFlags::CustomPostProcess)
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::CustomPostProcess))
     {
-        for (int32 i = 0; i < renderContext.List->PostFx.Count(); i++)
+        for (PostProcessEffect* fx : renderContext.List->PostFx)
         {
-            auto fx = renderContext.List->PostFx[i];
-            if (fx->IsReady() && fx->GetLocation() == locationB)
+            if (fx->Location == locationB)
             {
-                if (fx->GetUseSingleTarget())
+                if (fx->UseSingleTarget || output == nullptr)
                 {
-                    fx->Render(renderContext, input, nullptr);
+                    fx->Render(context, renderContext, input, nullptr);
                 }
                 else
                 {
                     ASSERT(needTempTarget);
-                    fx->Render(renderContext, input, output);
+                    fx->Render(context, renderContext, input, output);
                     Swap(input, output);
                 }
                 context->ResetRenderTarget();
@@ -296,9 +299,9 @@ void RenderList::RunMaterialPostFxPass(GPUContext* context, RenderContext& rende
             bindParams.Input = *input;
             material->Bind(bindParams);
             context->DrawFullscreenTriangle();
-            context->ResetRenderTarget();
             Swap(output, input);
         }
+        context->ResetRenderTarget();
     }
 }
 
@@ -306,19 +309,17 @@ void RenderList::RunCustomPostFxPass(GPUContext* context, RenderContext& renderC
 {
     if (!(renderContext.View.Flags & ViewFlags::CustomPostProcess))
         return;
-
-    for (int32 i = 0; i < renderContext.List->PostFx.Count(); i++)
+    for (PostProcessEffect* fx : renderContext.List->PostFx)
     {
-        auto fx = renderContext.List->PostFx[i];
-        if (fx->IsReady() && fx->GetLocation() == location)
+        if (fx->Location == location)
         {
-            if (fx->GetUseSingleTarget())
+            if (fx->UseSingleTarget || output == nullptr)
             {
-                fx->Render(renderContext, input, nullptr);
+                fx->Render(context, renderContext, input, nullptr);
             }
             else
             {
-                fx->Render(renderContext, input, output);
+                fx->Render(context, renderContext, input, output);
                 Swap(input, output);
             }
             context->ResetRenderTarget();
@@ -326,23 +327,20 @@ void RenderList::RunCustomPostFxPass(GPUContext* context, RenderContext& renderC
     }
 }
 
-bool RenderList::HasAnyPostFx(RenderContext& renderContext, PostProcessEffectLocation postProcess) const
+bool RenderList::HasAnyPostFx(const RenderContext& renderContext, PostProcessEffectLocation postProcess) const
 {
-    if (renderContext.View.Flags & ViewFlags::CustomPostProcess)
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::CustomPostProcess))
     {
-        for (int32 i = 0; i < renderContext.List->PostFx.Count(); i++)
+        for (const PostProcessEffect* fx : renderContext.List->PostFx)
         {
-            auto fx = renderContext.List->PostFx[i];
-            if (fx->IsReady() && fx->GetLocation() == postProcess)
-            {
+            if (fx->Location == postProcess)
                 return true;
-            }
         }
     }
     return false;
 }
 
-bool RenderList::HasAnyPostFx(RenderContext& renderContext, MaterialPostFxLocation materialPostFx) const
+bool RenderList::HasAnyPostFx(const RenderContext& renderContext, MaterialPostFxLocation materialPostFx) const
 {
     for (int32 i = 0; i < Settings.PostFxMaterials.Materials.Count(); i++)
     {
@@ -369,7 +367,7 @@ bool DrawCallsList::IsEmpty() const
 }
 
 RenderList::RenderList(const SpawnParams& params)
-    : PersistentScriptingObject(params)
+    : ScriptingObject(params)
     , DirectionalLights(4)
     , PointLights(32)
     , SpotLights(32)
@@ -387,15 +385,18 @@ RenderList::RenderList(const SpawnParams& params)
 void RenderList::Init(RenderContext& renderContext)
 {
     renderContext.View.Frustum.GetCorners(FrustumCornersWs);
-    Vector3::Transform(FrustumCornersWs, renderContext.View.View, FrustumCornersVs, 8);
+    for (int32 i = 0; i < 8; i++)
+        Float3::Transform(FrustumCornersWs[i], renderContext.View.View, FrustumCornersVs[i]);
 }
 
 void RenderList::Clear()
 {
+    Scenes.Clear();
     DrawCalls.Clear();
     BatchedDrawCalls.Clear();
     for (auto& list : DrawCallsLists)
         list.Clear();
+    ShadowDepthDrawCallsList.Clear();
     PointLights.Clear();
     SpotLights.Clear();
     SkyLights.Clear();
@@ -412,40 +413,131 @@ void RenderList::Clear()
     _instanceBuffer.Clear();
 }
 
-void RenderList::AddDrawCall(DrawPass drawModes, StaticFlags staticFlags, DrawCall& drawCall, bool receivesDecals)
+struct PackedSortKey
 {
-    // Mix object mask with material mask
-    const auto mask = (DrawPass)(drawModes & drawCall.Material->GetDrawModes());
-    if (mask == DrawPass::None)
-        return;
+    union
+    {
+        uint64 Data;
+
+        struct
+        {
+            uint32 DistanceKey;
+            uint16 BatchKey;
+            uint16 SortKey;
+        };
+    };
+};
+
+FORCE_INLINE void CalculateSortKey(const RenderContext& renderContext, DrawCall& drawCall, int16 sortOrder)
+{
+    const Float3 planeNormal = renderContext.View.Direction;
+    const float planePoint = -Float3::Dot(planeNormal, renderContext.View.Position);
+    const float distance = Float3::Dot(planeNormal, drawCall.ObjectPosition) - planePoint;
+    PackedSortKey key;
+    key.DistanceKey = RenderTools::ComputeDistanceSortKey(distance);
+    uint32 batchKey = GetHash(drawCall.Material);
+    batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[0]);
+    batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[1]);
+    batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[2]);
+    batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.IndexBuffer);
+    IMaterial::InstancingHandler handler;
+    if (drawCall.Material->CanUseInstancing(handler))
+        handler.GetHash(drawCall, batchKey);
+    batchKey += (int32)(471 * drawCall.WorldDeterminantSign);
+    key.SortKey = (uint16)(sortOrder - MIN_int16);
+    key.BatchKey = (uint16)batchKey;
+    drawCall.SortKey = key.Data;
+}
+
+void RenderList::AddDrawCall(const RenderContext& renderContext, DrawPass drawModes, StaticFlags staticFlags, DrawCall& drawCall, bool receivesDecals, int16 sortOrder)
+{
+#if ENABLE_ASSERTION_LOW_LAYERS
+    // Ensure that draw modes are non-empty and in conjunction with material draw modes
+    auto materialDrawModes = drawCall.Material->GetDrawModes();
+    ASSERT_LOW_LAYER(drawModes != DrawPass::None && ((uint32)drawModes & ~(uint32)materialDrawModes) == 0);
+#endif
 
     // Append draw call data
-    const int32 index = DrawCalls.Count();
-    DrawCalls.Add(drawCall);
+    CalculateSortKey(renderContext, drawCall, sortOrder);
+    const int32 index = DrawCalls.Add(drawCall);
 
     // Add draw call to proper draw lists
-    if (mask & DrawPass::Depth)
+    if ((drawModes & DrawPass::Depth) != DrawPass::None)
     {
         DrawCallsLists[(int32)DrawCallsListType::Depth].Indices.Add(index);
     }
-    if (mask & DrawPass::GBuffer)
+    if ((drawModes & (DrawPass::GBuffer | DrawPass::GlobalSurfaceAtlas)) != DrawPass::None)
     {
         if (receivesDecals)
             DrawCallsLists[(int32)DrawCallsListType::GBuffer].Indices.Add(index);
         else
             DrawCallsLists[(int32)DrawCallsListType::GBufferNoDecals].Indices.Add(index);
     }
-    if (mask & DrawPass::Forward)
+    if ((drawModes & DrawPass::Forward) != DrawPass::None)
     {
         DrawCallsLists[(int32)DrawCallsListType::Forward].Indices.Add(index);
     }
-    if (mask & DrawPass::Distortion)
+    if ((drawModes & DrawPass::Distortion) != DrawPass::None)
     {
         DrawCallsLists[(int32)DrawCallsListType::Distortion].Indices.Add(index);
     }
-    if (mask & DrawPass::MotionVectors && (staticFlags & StaticFlags::Transform) == 0)
+    if ((drawModes & DrawPass::MotionVectors) != DrawPass::None && (staticFlags & StaticFlags::Transform) == StaticFlags::None)
     {
         DrawCallsLists[(int32)DrawCallsListType::MotionVectors].Indices.Add(index);
+    }
+}
+
+void RenderList::AddDrawCall(const RenderContextBatch& renderContextBatch, DrawPass drawModes, StaticFlags staticFlags, ShadowsCastingMode shadowsMode, const BoundingSphere& bounds, DrawCall& drawCall, bool receivesDecals, int16 sortOrder)
+{
+#if ENABLE_ASSERTION_LOW_LAYERS
+    // Ensure that draw modes are non-empty and in conjunction with material draw modes
+    auto materialDrawModes = drawCall.Material->GetDrawModes();
+    ASSERT_LOW_LAYER(drawModes != DrawPass::None && ((uint32)drawModes & ~(uint32)materialDrawModes) == 0);
+#endif
+    const RenderContext& mainRenderContext = renderContextBatch.Contexts.Get()[0];
+
+    // Append draw call data
+    CalculateSortKey(mainRenderContext, drawCall, sortOrder);
+    const int32 index = DrawCalls.Add(drawCall);
+
+    // Add draw call to proper draw lists
+    DrawPass modes = drawModes & mainRenderContext.View.GetShadowsDrawPassMask(shadowsMode);
+    drawModes = modes & mainRenderContext.View.Pass;
+    if (drawModes != DrawPass::None && mainRenderContext.View.CullingFrustum.Intersects(bounds))
+    {
+        if ((drawModes & DrawPass::Depth) != DrawPass::None)
+        {
+            DrawCallsLists[(int32)DrawCallsListType::Depth].Indices.Add(index);
+        }
+        if ((drawModes & (DrawPass::GBuffer | DrawPass::GlobalSurfaceAtlas)) != DrawPass::None)
+        {
+            if (receivesDecals)
+                DrawCallsLists[(int32)DrawCallsListType::GBuffer].Indices.Add(index);
+            else
+                DrawCallsLists[(int32)DrawCallsListType::GBufferNoDecals].Indices.Add(index);
+        }
+        if ((drawModes & DrawPass::Forward) != DrawPass::None)
+        {
+            DrawCallsLists[(int32)DrawCallsListType::Forward].Indices.Add(index);
+        }
+        if ((drawModes & DrawPass::Distortion) != DrawPass::None)
+        {
+            DrawCallsLists[(int32)DrawCallsListType::Distortion].Indices.Add(index);
+        }
+        if ((drawModes & DrawPass::MotionVectors) != DrawPass::None && (staticFlags & StaticFlags::Transform) == StaticFlags::None)
+        {
+            DrawCallsLists[(int32)DrawCallsListType::MotionVectors].Indices.Add(index);
+        }
+    }
+    for (int32 i = 1; i < renderContextBatch.Contexts.Count(); i++)
+    {
+        const RenderContext& renderContext = renderContextBatch.Contexts.Get()[i];
+        ASSERT_LOW_LAYER(renderContext.View.Pass == DrawPass::Depth);
+        drawModes = modes & renderContext.View.Pass;
+        if (drawModes != DrawPass::None && renderContext.View.CullingFrustum.Intersects(bounds))
+        {
+            renderContext.List->ShadowDepthDrawCallsList.Indices.Add(index);
+        }
     }
 }
 
@@ -466,16 +558,16 @@ namespace
                 a.InstanceCount != 0 &&
                 b.InstanceCount != 0 &&
                 handler.CanBatch(a, b) &&
-                a.WorldDeterminantSign == b.WorldDeterminantSign;
+                a.WorldDeterminantSign * b.WorldDeterminantSign > 0;
     }
 }
 
-void RenderList::SortDrawCalls(const RenderContext& renderContext, bool reverseDistance, DrawCallsList& list)
+void RenderList::SortDrawCalls(const RenderContext& renderContext, bool reverseDistance, DrawCallsList& list, const RenderListBuffer<DrawCall>& drawCalls)
 {
     PROFILE_CPU();
-
-    const int32 listSize = (int32)list.Indices.Count();
-    const Plane plane(renderContext.View.Position, renderContext.View.Direction);
+    const auto* drawCallsData = drawCalls.Get();
+    const auto* listData = list.Indices.Get();
+    const int32 listSize = list.Indices.Count();
 
     // Peek shared memory
 #define PREPARE_CACHE(list) (list).Clear(); (list).Resize(listSize)
@@ -485,28 +577,26 @@ void RenderList::SortDrawCalls(const RenderContext& renderContext, bool reverseD
 #undef PREPARE_CACHE
     uint64* sortedKeys = SortingKeys[0].Get();
 
-    // Generate sort keys (by depth) and batch keys (higher bits)
-    const uint32 sortKeyXor = reverseDistance ? MAX_uint32 : 0;
-    for (int32 i = 0; i < listSize; i++)
+    // Setup sort keys
+    if (reverseDistance)
     {
-        auto& drawCall = DrawCalls[list.Indices[i]];
-        const auto distance = CollisionsHelper::DistancePlanePoint(plane, drawCall.ObjectPosition);
-        const uint32 sortKey = RenderTools::ComputeDistanceSortKey(distance) ^ sortKeyXor;
-        int32 batchKey = GetHash(drawCall.Geometry.IndexBuffer);
-        batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[0]);
-        batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[1]);
-        batchKey = (batchKey * 397) ^ GetHash(drawCall.Geometry.VertexBuffers[2]);
-        batchKey = (batchKey * 397) ^ GetHash(drawCall.Material);
-        IMaterial::InstancingHandler handler;
-        if (drawCall.Material->CanUseInstancing(handler))
-            handler.GetHash(drawCall, batchKey);
-        batchKey += (int32)(471 * drawCall.WorldDeterminantSign);
-#if USE_BATCH_KEY_MASK
-		const uint32 batchHashKey = (uint32)batchKey & BATCH_KEY_MASK;
-#else
-        const uint32 batchHashKey = (uint32)batchKey;
-#endif
-        sortedKeys[i] = (uint64)batchHashKey << 32 | (uint64)sortKey;
+        for (int32 i = 0; i < listSize; i++)
+        {
+            const DrawCall& drawCall = drawCallsData[listData[i]];
+            PackedSortKey key;
+            key.Data = drawCall.SortKey;
+            key.DistanceKey ^= MAX_uint32; // Reverse depth
+            key.SortKey ^= MAX_uint16; // Reverse sort order
+            sortedKeys[i] = key.Data;
+        }
+    }
+    else
+    {
+        for (int32 i = 0; i < listSize; i++)
+        {
+            const DrawCall& drawCall = drawCallsData[listData[i]];
+            sortedKeys[i] = drawCall.SortKey;
+        }
     }
 
     // Sort draw calls indices
@@ -519,23 +609,22 @@ void RenderList::SortDrawCalls(const RenderContext& renderContext, bool reverseD
     list.Batches.Clear();
     for (int32 i = 0; i < listSize;)
     {
-        const auto& drawCall = DrawCalls[list.Indices[i]];
+        const DrawCall& drawCall = drawCallsData[listData[i]];
         int32 batchSize = 1;
         int32 instanceCount = drawCall.InstanceCount;
 
         // Check the following draw calls to merge them (using instancing)
         for (int32 j = i + 1; j < listSize; j++)
         {
-            const auto& other = DrawCalls[list.Indices[j]];
+            const DrawCall& other = drawCallsData[listData[j]];
             if (!CanBatchWith(drawCall, other))
                 break;
-
             batchSize++;
             instanceCount += other.InstanceCount;
         }
 
         DrawBatch batch;
-        batch.SortKey = sortedKeys[i] & MAX_uint32;
+        batch.SortKey = sortedKeys[i];
         batch.StartIndex = i;
         batch.BatchSize = batchSize;
         batch.InstanceCount = instanceCount;
@@ -545,19 +634,22 @@ void RenderList::SortDrawCalls(const RenderContext& renderContext, bool reverseD
     }
 
     // Sort draw calls batches by depth
-    Sorting::QuickSort(list.Batches.Get(), list.Batches.Count());
+    Sorting::QuickSort(list.Batches);
 }
 
-bool CanUseInstancing(DrawPass pass)
+FORCE_INLINE bool CanUseInstancing(DrawPass pass)
 {
     return pass == DrawPass::GBuffer || pass == DrawPass::Depth;
 }
 
-void RenderList::ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsList& list)
+void RenderList::ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsList& list, const RenderListBuffer<DrawCall>& drawCalls, GPUTextureView* input)
 {
     if (list.IsEmpty())
         return;
     PROFILE_GPU_CPU("Drawing");
+    const auto* drawCallsData = drawCalls.Get();
+    const auto* listData = list.Indices.Get();
+    const auto* batchesData = list.Batches.Get();
     const auto context = GPUDevice::Instance->GetMainContext();
     bool useInstancing = list.CanUseInstancing && CanUseInstancing(renderContext.View.Pass) && GPUDevice::Instance->Limits.HasInstancing;
 
@@ -568,40 +660,40 @@ void RenderList::ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsL
     if (useInstancing)
     {
         // Prepare buffer memory
-        int32 batchesCount = 0;
+        int32 instancedBatchesCount = 0;
         for (int32 i = 0; i < list.Batches.Count(); i++)
         {
-            auto& batch = list.Batches[i];
+            auto& batch = batchesData[i];
             if (batch.BatchSize > 1)
-                batchesCount += batch.BatchSize;
+                instancedBatchesCount += batch.BatchSize;
         }
         for (int32 i = 0; i < list.PreBatchedDrawCalls.Count(); i++)
         {
-            auto& batch = BatchedDrawCalls[list.PreBatchedDrawCalls[i]];
+            auto& batch = BatchedDrawCalls.Get()[list.PreBatchedDrawCalls.Get()[i]];
             if (batch.Instances.Count() > 1)
-                batchesCount += batch.Instances.Count();
+                instancedBatchesCount += batch.Instances.Count();
         }
-        if (batchesCount == 0)
+        if (instancedBatchesCount == 0)
         {
             // Faster path if none of the draw batches requires instancing
             useInstancing = false;
             goto DRAW;
         }
         _instanceBuffer.Clear();
-        _instanceBuffer.Data.Resize(batchesCount * sizeof(InstanceData));
+        _instanceBuffer.Data.Resize(instancedBatchesCount * sizeof(InstanceData));
         auto instanceData = (InstanceData*)_instanceBuffer.Data.Get();
 
         // Write to instance buffer
         for (int32 i = 0; i < list.Batches.Count(); i++)
         {
-            auto& batch = list.Batches[i];
+            auto& batch = batchesData[i];
             if (batch.BatchSize > 1)
             {
                 IMaterial::InstancingHandler handler;
-                DrawCalls[list.Indices[batch.StartIndex]].Material->CanUseInstancing(handler);
+                drawCallsData[listData[batch.StartIndex]].Material->CanUseInstancing(handler);
                 for (int32 j = 0; j < batch.BatchSize; j++)
                 {
-                    auto& drawCall = DrawCalls[list.Indices[batch.StartIndex + j]];
+                    auto& drawCall = drawCallsData[listData[batch.StartIndex + j]];
                     handler.WriteDrawCall(instanceData, drawCall);
                     instanceData++;
                 }
@@ -609,7 +701,7 @@ void RenderList::ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsL
         }
         for (int32 i = 0; i < list.PreBatchedDrawCalls.Count(); i++)
         {
-            auto& batch = BatchedDrawCalls[list.PreBatchedDrawCalls[i]];
+            auto& batch = BatchedDrawCalls.Get()[list.PreBatchedDrawCalls.Get()[i]];
             if (batch.Instances.Count() > 1)
             {
                 Platform::MemoryCopy(instanceData, batch.Instances.Get(), batch.Instances.Count() * sizeof(InstanceData));
@@ -625,6 +717,8 @@ DRAW:
 
     // Execute draw calls
     MaterialBase::BindParameters bindParams(context, renderContext);
+    bindParams.Input = input;
+    bindParams.BindViewData();
     if (useInstancing)
     {
         int32 instanceBufferOffset = 0;
@@ -632,8 +726,8 @@ DRAW:
         uint32 vbOffsets[4];
         for (int32 i = 0; i < list.Batches.Count(); i++)
         {
-            auto& batch = list.Batches[i];
-            auto& drawCall = DrawCalls[list.Indices[batch.StartIndex]];
+            auto& batch = batchesData[i];
+            const DrawCall& drawCall = drawCallsData[listData[batch.StartIndex]];
 
             int32 vbCount = 0;
             while (vbCount < ARRAY_COUNT(drawCall.Geometry.VertexBuffers) && drawCall.Geometry.VertexBuffers[vbCount])
@@ -683,7 +777,7 @@ DRAW:
         }
         for (int32 i = 0; i < list.PreBatchedDrawCalls.Count(); i++)
         {
-            auto& batch = BatchedDrawCalls[list.PreBatchedDrawCalls[i]];
+            auto& batch = BatchedDrawCalls.Get()[list.PreBatchedDrawCalls.Get()[i]];
             auto& drawCall = batch.DrawCall;
 
             int32 vbCount = 0;
@@ -736,11 +830,11 @@ DRAW:
         bindParams.DrawCallsCount = 1;
         for (int32 i = 0; i < list.Batches.Count(); i++)
         {
-            auto& batch = list.Batches[i];
+            auto& batch = batchesData[i];
 
             for (int32 j = 0; j < batch.BatchSize; j++)
             {
-                auto& drawCall = DrawCalls[list.Indices[batch.StartIndex + j]];
+                const DrawCall& drawCall = drawCalls[listData[batch.StartIndex + j]];
                 bindParams.FirstDrawCall = &drawCall;
                 drawCall.Material->Bind(bindParams);
 
@@ -759,22 +853,24 @@ DRAW:
         }
         for (int32 i = 0; i < list.PreBatchedDrawCalls.Count(); i++)
         {
-            auto& batch = BatchedDrawCalls[list.PreBatchedDrawCalls[i]];
+            auto& batch = BatchedDrawCalls.Get()[list.PreBatchedDrawCalls.Get()[i]];
             auto drawCall = batch.DrawCall;
+            drawCall.ObjectRadius = 0.0f;
             bindParams.FirstDrawCall = &drawCall;
+            const auto* instancesData = batch.Instances.Get();
 
             for (int32 j = 0; j < batch.Instances.Count(); j++)
             {
-                auto& instance = batch.Instances[j];
+                auto& instance = instancesData[j];
                 drawCall.ObjectPosition = instance.InstanceOrigin;
                 drawCall.PerInstanceRandom = instance.PerInstanceRandom;
-                auto lightmapArea = instance.InstanceLightmapArea.ToVector4();
+                auto lightmapArea = instance.InstanceLightmapArea.ToFloat4();
                 drawCall.Surface.LightmapUVsArea = *(Rectangle*)&lightmapArea;
                 drawCall.Surface.LODDitherFactor = instance.LODDitherFactor;
-                drawCall.World.SetRow1(Vector4(instance.InstanceTransform1, 0.0f));
-                drawCall.World.SetRow2(Vector4(instance.InstanceTransform2, 0.0f));
-                drawCall.World.SetRow3(Vector4(instance.InstanceTransform3, 0.0f));
-                drawCall.World.SetRow4(Vector4(instance.InstanceOrigin, 1.0f));
+                drawCall.World.SetRow1(Float4(instance.InstanceTransform1, 0.0f));
+                drawCall.World.SetRow2(Float4(instance.InstanceTransform2, 0.0f));
+                drawCall.World.SetRow3(Float4(instance.InstanceTransform3, 0.0f));
+                drawCall.World.SetRow4(Float4(instance.InstanceOrigin, 1.0f));
                 drawCall.Material->Bind(bindParams);
 
                 context->BindIB(drawCall.Geometry.IndexBuffer);
@@ -782,28 +878,52 @@ DRAW:
                 context->DrawIndexedInstanced(drawCall.Draw.IndicesCount, drawCall.InstanceCount, 0, 0, drawCall.Draw.StartIndex);
             }
         }
+        if (list.Batches.IsEmpty() && list.Indices.Count() != 0)
+        {
+            // Draw calls list has nto been batched so execute draw calls separately
+            for (int32 j = 0; j < list.Indices.Count(); j++)
+            {
+                const DrawCall& drawCall = drawCalls[listData[j]];
+                bindParams.FirstDrawCall = &drawCall;
+                drawCall.Material->Bind(bindParams);
+
+                context->BindIB(drawCall.Geometry.IndexBuffer);
+                context->BindVB(ToSpan(drawCall.Geometry.VertexBuffers, 3), drawCall.Geometry.VertexBuffersOffsets);
+
+                if (drawCall.InstanceCount == 0)
+                {
+                    context->DrawIndexedInstancedIndirect(drawCall.Draw.IndirectArgsBuffer, drawCall.Draw.IndirectArgsOffset);
+                }
+                else
+                {
+                    context->DrawIndexedInstanced(drawCall.Draw.IndicesCount, drawCall.InstanceCount, 0, 0, drawCall.Draw.StartIndex);
+                }
+            }
+        }
     }
 }
 
-void SurfaceDrawCallHandler::GetHash(const DrawCall& drawCall, int32& batchKey)
+void SurfaceDrawCallHandler::GetHash(const DrawCall& drawCall, uint32& batchKey)
 {
     batchKey = (batchKey * 397) ^ ::GetHash(drawCall.Surface.Lightmap);
 }
 
 bool SurfaceDrawCallHandler::CanBatch(const DrawCall& a, const DrawCall& b)
 {
-    return a.Surface.Lightmap == b.Surface.Lightmap &&
+    // TODO: find reason why batching static meshes with lightmap causes problems with sampling in shader (flickering when meshes in batch order gets changes due to async draw calls collection)
+    return a.Surface.Lightmap == nullptr && b.Surface.Lightmap == nullptr &&
+            //return a.Surface.Lightmap == b.Surface.Lightmap &&
             a.Surface.Skinning == nullptr &&
             b.Surface.Skinning == nullptr;
 }
 
 void SurfaceDrawCallHandler::WriteDrawCall(InstanceData* instanceData, const DrawCall& drawCall)
 {
-    instanceData->InstanceOrigin = Vector3(drawCall.World.M41, drawCall.World.M42, drawCall.World.M43);
+    instanceData->InstanceOrigin = Float3(drawCall.World.M41, drawCall.World.M42, drawCall.World.M43);
     instanceData->PerInstanceRandom = drawCall.PerInstanceRandom;
-    instanceData->InstanceTransform1 = Vector3(drawCall.World.M11, drawCall.World.M12, drawCall.World.M13);
+    instanceData->InstanceTransform1 = Float3(drawCall.World.M11, drawCall.World.M12, drawCall.World.M13);
     instanceData->LODDitherFactor = drawCall.Surface.LODDitherFactor;
-    instanceData->InstanceTransform2 = Vector3(drawCall.World.M21, drawCall.World.M22, drawCall.World.M23);
-    instanceData->InstanceTransform3 = Vector3(drawCall.World.M31, drawCall.World.M32, drawCall.World.M33);
+    instanceData->InstanceTransform2 = Float3(drawCall.World.M21, drawCall.World.M22, drawCall.World.M23);
+    instanceData->InstanceTransform3 = Float3(drawCall.World.M31, drawCall.World.M32, drawCall.World.M33);
     instanceData->InstanceLightmapArea = Half4(drawCall.Surface.LightmapUVsArea);
 }

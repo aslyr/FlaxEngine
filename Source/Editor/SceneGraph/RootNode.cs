@@ -1,4 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+
+#if USE_LARGE_WORLDS
+using Real = System.Double;
+#else
+using Real = System.Single;
+#endif
 
 using System;
 using System.Collections.Generic;
@@ -20,6 +26,7 @@ namespace FlaxEditor.SceneGraph
         protected RootNode()
         : base(null, Guid.NewGuid())
         {
+            _treeNode.AutoFocus = false;
         }
 
         /// <summary>
@@ -29,6 +36,7 @@ namespace FlaxEditor.SceneGraph
         protected RootNode(Guid id)
         : base(null, id)
         {
+            _treeNode.AutoFocus = false;
         }
 
         /// <summary>
@@ -87,7 +95,7 @@ namespace FlaxEditor.SceneGraph
         /// <param name="distance">The result distance.</param>
         /// <param name="flags">The raycasting flags.</param>
         /// <returns>Hit object or null if there is no intersection at all.</returns>
-        public SceneGraphNode RayCast(ref Ray ray, ref Ray view, out float distance, RayCastData.FlagTypes flags = RayCastData.FlagTypes.None)
+        public SceneGraphNode RayCast(ref Ray ray, ref Ray view, out Real distance, RayCastData.FlagTypes flags = RayCastData.FlagTypes.None)
         {
             var data = new RayCastData
             {
@@ -107,7 +115,7 @@ namespace FlaxEditor.SceneGraph
         /// <param name="normal">The result intersection surface normal vector.</param>
         /// <param name="flags">The raycasting flags.</param>
         /// <returns>Hit object or null if there is no intersection at all.</returns>
-        public SceneGraphNode RayCast(ref Ray ray, ref Ray view, out float distance, out Vector3 normal, RayCastData.FlagTypes flags = RayCastData.FlagTypes.None)
+        public SceneGraphNode RayCast(ref Ray ray, ref Ray view, out Real distance, out Vector3 normal, RayCastData.FlagTypes flags = RayCastData.FlagTypes.None)
         {
             var data = new RayCastData
             {
@@ -118,8 +126,18 @@ namespace FlaxEditor.SceneGraph
             return RayCast(ref data, out distance, out normal);
         }
 
+        internal static Quaternion RaycastNormalRotation(ref Vector3 normal)
+        {
+            Quaternion rotation;
+            if (normal == Vector3.Down)
+                rotation = Quaternion.RotationZ(Mathf.Pi);
+            else
+                rotation = Quaternion.LookRotation(Vector3.Cross(Vector3.Cross(normal, Vector3.Forward), normal), normal);
+            return rotation;
+        }
+
         /// <inheritdoc />
-        public override bool RayCastSelf(ref RayCastData ray, out float distance, out Vector3 normal)
+        public override bool RayCastSelf(ref RayCastData ray, out Real distance, out Vector3 normal)
         {
             distance = 0;
             normal = Vector3.Up;

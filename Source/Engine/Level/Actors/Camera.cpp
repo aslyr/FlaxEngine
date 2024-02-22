@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Camera.h"
 #include "Engine/Level/SceneObjectsFactory.h"
+#include "Engine/Core/Math/Matrix.h"
 #include "Engine/Core/Math/Viewport.h"
 #include "Engine/Content/Assets/Model.h"
 #include "Engine/Content/Content.h"
@@ -45,6 +46,11 @@ Camera::Camera(const SpawnParams& params)
 #endif
 }
 
+bool Camera::GetUsePerspective() const
+{
+    return _usePerspective;
+}
+
 void Camera::SetUsePerspective(bool value)
 {
     if (_usePerspective != value)
@@ -52,6 +58,11 @@ void Camera::SetUsePerspective(bool value)
         _usePerspective = value;
         UpdateCache();
     }
+}
+
+float Camera::GetFieldOfView() const
+{
+    return _fov;
 }
 
 void Camera::SetFieldOfView(float value)
@@ -64,14 +75,24 @@ void Camera::SetFieldOfView(float value)
     }
 }
 
+float Camera::GetCustomAspectRatio() const
+{
+    return _customAspectRatio;
+}
+
 void Camera::SetCustomAspectRatio(float value)
 {
     value = Math::Clamp(value, 0.0f, 100.0f);
-    if (_customAspectRatio != value)
+    if (Math::NotNearEqual(_customAspectRatio, value))
     {
         _customAspectRatio = value;
         UpdateCache();
     }
+}
+
+float Camera::GetNearPlane() const
+{
+    return _near;
 }
 
 void Camera::SetNearPlane(float value)
@@ -84,6 +105,11 @@ void Camera::SetNearPlane(float value)
     }
 }
 
+float Camera::GetFarPlane() const
+{
+    return _far;
+}
+
 void Camera::SetFarPlane(float value)
 {
     value = Math::Max(value, _near + 1.0f);
@@ -92,6 +118,11 @@ void Camera::SetFarPlane(float value)
         _far = value;
         UpdateCache();
     }
+}
+
+float Camera::GetOrthographicScale() const
+{
+    return _orthoScale;
 }
 
 void Camera::SetOrthographicScale(float value)
@@ -104,12 +135,12 @@ void Camera::SetOrthographicScale(float value)
     }
 }
 
-void Camera::ProjectPoint(const Vector3& worldSpaceLocation, Vector2& gameWindowSpaceLocation) const
+void Camera::ProjectPoint(const Vector3& worldSpaceLocation, Float2& gameWindowSpaceLocation) const
 {
     ProjectPoint(worldSpaceLocation, gameWindowSpaceLocation, GetViewport());
 }
 
-void Camera::ProjectPoint(const Vector3& worldSpaceLocation, Vector2& cameraViewportSpaceLocation, const Viewport& viewport) const
+void Camera::ProjectPoint(const Vector3& worldSpaceLocation, Float2& cameraViewportSpaceLocation, const Viewport& viewport) const
 {
     Matrix v, p, vp;
     GetMatrices(v, p, viewport);
@@ -117,15 +148,48 @@ void Camera::ProjectPoint(const Vector3& worldSpaceLocation, Vector2& cameraView
     Vector3 clipSpaceLocation;
     Vector3::Transform(worldSpaceLocation, vp, clipSpaceLocation);
     viewport.Project(worldSpaceLocation, vp, clipSpaceLocation);
-    cameraViewportSpaceLocation = Vector2(clipSpaceLocation);
+    cameraViewportSpaceLocation = Float2(clipSpaceLocation);
 }
 
-Ray Camera::ConvertMouseToRay(const Vector2& mousePosition) const
+void Camera::UnprojectPoint(const Float2& gameWindowSpaceLocation, float depth, Vector3& worldSpaceLocation) const
+{
+    UnprojectPoint(gameWindowSpaceLocation, depth, worldSpaceLocation, GetViewport());
+}
+
+void Camera::UnprojectPoint(const Float2& cameraViewportSpaceLocation, float depth, Vector3& worldSpaceLocation, const Viewport& viewport) const
+{
+    Matrix v, p, ivp;
+    GetMatrices(v, p, viewport);
+    Matrix::Multiply(v, p, ivp);
+    ivp.Invert();
+    viewport.Unproject(Vector3(cameraViewportSpaceLocation, depth), ivp, worldSpaceLocation);
+}
+
+bool Camera::IsPointOnView(const Vector3& worldSpaceLocation) const
+{
+    Vector3 cameraUp = GetTransform().GetUp();
+    Vector3 cameraForward = GetTransform().GetForward();
+    Vector3 directionToPosition = (worldSpaceLocation - GetPosition()).GetNormalized();
+    if (Vector3::Dot(cameraForward, directionToPosition) < 0)
+        return false;
+
+    Quaternion lookAt = Quaternion::LookRotation(directionToPosition, cameraUp);
+    Vector3 lookAtDirection = lookAt * Vector3::Forward;
+    Vector3 newWorldLocation = GetPosition() + lookAtDirection;
+
+    Float2 windowSpace;
+    const Viewport viewport = GetViewport();
+    ProjectPoint(newWorldLocation, windowSpace, viewport);
+
+    return windowSpace.X >= 0 && windowSpace.X <= viewport.Size.X && windowSpace.Y >= 0 && windowSpace.Y <= viewport.Size.Y;
+}
+
+Ray Camera::ConvertMouseToRay(const Float2& mousePosition) const
 {
     return ConvertMouseToRay(mousePosition, GetViewport());
 }
 
-Ray Camera::ConvertMouseToRay(const Vector2& mousePosition, const Viewport& viewport) const
+Ray Camera::ConvertMouseToRay(const Float2& mousePosition, const Viewport& viewport) const
 {
 #if 1
     // Gather camera properties
@@ -164,14 +228,14 @@ Ray Camera::ConvertMouseToRay(const Vector2& mousePosition, const Viewport& view
 
 Viewport Camera::GetViewport() const
 {
-    Viewport result = Viewport(Vector2::Zero);
+    Viewport result = Viewport(Float2::Zero);
 
 #if USE_EDITOR
     // Editor
     if (Editor::Managed)
         result.Size = Editor::Managed->GetGameWindowSize();
 #else
-	// game
+	// Game
 	auto mainWin = Engine::MainWindow;
 	if (mainWin)
 	{
@@ -181,18 +245,23 @@ Viewport Camera::GetViewport() const
 #endif
 
     // Fallback to the default value
-    if (result.Width <= ZeroTolerance)
-        result.Size = Vector2(1280, 720);
+    if (result.Size.MinValue() <= ZeroTolerance)
+        result.Size = Float2(1280, 720);
 
     return result;
 }
 
 void Camera::GetMatrices(Matrix& view, Matrix& projection) const
 {
-    GetMatrices(view, projection, GetViewport());
+    GetMatrices(view, projection, GetViewport(), Vector3::Zero);
 }
 
 void Camera::GetMatrices(Matrix& view, Matrix& projection, const Viewport& viewport) const
+{
+    GetMatrices(view, projection, viewport, Vector3::Zero);
+}
+
+void Camera::GetMatrices(Matrix& view, Matrix& projection, const Viewport& viewport, const Vector3& origin) const
 {
     // Create projection matrix
     if (_usePerspective)
@@ -206,11 +275,12 @@ void Camera::GetMatrices(Matrix& view, Matrix& projection, const Viewport& viewp
     }
 
     // Create view matrix
-    const Vector3 direction = GetDirection();
-    const Vector3 target = _transform.Translation + direction;
-    Vector3 up;
-    Vector3::Transform(Vector3::Up, GetOrientation(), up);
-    Matrix::LookAt(_transform.Translation, target, up, view);
+    const Float3 direction = GetDirection();
+    const Float3 position = _transform.Translation - origin;
+    const Float3 target = position + direction;
+    Float3 up;
+    Float3::Transform(Float3::Up, GetOrientation(), up);
+    Matrix::LookAt(position, target, up, view);
 }
 
 #if USE_EDITOR
@@ -237,7 +307,7 @@ BoundingBox Camera::GetEditorBox() const
     return BoundingBox(pos - size, pos + size);
 }
 
-bool Camera::IntersectsItselfEditor(const Ray& ray, float& distance)
+bool Camera::IntersectsItselfEditor(const Ray& ray, Real& distance)
 {
     return _previewModelBox.Intersects(ray, distance);
 }
@@ -249,24 +319,35 @@ bool Camera::HasContentLoaded() const
 
 void Camera::Draw(RenderContext& renderContext)
 {
-    if (renderContext.View.Flags & ViewFlags::EditorSprites && _previewModel && _previewModel->IsLoaded())
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::EditorSprites)
+        && _previewModel
+        && _previewModel->IsLoaded())
     {
+        Matrix rot, tmp, world;
+        renderContext.View.GetWorldMatrix(_transform, tmp);
+        Matrix::RotationY(PI * -0.5f, rot);
+        Matrix::Multiply(rot, tmp, world);
         GeometryDrawStateData drawState;
         Mesh::DrawInfo draw;
         draw.Buffer = &_previewModelBuffer;
-        draw.World = &_previewModelWorld;
+        draw.World = &world;
         draw.DrawState = &drawState;
+        draw.Deformation = nullptr;
         draw.Lightmap = nullptr;
         draw.LightmapUVs = nullptr;
         draw.Flags = StaticFlags::Transform;
-        draw.DrawModes = (DrawPass)(DrawPass::Default & renderContext.View.Pass);
+        draw.DrawModes = (DrawPass::Depth | DrawPass::GBuffer | DrawPass::Forward) & renderContext.View.Pass;
         BoundingSphere::FromBox(_previewModelBox, draw.Bounds);
+        draw.Bounds.Center -= renderContext.View.Origin;
         draw.PerInstanceRandom = GetPerInstanceRandom();
         draw.LODBias = 0;
         draw.ForcedLOD = -1;
+        draw.SortOrder = 0;
         draw.VertexColors = nullptr;
-
-        _previewModel->Draw(renderContext, draw);
+        if (draw.DrawModes != DrawPass::None)
+        {
+            _previewModel->Draw(renderContext, draw);
+        }
     }
 }
 
@@ -284,32 +365,33 @@ void Camera::OnDebugDrawSelected()
 
 void Camera::UpdateCache()
 {
-    // Update view and projection matrix
-    GetMatrices(_view, _projection);
+    // Calculate view and projection matrices
+    Matrix view, projection;
+    GetMatrices(view, projection);
 
     // Update frustum and bounding box
-    _frustum.SetMatrix(_view, _projection);
+    _frustum.SetMatrix(view, projection);
     _frustum.GetBox(_box);
     BoundingSphere::FromBox(_box, _sphere);
 
 #if USE_EDITOR
 
     // Update editor preview model cache
-    Matrix rot, world;
-    _transform.GetWorld(world);
+    Matrix rot, tmp, world;
+    GetLocalToWorldMatrix(tmp);
     Matrix::RotationY(PI * -0.5f, rot);
-    Matrix::Multiply(rot, world, _previewModelWorld);
+    Matrix::Multiply(rot, tmp, world);
 
     // Calculate snap box for preview model
     if (_previewModel && _previewModel->IsLoaded())
     {
-        _previewModelBox = _previewModel->GetBox(_previewModelWorld);
+        _previewModelBox = _previewModel->GetBox(world);
     }
     else
     {
         Vector3 min(-10.0f), max(10.0f);
-        min = Vector3::Transform(min, _previewModelWorld);
-        max = Vector3::Transform(max, _previewModelWorld);
+        min = Vector3::Transform(min, world);
+        max = Vector3::Transform(max, world);
         _previewModelBox = BoundingBox(min, max);
     }
 
@@ -334,6 +416,8 @@ void Camera::Serialize(SerializeStream& stream, const void* otherObj)
     SERIALIZE_MEMBER(Far, _far);
     SERIALIZE_MEMBER(OrthoScale, _orthoScale);
     SERIALIZE(RenderLayersMask);
+    SERIALIZE(RenderFlags);
+    SERIALIZE(RenderMode);
 }
 
 void Camera::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
@@ -348,13 +432,15 @@ void Camera::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier
     DESERIALIZE_MEMBER(Far, _far);
     DESERIALIZE_MEMBER(OrthoScale, _orthoScale);
     DESERIALIZE(RenderLayersMask);
+    DESERIALIZE(RenderFlags);
+    DESERIALIZE(RenderMode);
 }
 
 void Camera::OnEnable()
 {
     Cameras.Add(this);
 #if USE_EDITOR
-    GetSceneRendering()->AddCommonNoCulling(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 #endif
 
     // Base
@@ -364,7 +450,7 @@ void Camera::OnEnable()
 void Camera::OnDisable()
 {
 #if USE_EDITOR
-    GetSceneRendering()->RemoveCommonNoCulling(this);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
 #endif
     Cameras.Remove(this);
     if (CutSceneCamera == this)

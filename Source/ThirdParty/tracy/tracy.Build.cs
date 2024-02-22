@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -34,14 +34,15 @@ public class tracy : ThirdPartyModule
 
         options.SourcePaths.Clear();
         options.SourceFiles.Clear();
-        options.SourceFiles.Add(Path.Combine(FolderPath, "Tracy.h"));
+        options.SourceFiles.Add(Path.Combine(FolderPath, "tracy", "Tracy.hpp"));
         options.SourceFiles.Add(Path.Combine(FolderPath, "TracyClient.cpp"));
 
         options.PublicDefinitions.Add("TRACY_ENABLE");
+        options.PrivateDefinitions.Add("TRACY_NO_INVARIANT_CHECK");
+        options.PrivateDefinitions.Add("TRACY_NO_FRAME_IMAGE");
         if (options.Platform.Target == TargetPlatform.Windows)
         {
             options.PrivateDefinitions.Add("TRACY_DBGHELP_LOCK=DbgHelp");
-            options.PrivateDefinitions.Add("TRACY_NO_INVARIANT_CHECK");
         }
         if (OnDemand)
         {
@@ -54,8 +55,9 @@ public class tracy : ThirdPartyModule
     {
         base.GetFilesToDeploy(files);
 
-        files.Add(Path.Combine(FolderPath, "Tracy.h"));
+        files.Add(Path.Combine(FolderPath, "tracy", "Tracy.hpp"));
         files.Add(Path.Combine(FolderPath, "common", "TracySystem.hpp"));
+        files.Add(Path.Combine(FolderPath, "common", "TracyQueue.hpp"));
         files.Add(Path.Combine(FolderPath, "client", "TracyCallstack.h"));
     }
 }

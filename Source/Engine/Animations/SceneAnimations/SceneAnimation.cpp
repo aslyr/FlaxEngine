@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SceneAnimation.h"
 #include "Engine/Core/Log.h"
@@ -135,7 +135,7 @@ Asset::LoadResult SceneAnimation::load()
             stream.ReadInt32(&track.ParentIndex);
             stream.ReadInt32(&track.ChildrenCount);
             stream.ReadString(&track.Name, -13);
-            stream.Read(&track.Color);
+            stream.Read(track.Color);
             track.Disabled = (int32)track.Flag & (int32)Track::Flags::Mute || (track.ParentIndex != -1 && Tracks[track.ParentIndex].Disabled);
             track.TrackStateIndex = -1;
             track.Data = nullptr;
@@ -148,7 +148,7 @@ Asset::LoadResult SceneAnimation::load()
                 break;
             case Track::Types::PostProcessMaterial:
             {
-                const auto trackData = stream.Read<PostProcessMaterialTrack::Data>();
+                const auto trackData = stream.Move<PostProcessMaterialTrack::Data>();
                 track.Data = trackData;
                 track.Asset = Content::LoadAsync<MaterialBase>(trackData->AssetID);
                 const auto trackRuntime = _runtimeData.Move<PostProcessMaterialTrack::Runtime>();
@@ -157,12 +157,12 @@ Asset::LoadResult SceneAnimation::load()
                 {
                     // [Deprecated on 03.09.2021 expires on 03.09.2023]
                     trackRuntime->Count = 1;
-                    trackRuntime->Media = stream.Read<Media>();
+                    trackRuntime->Media = stream.Move<Media>();
                 }
                 else
                 {
                     stream.ReadInt32(&trackRuntime->Count);
-                    trackRuntime->Media = stream.Read<Media>(trackRuntime->Count);
+                    trackRuntime->Media = stream.Move<Media>(trackRuntime->Count);
                 }
                 if (trackData->AssetID.IsValid() && !track.Asset)
                 {
@@ -173,7 +173,7 @@ Asset::LoadResult SceneAnimation::load()
             }
             case Track::Types::NestedSceneAnimation:
             {
-                const auto trackData = stream.Read<NestedSceneAnimationTrack::Data>();
+                const auto trackData = stream.Move<NestedSceneAnimationTrack::Data>();
                 track.Data = trackData;
                 track.Asset = Content::LoadAsync<SceneAnimation>(trackData->AssetID);
                 const auto trackRuntime = _runtimeData.Move<NestedSceneAnimationTrack::Runtime>();
@@ -189,7 +189,7 @@ Asset::LoadResult SceneAnimation::load()
             }
             case Track::Types::ScreenFade:
             {
-                const auto trackData = stream.Read<ScreenFadeTrack::Data>();
+                const auto trackData = stream.Move<ScreenFadeTrack::Data>();
                 track.Data = trackData;
                 if (trackData->GradientStopsCount < 0)
                 {
@@ -198,12 +198,12 @@ Asset::LoadResult SceneAnimation::load()
                 }
                 const auto trackRuntime = _runtimeData.Move<ScreenFadeTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
-                trackRuntime->GradientStops = stream.Read<ScreenFadeTrack::GradientStop>(trackData->GradientStopsCount);
+                trackRuntime->GradientStops = stream.Move<ScreenFadeTrack::GradientStop>(trackData->GradientStopsCount);
                 break;
             }
             case Track::Types::Audio:
             {
-                const auto trackData = stream.Read<AudioTrack::Data>();
+                const auto trackData = stream.Move<AudioTrack::Data>();
                 track.Data = trackData;
                 track.Asset = Content::LoadAsync<AudioClip>(trackData->AssetID);
                 const auto trackRuntime = _runtimeData.Move<AudioTrack::Runtime>();
@@ -222,18 +222,18 @@ Asset::LoadResult SceneAnimation::load()
                 else
                 {
                     stream.ReadInt32(&trackRuntime->Count);
-                    trackRuntime->Media = stream.Read<AudioTrack::Media>(trackRuntime->Count);
+                    trackRuntime->Media = stream.Move<AudioTrack::Media>(trackRuntime->Count);
                 }
                 break;
             }
             case Track::Types::AudioVolume:
             {
-                const auto trackData = stream.Read<AudioVolumeTrack::Data>();
+                const auto trackData = stream.Move<AudioVolumeTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<AudioVolumeTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
                 trackRuntime->KeyframesCount = trackData->KeyframesCount;
-                trackRuntime->Keyframes = stream.Read<BezierCurveKeyframe<float>>(trackData->KeyframesCount);
+                trackRuntime->Keyframes = stream.Move<BezierCurveKeyframe<float>>(trackData->KeyframesCount);
                 if (track.ParentIndex != -1)
                 {
                     if (Tracks[track.ParentIndex].Type == Track::Types::Audio)
@@ -250,7 +250,7 @@ Asset::LoadResult SceneAnimation::load()
             }
             case Track::Types::Actor:
             {
-                const auto trackData = stream.Read<ActorTrack::Data>();
+                const auto trackData = stream.Move<ActorTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<ActorTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
@@ -259,7 +259,7 @@ Asset::LoadResult SceneAnimation::load()
             }
             case Track::Types::Script:
             {
-                const auto trackData = stream.Read<ScriptTrack::Data>();
+                const auto trackData = stream.Move<ScriptTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<ScriptTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
@@ -274,44 +274,81 @@ Asset::LoadResult SceneAnimation::load()
             case Track::Types::KeyframesProperty:
             case Track::Types::ObjectReferenceProperty:
             {
-                const auto trackData = stream.Read<KeyframesPropertyTrack::Data>();
+                const auto trackData = stream.Move<KeyframesPropertyTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<KeyframesPropertyTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
                 track.TrackStateIndex = TrackStatesCount++;
-                trackRuntime->PropertyName = stream.Read<char>(trackData->PropertyNameLength + 1);
-                trackRuntime->PropertyTypeName = stream.Read<char>(trackData->PropertyTypeNameLength + 1);
+                trackRuntime->PropertyName = stream.Move<char>(trackData->PropertyNameLength + 1);
+                trackRuntime->PropertyTypeName = stream.Move<char>(trackData->PropertyTypeNameLength + 1);
                 const int32 keyframesDataSize = trackData->KeyframesCount * (sizeof(float) + trackData->ValueSize);
                 trackRuntime->ValueSize = trackData->ValueSize;
                 trackRuntime->KeyframesCount = trackData->KeyframesCount;
-                trackRuntime->Keyframes = stream.Read(keyframesDataSize);
+                trackRuntime->Keyframes = stream.Move(keyframesDataSize);
                 needsParent = true;
                 break;
             }
             case Track::Types::CurveProperty:
             {
-                const auto trackData = stream.Read<CurvePropertyTrack::Data>();
+                const auto trackData = stream.Move<CurvePropertyTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<CurvePropertyTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
                 track.TrackStateIndex = TrackStatesCount++;
-                trackRuntime->PropertyName = stream.Read<char>(trackData->PropertyNameLength + 1);
-                trackRuntime->PropertyTypeName = stream.Read<char>(trackData->PropertyTypeNameLength + 1);
+                trackRuntime->PropertyName = stream.Move<char>(trackData->PropertyNameLength + 1);
+                trackRuntime->PropertyTypeName = stream.Move<char>(trackData->PropertyTypeNameLength + 1);
                 const int32 keyframesDataSize = trackData->KeyframesCount * (sizeof(float) + trackData->ValueSize * 3);
                 trackRuntime->ValueSize = trackData->ValueSize;
                 trackRuntime->KeyframesCount = trackData->KeyframesCount;
-                trackRuntime->Keyframes = stream.Read(keyframesDataSize);
+                trackRuntime->Keyframes = stream.Move(keyframesDataSize);
                 trackRuntime->DataType = CurvePropertyTrack::DataTypes::Unknown;
+                trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Unknown;
                 if (StringUtils::Compare(trackRuntime->PropertyTypeName, "System.Single") == 0)
                     trackRuntime->DataType = CurvePropertyTrack::DataTypes::Float;
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "System.Double") == 0)
                     trackRuntime->DataType = CurvePropertyTrack::DataTypes::Double;
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Vector2") == 0)
-                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Vector2;
+                {
+                    // Read Float or Double depending on serialized data but use value depending on the current build configuration
+                    trackRuntime->DataType = trackData->ValueSize == sizeof(Float2) ? CurvePropertyTrack::DataTypes::Float2 : CurvePropertyTrack::DataTypes::Double2;
+#if USE_LARGE_WORLDS
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Double2;
+#else
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Float2;
+#endif
+                }
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Vector3") == 0)
-                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Vector3;
+                {
+                    // Read Float or Double depending on serialized data but use value depending on the current build configuration
+                    trackRuntime->DataType = trackData->ValueSize == sizeof(Float3) ? CurvePropertyTrack::DataTypes::Float3 : CurvePropertyTrack::DataTypes::Double3;
+#if USE_LARGE_WORLDS
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Double3;
+#else
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Float3;
+#endif
+                }
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Vector4") == 0)
-                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Vector4;
+                {
+                    // Read Float or Double depending on serialized data but use value depending on the current build configuration
+                    trackRuntime->DataType = trackData->ValueSize == sizeof(Float4) ? CurvePropertyTrack::DataTypes::Float4 : CurvePropertyTrack::DataTypes::Double4;
+#if USE_LARGE_WORLDS
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Double4;
+#else
+                    trackRuntime->ValueType = CurvePropertyTrack::DataTypes::Float4;
+#endif
+                }
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Float2") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Float2;
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Float3") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Float3;
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Float4") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Float4;
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Double2") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Double2;
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Double3") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Double3;
+                else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Double4") == 0)
+                    trackRuntime->DataType = CurvePropertyTrack::DataTypes::Double4;
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Quaternion") == 0)
                     trackRuntime->DataType = CurvePropertyTrack::DataTypes::Quaternion;
                 else if (StringUtils::Compare(trackRuntime->PropertyTypeName, "FlaxEngine.Color") == 0)
@@ -323,18 +360,20 @@ Asset::LoadResult SceneAnimation::load()
                     LOG(Warning, "Unknown curve animation property type {2} for the track {1}, type {0}.", (int32)track.Type, track.Name, String(trackRuntime->PropertyTypeName));
                     track.Disabled = true;
                 }
+                if (trackRuntime->ValueType == CurvePropertyTrack::DataTypes::Unknown)
+                    trackRuntime->ValueType = trackRuntime->DataType;
                 needsParent = true;
                 break;
             }
             case Track::Types::StringProperty:
             {
-                const auto trackData = stream.Read<StringPropertyTrack::Data>();
+                const auto trackData = stream.Move<StringPropertyTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = (StringPropertyTrack::Runtime*)_runtimeData.Move(sizeof(StringPropertyTrack::Runtime) + sizeof(void*) * 2 * trackData->KeyframesCount);
                 track.RuntimeData = trackRuntime;
                 track.TrackStateIndex = TrackStatesCount++;
-                trackRuntime->PropertyName = stream.Read<char>(trackData->PropertyNameLength + 1);
-                trackRuntime->PropertyTypeName = stream.Read<char>(trackData->PropertyTypeNameLength + 1);
+                trackRuntime->PropertyName = stream.Move<char>(trackData->PropertyNameLength + 1);
+                trackRuntime->PropertyTypeName = stream.Move<char>(trackData->PropertyTypeNameLength + 1);
                 trackRuntime->ValueSize = trackData->ValueSize;
                 trackRuntime->KeyframesCount = trackData->KeyframesCount;
                 const auto keyframesTimes = (float*)((byte*)trackRuntime + sizeof(StringPropertyTrack::Runtime));
@@ -344,7 +383,7 @@ Asset::LoadResult SceneAnimation::load()
                 {
                     stream.ReadFloat(&keyframesTimes[j]);
                     stream.ReadInt32(&keyframesLengths[j]);
-                    keyframesValues[j] = stream.Read<Char>(keyframesLengths[j]);
+                    keyframesValues[j] = stream.Move<Char>(keyframesLengths[j]);
                 }
                 needsParent = true;
                 break;
@@ -352,13 +391,13 @@ Asset::LoadResult SceneAnimation::load()
             case Track::Types::StructProperty:
             case Track::Types::ObjectProperty:
             {
-                const auto trackData = stream.Read<StructPropertyTrack::Data>();
+                const auto trackData = stream.Move<StructPropertyTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<StructPropertyTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
                 track.TrackStateIndex = TrackStatesCount++;
-                trackRuntime->PropertyName = stream.Read<char>(trackData->PropertyNameLength + 1);
-                trackRuntime->PropertyTypeName = stream.Read<char>(trackData->PropertyTypeNameLength + 1);
+                trackRuntime->PropertyName = stream.Move<char>(trackData->PropertyNameLength + 1);
+                trackRuntime->PropertyTypeName = stream.Move<char>(trackData->PropertyTypeNameLength + 1);
                 trackRuntime->ValueSize = trackData->ValueSize;
                 needsParent = true;
                 break;
@@ -372,22 +411,22 @@ Asset::LoadResult SceneAnimation::load()
                 stream.ReadInt32(&trackRuntime->EventParamsCount);
                 stream.ReadInt32(&trackRuntime->EventsCount);
                 stream.ReadInt32(&tmp);
-                trackRuntime->EventName = stream.Read<char>(tmp + 1);
+                trackRuntime->EventName = stream.Move<char>(tmp + 1);
                 trackRuntime->EventParamsSize = 0;
                 for (int j = 0; j < trackRuntime->EventParamsCount; j++)
                 {
                     stream.ReadInt32(&trackRuntime->EventParamSizes[j]);
                     trackRuntime->EventParamsSize += trackRuntime->EventParamSizes[j];
                     stream.ReadInt32(&tmp);
-                    trackRuntime->EventParamTypes[j] = stream.Read<char>(tmp + 1);
+                    trackRuntime->EventParamTypes[j] = stream.Move<char>(tmp + 1);
                 }
-                trackRuntime->DataBegin = stream.Read<byte>(trackRuntime->EventsCount * (sizeof(float) + trackRuntime->EventParamsSize));
+                trackRuntime->DataBegin = stream.Move<byte>(trackRuntime->EventsCount * (sizeof(float) + trackRuntime->EventParamsSize));
                 needsParent = true;
                 break;
             }
             case Track::Types::CameraCut:
             {
-                const auto trackData = stream.Read<CameraCutTrack::Data>();
+                const auto trackData = stream.Move<CameraCutTrack::Data>();
                 track.Data = trackData;
                 const auto trackRuntime = _runtimeData.Move<CameraCutTrack::Runtime>();
                 track.RuntimeData = trackRuntime;
@@ -396,12 +435,12 @@ Asset::LoadResult SceneAnimation::load()
                 {
                     // [Deprecated on 03.09.2021 expires on 03.09.2023]
                     trackRuntime->Count = 1;
-                    trackRuntime->Media = stream.Read<Media>();
+                    trackRuntime->Media = stream.Move<Media>();
                 }
                 else
                 {
                     stream.ReadInt32(&trackRuntime->Count);
-                    trackRuntime->Media = stream.Read<Media>(trackRuntime->Count);
+                    trackRuntime->Media = stream.Move<Media>(trackRuntime->Count);
                 }
                 break;
             }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2019 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_ANDROID
 
@@ -7,6 +7,7 @@
 #include "Engine/Core/Types/String.h"
 #include "Engine/Core/Types/StringView.h"
 #include "Engine/Core/Types/TimeSpan.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Utilities/StringConverter.h"
@@ -243,19 +244,19 @@ bool AndroidFileSystem::FileExists(const StringView& path)
 bool AndroidFileSystem::DeleteFile(const StringView& path)
 {
     const StringAsANSI<> pathANSI(*path, path.Length());
-    return unlink(pathANSI.Get()) == 0;
+    return unlink(pathANSI.Get()) != 0;
 }
 
 uint64 AndroidFileSystem::GetFileSize(const StringView& path)
 {
     struct stat fileInfo;
-    fileInfo.st_size = -1;
+    fileInfo.st_size = 0;
     const StringAsANSI<> pathANSI(*path, path.Length());
     if (stat(pathANSI.Get(), &fileInfo) != -1)
     {
         if (S_ISDIR(fileInfo.st_mode))
         {
-            fileInfo.st_size = -1;
+            fileInfo.st_size = 0;
         }
     }
     else
@@ -516,7 +517,7 @@ DateTime AndroidFileSystem::GetFileLastEditTime(const StringView& path)
     const StringAsANSI<> pathANSI(*path, path.Length());
     if (stat(pathANSI.Get(), &fileInfo) == -1)
         return DateTime::MinValue();
-    const TimeSpan timeSinceEpoch(0, 0, fileInfo.st_mtime);
+    const TimeSpan timeSinceEpoch(0, 0, 0, fileInfo.st_mtime);
     const DateTime UnixEpoch(1970, 1, 1);
     return UnixEpoch + timeSinceEpoch;
 }

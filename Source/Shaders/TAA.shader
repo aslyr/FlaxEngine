@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "./Flax/Common.hlsl"
 
@@ -61,23 +61,22 @@ float4 PS(Quad_VS2PS input) : SV_Target0
 	}
 	float2 velocity = SAMPLE_RT_LINEAR(MotionVectors, bestUV).xy;
 	float velocityLength = length(velocity);
-	float2 prevUV = input.TexCoord + velocity;
+	float2 prevUV = input.TexCoord - velocity;
 
 	// Apply sharpening
 	float4 neighborhoodAvg = neighborhoodSum / 9.0;
 	current += (current - neighborhoodAvg) * Sharpness;
 
-	// Sample history by clamp it to the nearby colros range to reduce artifacts
+	// Sample history by clamp it to the nearby colors range to reduce artifacts
 	float4 history = SAMPLE_RT_LINEAR(InputHistory, prevUV);
-	float lumaOffset = abs(Luminance(neighborhoodAvg) - Luminance(current));
+	float lumaOffset = abs(Luminance(neighborhoodAvg.rgb) - Luminance(current.rgb));
 	float aabbMargin = lerp(4.0, 0.25, saturate(velocityLength * 100.0)) * lumaOffset;
 	history = ClipToAABB(history, neighborhoodMin - aabbMargin, neighborhoodMax + aabbMargin);
 	//history = clamp(history, neighborhoodMin, neighborhoodMax);
 
 	// Calculate history blending factor
-	float motion = saturate(velocityLength * 600.0f);
-	float blendfactor = lerp(StationaryBlending, MotionBlending, motion);
-	blendfactor = any(abs(prevUV * 2 - 1) >= 1.0f) ? 0.0f : blendfactor;
+	float motion = saturate(velocityLength * 1000.0f);
+	float blendfactor = any(abs(prevUV * 2 - 1) >= 1.0f) ? 0.0f : lerp(StationaryBlending, MotionBlending, motion);
 
 	// Perform linear accumulation of the previous samples with a current one
 	float4 color = lerp(current, history, blendfactor);

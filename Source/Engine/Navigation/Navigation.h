@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,9 +11,8 @@ class Scene;
 /// </summary>
 API_CLASS(Static) class FLAXENGINE_API Navigation
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(Navigation);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(Navigation);
 public:
-
     /// <summary>
     /// Finds the distance from the specified start position to the nearest polygon wall.
     /// </summary>
@@ -74,7 +73,6 @@ public:
     API_FUNCTION() static bool RayCast(const Vector3& startPosition, const Vector3& endPosition, API_PARAM(Out) NavMeshHit& hitInfo);
 
 public:
-
 #if COMPILE_WITH_NAV_MESH_BUILDER
 
     /// <summary>

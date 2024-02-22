@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.GUI.Drag;
 using FlaxEditor.SceneGraph;
@@ -13,7 +13,7 @@ namespace FlaxEditor.Content.GUI
         private DragActors _dragActors;
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             var result = base.OnDragEnter(ref location, data);
             if (result != DragDropEffect.None)
@@ -45,12 +45,18 @@ namespace FlaxEditor.Content.GUI
 
         private void ImportActors(DragActors actors, ContentFolder location)
         {
-            // Use only the first actor
-            Editor.Instance.Prefabs.CreatePrefab(actors.Objects[0].Actor);
+            foreach (var actorNode in actors.Objects)
+            {
+                var actor = actorNode.Actor;
+                if (actors.Objects.Contains(actorNode.ParentNode as ActorNode))
+                    continue;
+
+                Editor.Instance.Prefabs.CreatePrefab(actor, false);
+            }
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             _validDragOver = false;
             var result = base.OnDragMove(ref location, data);
@@ -62,7 +68,7 @@ namespace FlaxEditor.Content.GUI
                 _validDragOver = true;
                 result = DragDropEffect.Copy;
             }
-            else if (_dragActors.HasValidDrag)
+            else if (_dragActors != null && _dragActors.HasValidDrag)
             {
                 _validDragOver = true;
                 result = DragDropEffect.Move;
@@ -72,7 +78,7 @@ namespace FlaxEditor.Content.GUI
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
             if (result != DragDropEffect.None)
@@ -88,7 +94,7 @@ namespace FlaxEditor.Content.GUI
                 result = DragDropEffect.Copy;
             }
             // Check if drop actor(s)
-            else if (_dragActors.HasValidDrag)
+            else if (_dragActors != null && _dragActors.HasValidDrag)
             {
                 // Import actors
                 var currentFolder = Editor.Instance.Windows.ContentWin.CurrentViewFolder;

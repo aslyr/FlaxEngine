@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -39,9 +39,12 @@ typedef IGraphicsUnknown IDXGISwapChain3;
 #include <D3D11.h>
 #include <d3d11_1.h>
 #include <dxgi1_3.h>
+#include <dxgi1_5.h>
+#include <dxgi1_6.h>
 #endif
 #if GRAPHICS_API_DIRECTX12
 #include <dxgi1_5.h>
+#include <dxgi1_6.h>
 #endif
 
 #pragma comment(lib, "DXGI.lib")

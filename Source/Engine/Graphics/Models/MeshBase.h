@@ -1,45 +1,70 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Core/Math/BoundingBox.h"
 #include "Engine/Core/Math/BoundingSphere.h"
 #include "Engine/Core/Types/DataContainer.h"
+#include "Engine/Graphics/Enums.h"
 #include "Engine/Graphics/Models/Types.h"
+#include "Engine/Level/Types.h"
 #include "Engine/Scripting/ScriptingObject.h"
 
+struct GeometryDrawStateData;
+struct RenderContext;
+struct RenderContextBatch;
 class Task;
 class ModelBase;
+class Lightmap;
+class GPUBuffer;
+class SkinnedMeshDrawData;
+class BlendShapesInstance;
 
 /// <summary>
 /// Base class for model resources meshes.
 /// </summary>
-API_CLASS(Abstract, NoSpawn) class FLAXENGINE_API MeshBase : public PersistentScriptingObject
+API_CLASS(Abstract, NoSpawn) class FLAXENGINE_API MeshBase : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(MeshBase);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(MeshBase);
 protected:
-
     ModelBase* _model;
-    bool _use16BitIndexBuffer;
     BoundingBox _box;
     BoundingSphere _sphere;
+    int32 _index;
+    int32 _lodIndex;
     uint32 _vertices;
     uint32 _triangles;
     int32 _materialSlotIndex;
+    bool _use16BitIndexBuffer;
 
     explicit MeshBase(const SpawnParams& params)
-        : PersistentScriptingObject(params)
+        : ScriptingObject(params)
     {
     }
 
 public:
-
     /// <summary>
     /// Gets the model owning this mesh.
     /// </summary>
-    FORCE_INLINE ModelBase* GetModelBase() const
+    API_PROPERTY() FORCE_INLINE ModelBase* GetModelBase() const
     {
         return _model;
+    }
+
+    /// <summary>
+    /// Gets the mesh parent LOD index.
+    /// </summary>
+    API_PROPERTY() FORCE_INLINE int32 GetLODIndex() const
+    {
+        return _lodIndex;
+    }
+
+    /// <summary>
+    /// Gets the mesh index.
+    /// </summary>
+    API_PROPERTY() FORCE_INLINE int32 GetIndex() const
+    {
+        return _index;
     }
 
     /// <summary>
@@ -77,7 +102,6 @@ public:
     /// <summary>
     /// Determines whether this mesh is using 16 bit index buffer, otherwise it's 32 bit.
     /// </summary>
-    /// <returns>True if this mesh is using 16 bit index buffer, otherwise 32 bit index buffer.</returns>
     API_PROPERTY() FORCE_INLINE bool Use16BitIndexBuffer() const
     {
         return _use16BitIndexBuffer;
@@ -103,7 +127,6 @@ public:
     void SetBounds(const BoundingBox& box);
 
 public:
-
     /// <summary>
     /// Extract mesh buffer data from GPU. Cannot be called from the main thread.
     /// </summary>
@@ -128,4 +151,95 @@ public:
     /// <param name="count">The amount of items inside the result buffer.</param>
     /// <returns>True if failed, otherwise false</returns>
     virtual bool DownloadDataCPU(MeshBufferType type, BytesContainer& result, int32& count) const = 0;
+
+public:
+    /// <summary>
+    /// Model instance drawing packed data.
+    /// </summary>
+    struct DrawInfo
+    {
+        /// <summary>
+        /// The instance buffer to use during model rendering.
+        /// </summary>
+        ModelInstanceEntries* Buffer;
+
+        /// <summary>
+        /// The world transformation of the model.
+        /// </summary>
+        Matrix* World;
+
+        /// <summary>
+        /// The instance drawing state data container. Used for LOD transition handling and previous world transformation matrix updating.
+        /// </summary>
+        GeometryDrawStateData* DrawState;
+
+        /// <summary>
+        /// The instance deformation utility.
+        /// </summary>
+        MeshDeformation* Deformation;
+
+        union
+        {
+            struct
+            {
+                /// <summary>
+                /// The skinning.
+                /// </summary>
+                SkinnedMeshDrawData* Skinning;
+            };
+
+            struct
+            {
+                /// <summary>
+                /// The lightmap.
+                /// </summary>
+                const Lightmap* Lightmap;
+
+                /// <summary>
+                /// The lightmap UVs.
+                /// </summary>
+                const Rectangle* LightmapUVs;
+            };
+        };
+
+        /// <summary>
+        /// The model instance vertex colors buffers (per-lod all meshes packed in a single allocation, array length equal to model lods count).
+        /// </summary>
+        GPUBuffer** VertexColors;
+
+        /// <summary>
+        /// The object static flags.
+        /// </summary>
+        StaticFlags Flags;
+
+        /// <summary>
+        /// The object draw modes.
+        /// </summary>
+        DrawPass DrawModes;
+
+        /// <summary>
+        /// The bounds of the model (used to select a proper LOD during rendering).
+        /// </summary>
+        BoundingSphere Bounds;
+
+        /// <summary>
+        /// The per-instance random value.
+        /// </summary>
+        float PerInstanceRandom;
+
+        /// <summary>
+        /// The LOD bias value.
+        /// </summary>
+        char LODBias;
+
+        /// <summary>
+        /// The forced LOD to use. Value -1 disables this feature.
+        /// </summary>
+        char ForcedLOD;
+
+        /// <summary>
+        /// The object sorting key.
+        /// </summary>
+        int16 SortOrder;
+    };
 };

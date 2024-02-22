@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -164,7 +164,7 @@ namespace FlaxEditor.GUI.Input
             }
 
             /// <inheritdoc />
-            public override bool OnMouseDown(Vector2 location, MouseButton button)
+            public override bool OnMouseDown(Float2 location, MouseButton button)
             {
                 if (button == MouseButton.Left)
                 {
@@ -190,13 +190,13 @@ namespace FlaxEditor.GUI.Input
             }
 
             /// <inheritdoc />
-            public override void OnMouseMove(Vector2 location)
+            public override void OnMouseMove(Float2 location)
             {
                 if (_isSliding)
                 {
                     // Update sliding
-                    Vector2 slidePosition = location + Root.TrackingMouseOffset;
-                    Value = Mathf.Map(slidePosition.X, 4, TrackSize - 4, Minimum, Maximum);
+                    var slidePosition = location + Root.TrackingMouseOffset;
+                    Value = Mathf.Remap(slidePosition.X, 4, TrackSize - 4, Minimum, Maximum);
                 }
                 else
                 {
@@ -205,7 +205,7 @@ namespace FlaxEditor.GUI.Input
             }
 
             /// <inheritdoc />
-            public override bool OnMouseUp(Vector2 location, MouseButton button)
+            public override bool OnMouseUp(Float2 location, MouseButton button)
             {
                 if (button == MouseButton.Left && _isSliding)
                 {
@@ -369,8 +369,8 @@ namespace FlaxEditor.GUI.Input
             {
                 Text = _value.ToString(CultureInfo.InvariantCulture),
                 Parent = this,
-                Location = new Vector2(split, 0),
-                Size = new Vector2(Height, TextBoxSize),
+                Location = new Float2(split, 0),
+                Size = new Float2(Height, TextBoxSize),
             };
             _textBox.EditEnd += OnTextBoxEditEnd;
         }
@@ -380,7 +380,7 @@ namespace FlaxEditor.GUI.Input
             if (_valueIsChanging)
                 return;
 
-            Value = Mathf.Map(_slider.Value, Slider.Minimum, Slider.Maximum, MinValue, MaxValue);
+            Value = Mathf.Remap(_slider.Value, Slider.Minimum, Slider.Maximum, MinValue, MaxValue);
         }
 
         private void OnTextBoxEditEnd()
@@ -434,7 +434,7 @@ namespace FlaxEditor.GUI.Input
         /// </summary>
         protected virtual void UpdateSlider()
         {
-            _slider.Value = Mathf.Map(_value, MinValue, MaxValue, Slider.Minimum, Slider.Maximum);
+            _slider.Value = Mathf.Remap(_value, MinValue, MaxValue, Slider.Minimum, Slider.Maximum);
         }
 
         /// <summary>

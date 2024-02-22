@@ -1,8 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using FlaxEditor.Content.Settings;
 using FlaxEditor.Modules;
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -93,6 +95,11 @@ namespace FlaxEditor.Options
         public void Load()
         {
             Editor.Log("Loading editor options");
+            if (!File.Exists(_optionsFilePath))
+            {
+                Editor.LogWarning("Missing editor settings");
+                return;
+            }
 
             try
             {
@@ -100,12 +107,12 @@ namespace FlaxEditor.Options
                 var asset = FlaxEngine.Content.LoadAsync<JsonAsset>(_optionsFilePath);
                 if (asset == null)
                 {
-                    Editor.LogWarning("Missing or invalid editor settings");
+                    Editor.LogWarning("Invalid editor settings");
                     return;
                 }
                 if (asset.WaitForLoaded())
                 {
-                    Editor.LogWarning("Failed to load editor settings");
+                    Editor.LogError("Failed to load editor settings");
                     return;
                 }
 
@@ -120,9 +127,12 @@ namespace FlaxEditor.Options
                             options.CustomSettings.Add(e.Key, JsonSerializer.Serialize(e.Value()));
                     }
 
+                    float prevInterfaceScale = Options.Interface.InterfaceScale;
                     Options = options;
                     OnOptionsChanged();
-                    Platform.CustomDpiScale = Options.Interface.InterfaceScale;
+
+                    // Scale interface relative to the current value (eg. when using system-provided Dpi Scale)
+                    Platform.CustomDpiScale *= Options.Interface.InterfaceScale / prevInterfaceScale;
                 }
                 else
                 {
@@ -159,16 +169,16 @@ namespace FlaxEditor.Options
             var editorAnalyticsTrackingFile = Path.Combine(Editor.LocalCachePath, "noTracking");
             if (Options.General.EnableEditorAnalytics)
             {
-                if (!File.Exists(editorAnalyticsTrackingFile))
+                if (File.Exists(editorAnalyticsTrackingFile))
                 {
-                    File.WriteAllText(editorAnalyticsTrackingFile, "Don't track me, please.");
+                    File.Delete(editorAnalyticsTrackingFile);
                 }
             }
             else
             {
-                if (File.Exists(editorAnalyticsTrackingFile))
+                if (!File.Exists(editorAnalyticsTrackingFile))
                 {
-                    File.Delete(editorAnalyticsTrackingFile);
+                    File.WriteAllText(editorAnalyticsTrackingFile, "Don't track me, please.");
                 }
             }
         }
@@ -181,6 +191,7 @@ namespace FlaxEditor.Options
             Editor.InternalOptions internalOptions;
             internalOptions.AutoReloadScriptsOnMainWindowFocus = (byte)(Options.General.AutoReloadScriptsOnMainWindowFocus ? 1 : 0);
             internalOptions.ForceScriptCompilationOnStartup = (byte)(Options.General.ForceScriptCompilationOnStartup ? 1 : 0);
+            internalOptions.UseAssetImportPathRelative = (byte)(Options.General.UseAssetImportPathRelative ? 1 : 0);
             internalOptions.AutoRebuildCSG = (byte)(Options.General.AutoRebuildCSG ? 1 : 0);
             internalOptions.AutoRebuildCSGTimeoutMs = Options.General.AutoRebuildCSGTimeoutMs;
             internalOptions.AutoRebuildNavMesh = (byte)(Options.General.AutoRebuildNavMesh ? 1 : 0);
@@ -199,14 +210,27 @@ namespace FlaxEditor.Options
 
             // If a non-default style was chosen, switch to that style
             string styleName = themeOptions.SelectedStyle;
-            if (styleName != "Default" && themeOptions.Styles.TryGetValue(styleName, out var style) && style != null)
+            if (styleName != ThemeOptions.DefaultName && styleName != ThemeOptions.LightDefault && themeOptions.Styles.TryGetValue(styleName, out var style) && style != null)
             {
                 Style.Current = style;
             }
             else
             {
-                Style.Current = CreateDefaultStyle();
+                if (styleName == ThemeOptions.LightDefault)
+                {
+                    Style.Current = CreateLightStyle();
+                }
+                else
+                {
+                    Style.Current = CreateDefaultStyle();
+                }
             }
+
+            // Set fallback fonts
+            var fallbackFonts = Options.Interface.FallbackFonts;
+            if (fallbackFonts == null || fallbackFonts.Length == 0 || fallbackFonts.All(x => x == null))
+                fallbackFonts = GameSettings.Load<GraphicsSettings>().FallbackFonts;
+            Font.FallbackFonts = fallbackFonts;
         }
 
         /// <summary>
@@ -215,7 +239,6 @@ namespace FlaxEditor.Options
         /// <returns>The style object.</returns>
         public Style CreateDefaultStyle()
         {
-            // Metro Style colors
             var options = Options;
             var style = new Style
             {
@@ -224,6 +247,7 @@ namespace FlaxEditor.Options
                 Foreground = Color.FromBgra(0xFFFFFFFF),
                 ForegroundGrey = Color.FromBgra(0xFFA9A9B3),
                 ForegroundDisabled = Color.FromBgra(0xFF787883),
+                ForegroundViewport = Color.FromBgra(0xFFFFFFFF),
                 BackgroundHighlighted = Color.FromBgra(0xFF54545C),
                 BorderHighlighted = Color.FromBgra(0xFF6A6A75),
                 BackgroundSelected = Color.FromBgra(0xFF007ACC),
@@ -234,6 +258,13 @@ namespace FlaxEditor.Options
                 TextBoxBackgroundSelected = Color.FromBgra(0xFF3F3F46),
                 CollectionBackgroundColor = Color.FromBgra(0x14CCCCCC),
                 ProgressNormal = Color.FromBgra(0xFF0ad328),
+
+                Statusbar = new Style.StatusbarStyle
+                {
+                    PlayMode = Color.FromBgra(0xFF2F9135),
+                    Failed = Color.FromBgra(0xFF9C2424),
+                    Loading = Color.FromBgra(0xFF2D2D30),
+                },
 
                 // Fonts
                 FontTitle = options.Interface.TitleFont.GetFont(),
@@ -255,10 +286,61 @@ namespace FlaxEditor.Options
                 Scale = Editor.Icons.Scale32,
                 Scalar = Editor.Icons.Scalar32,
 
-                SharedTooltip = new Tooltip()
+                SharedTooltip = new Tooltip(),
             };
             style.DragWindow = style.BackgroundSelected * 0.7f;
+            return style;
+        }
 
+        /// <summary>
+        /// Creates the light style (2nd default).
+        /// </summary>
+        /// <returns>The style object.</returns>
+        public Style CreateLightStyle()
+        {
+            var options = Options;
+            var style = new Style
+            {
+                Background = new Color(0.92f, 0.92f, 0.92f, 1f),
+                LightBackground = new Color(0.84f, 0.84f, 0.88f, 1f),
+                DragWindow = new Color(0.0f, 0.26f, 0.43f, 0.70f),
+                Foreground = new Color(0.0f, 0.0f, 0.0f, 1f),
+                ForegroundGrey = new Color(0.30f, 0.30f, 0.31f, 1f),
+                ForegroundDisabled = new Color(0.45f, 0.45f, 0.49f, 1f),
+                ForegroundViewport = new Color(1.0f, 1.0f, 1.0f, 1f),
+                BackgroundHighlighted = new Color(0.59f, 0.59f, 0.64f, 1f),
+                BorderHighlighted = new Color(0.50f, 0.50f, 0.55f, 1f),
+                BackgroundSelected = new Color(0.00f, 0.46f, 0.78f, 0.78f),
+                BorderSelected = new Color(0.11f, 0.57f, 0.88f, 0.65f),
+                BackgroundNormal = new Color(0.67f, 0.67f, 0.75f, 1f),
+                BorderNormal = new Color(0.59f, 0.59f, 0.64f, 1f),
+                TextBoxBackground = new Color(0.75f, 0.75f, 0.81f, 1f),
+                TextBoxBackgroundSelected = new Color(0.73f, 0.73f, 0.80f, 1f),
+                CollectionBackgroundColor = new Color(0.85f, 0.85f, 0.88f, 1f),
+                ProgressNormal = new Color(0.03f, 0.65f, 0.12f, 1f),
+
+                // Fonts
+                FontTitle = options.Interface.TitleFont.GetFont(),
+                FontLarge = options.Interface.LargeFont.GetFont(),
+                FontMedium = options.Interface.MediumFont.GetFont(),
+                FontSmall = options.Interface.SmallFont.GetFont(),
+
+                // Icons
+                ArrowDown = Editor.Icons.ArrowDown12,
+                ArrowRight = Editor.Icons.ArrowRight12,
+                Search = Editor.Icons.Search12,
+                Settings = Editor.Icons.Settings12,
+                Cross = Editor.Icons.Cross12,
+                CheckBoxIntermediate = Editor.Icons.CheckBoxIntermediate12,
+                CheckBoxTick = Editor.Icons.CheckBoxTick12,
+                StatusBarSizeGrip = Editor.Icons.WindowDrag12,
+                Translate = Editor.Icons.Translate32,
+                Rotate = Editor.Icons.Rotate32,
+                Scale = Editor.Icons.Scale32,
+                Scalar = Editor.Icons.Scalar32,
+
+                SharedTooltip = new Tooltip(),
+            };
             return style;
         }
 

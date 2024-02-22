@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SpriteAtlas.h"
 #include "Engine/Core/Log.h"
@@ -47,8 +47,14 @@ int32 SpriteAtlas::GetSpritesCount() const
 
 Sprite SpriteAtlas::GetSprite(int32 index) const
 {
-    CHECK_RETURN(index >= 0 && index < Sprites.Count(), Sprite())
+    CHECK_RETURN(index >= 0 && index < Sprites.Count(), Sprite());
     return Sprites.Get()[index];
+}
+
+void SpriteAtlas::GetSpriteArea(int32 index, Rectangle& result) const
+{
+    CHECK(index >= 0 && index < Sprites.Count());
+    result = Sprites.Get()[index].Area;
 }
 
 void SpriteAtlas::SetSprite(int32 index, const Sprite& value)
@@ -106,7 +112,7 @@ bool SpriteAtlas::SaveSprites()
     stream.WriteInt32(Sprites.Count()); // Sprites Count
     for (Sprite& t : Sprites)
     {
-        stream.Write(&t.Area);
+        stream.Write(t.Area);
         stream.WriteString(t.Name, 49);
     }
 
@@ -156,7 +162,7 @@ bool SpriteAtlas::LoadSprites(ReadStream& stream)
     Sprites.Resize(tilesCount);
     for (Sprite& t : Sprites)
     {
-        stream.Read(&t.Area);
+        stream.Read(t.Area);
         stream.ReadString(&t.Name, 49);
     }
 

@@ -1,9 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "TAA.h"
 #include "Engine/Content/Assets/Shader.h"
 #include "Engine/Content/Content.h"
-#include "Engine/Core/Config/GraphicsSettings.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Graphics/RenderBuffers.h"
@@ -13,8 +12,8 @@
 
 PACK_STRUCT(struct Data
     {
-    Vector2 ScreenSizeInv;
-    Vector2 JitterInv;
+    Float2 ScreenSizeInv;
+    Float2 JitterInv;
     float Sharpness;
     float StationaryBlending;
     float MotionBlending;
@@ -64,12 +63,7 @@ void TAA::Dispose()
     _shader = nullptr;
 }
 
-bool TAA::NeedMotionVectors(RenderContext& renderContext)
-{
-    return renderContext.List->Settings.AntiAliasing.Mode == AntialiasingMode::TemporalAntialiasing;
-}
-
-void TAA::Render(RenderContext& renderContext, GPUTexture* input, GPUTextureView* output)
+void TAA::Render(const RenderContext& renderContext, GPUTexture* input, GPUTextureView* output)
 {
     auto context = GPUDevice::Instance->GetMainContext();
 
@@ -93,6 +87,7 @@ void TAA::Render(RenderContext& renderContext, GPUTexture* input, GPUTextureView
     {
         // Missing temporal buffer
         renderContext.Buffers->TemporalAA = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(renderContext.Buffers->TemporalAA, "TemporalAA");
         resetHistory = true;
     }
     else if (renderContext.Buffers->TemporalAA->Width() != tempDesc.Width || renderContext.Buffers->TemporalAA->Height() != tempDesc.Height)
@@ -100,10 +95,12 @@ void TAA::Render(RenderContext& renderContext, GPUTexture* input, GPUTextureView
         // Wrong size temporal buffer
         RenderTargetPool::Release(renderContext.Buffers->TemporalAA);
         renderContext.Buffers->TemporalAA = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(renderContext.Buffers->TemporalAA, "TemporalAA");
         resetHistory = true;
     }
     auto inputHistory = renderContext.Buffers->TemporalAA;
     const auto outputHistory = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(outputHistory, "TemporalAA");
 
     // Duplicate the current frame to the history buffer if need to reset the temporal history
     float blendStrength = 1.0f;

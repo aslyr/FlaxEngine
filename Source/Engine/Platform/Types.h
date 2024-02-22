@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -24,6 +24,8 @@ class WindowsWindow;
 typedef WindowsWindow Window;
 class Win32Network;
 typedef Win32Network Network;
+class UserBase;
+typedef UserBase User;
 
 #elif PLATFORM_UWP
 
@@ -47,6 +49,8 @@ class UWPWindow;
 typedef UWPWindow Window;
 class Win32Network;
 typedef Win32Network Network;
+class UserBase;
+typedef UserBase User;
 
 #elif PLATFORM_LINUX
 
@@ -70,6 +74,8 @@ class LinuxWindow;
 typedef LinuxWindow Window;
 class UnixNetwork;
 typedef UnixNetwork Network;
+class UserBase;
+typedef UserBase User;
 
 #elif PLATFORM_PS4
 
@@ -93,6 +99,34 @@ class PS4Window;
 typedef PS4Window Window;
 class PS4Network;
 typedef PS4Network Network;
+class PS4User;
+typedef PS4User User;
+
+#elif PLATFORM_PS5
+
+class ClipboardBase;
+typedef ClipboardBase Clipboard;
+class UnixCriticalSection;
+typedef UnixCriticalSection CriticalSection;
+class UnixConditionVariable;
+typedef UnixConditionVariable ConditionVariable;
+class PS5FileSystem;
+typedef PS5FileSystem FileSystem;
+class FileSystemWatcherBase;
+typedef FileSystemWatcherBase FileSystemWatcher;
+class UnixFile;
+typedef UnixFile File;
+class PS5Platform;
+typedef PS5Platform Platform;
+class PS5Thread;
+typedef PS5Thread Thread;
+class PS5Window;
+typedef PS5Window Window;
+class PS5Network;
+typedef PS5Network Network;
+class PS5User;
+typedef PS5User User;
+
 #elif PLATFORM_XBOX_ONE
 
 class ClipboardBase;
@@ -113,8 +147,10 @@ class Win32Thread;
 typedef Win32Thread Thread;
 class GDKWindow;
 typedef GDKWindow Window;
-class NetworkBase;
-typedef NetworkBase Network;
+class Win32Network;
+typedef Win32Network Network;
+class GDKUser;
+typedef GDKUser User;
 
 #elif PLATFORM_XBOX_SCARLETT
 
@@ -136,8 +172,10 @@ class Win32Thread;
 typedef Win32Thread Thread;
 class GDKWindow;
 typedef GDKWindow Window;
-class NetworkBase;
-typedef NetworkBase Network;
+class Win32Network;
+typedef Win32Network Network;
+class GDKUser;
+typedef GDKUser User;
 
 #elif PLATFORM_ANDROID
 
@@ -161,6 +199,8 @@ class AndroidWindow;
 typedef AndroidWindow Window;
 class UnixNetwork;
 typedef UnixNetwork Network;
+class UserBase;
+typedef UserBase User;
 
 #elif PLATFORM_SWITCH
 
@@ -184,6 +224,58 @@ class SwitchWindow;
 typedef SwitchWindow Window;
 class SwitchNetwork;
 typedef SwitchNetwork Network;
+class SwitchUser;
+typedef SwitchUser User;
+
+#elif PLATFORM_MAC
+
+class MacClipboard;
+typedef MacClipboard Clipboard;
+class UnixCriticalSection;
+typedef UnixCriticalSection CriticalSection;
+class UnixConditionVariable;
+typedef UnixConditionVariable ConditionVariable;
+class MacFileSystem;
+typedef MacFileSystem FileSystem;
+class MacFileSystemWatcher;
+typedef MacFileSystemWatcher FileSystemWatcher;
+class UnixFile;
+typedef UnixFile File;
+class MacPlatform;
+typedef MacPlatform Platform;
+class AppleThread;
+typedef AppleThread Thread;
+class MacWindow;
+typedef MacWindow Window;
+class UnixNetwork;
+typedef UnixNetwork Network;
+class UserBase;
+typedef UserBase User;
+
+#elif PLATFORM_IOS
+
+class ClipboardBase;
+typedef ClipboardBase Clipboard;
+class UnixCriticalSection;
+typedef UnixCriticalSection CriticalSection;
+class UnixConditionVariable;
+typedef UnixConditionVariable ConditionVariable;
+class iOSFileSystem;
+typedef iOSFileSystem FileSystem;
+class FileSystemWatcherBase;
+typedef FileSystemWatcherBase FileSystemWatcher;
+class iOSFile;
+typedef iOSFile File;
+class iOSPlatform;
+typedef iOSPlatform Platform;
+class AppleThread;
+typedef AppleThread Thread;
+class iOSWindow;
+typedef iOSWindow Window;
+class UnixNetwork;
+typedef UnixNetwork Network;
+class UserBase;
+typedef UserBase User;
 
 #else
 

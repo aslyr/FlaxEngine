@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -53,7 +53,7 @@ namespace FlaxEngine
         /// Gets or sets the sprite location (in pixels).
         /// </summary>
         [NoSerialize]
-        public Vector2 Location
+        public Float2 Location
         {
             get => Area.Location * Atlas.Size;
             set
@@ -68,9 +68,15 @@ namespace FlaxEngine
         /// Gets or sets the sprite size (in pixels).
         /// </summary>
         [NoSerialize]
-        public Vector2 Size
+        public Float2 Size
         {
-            get => Area.Size * Atlas.Size;
+            get
+            {
+                if (Atlas == null)
+                    throw new InvalidOperationException("Cannot use invalid sprite.");
+                Atlas.GetSpriteArea(Index, out var area);
+                return area.Size * Atlas.Size;
+            }
             set
             {
                 var area = Area;
@@ -89,7 +95,8 @@ namespace FlaxEngine
             {
                 if (Atlas == null)
                     throw new InvalidOperationException("Cannot use invalid sprite.");
-                return Atlas.GetSprite(Index).Area;
+                Atlas.GetSpriteArea(Index, out var area);
+                return area;
             }
             set
             {

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,14 +14,12 @@
 /// <seealso cref="Actor" />
 API_CLASS() class FLAXENGINE_API Foliage final : public Actor
 {
-DECLARE_SCENE_OBJECT(Foliage);
+    DECLARE_SCENE_OBJECT(Foliage);
 private:
-
     bool _disableFoliageTypeEvents;
     int32 _sceneRenderingKey = -1;
 
 public:
-
     /// <summary>
     /// The allocated foliage instances. It's read-only.
     /// </summary>
@@ -46,7 +44,6 @@ public:
     Array<FoliageType> FoliageTypes;
 
 public:
-
     /// <summary>
     /// Gets the total amount of the instanced of foliage.
     /// </summary>
@@ -138,7 +135,6 @@ public:
     API_FUNCTION() void UpdateCullDistance();
 
 public:
-
     /// <summary>
     /// Gets the global density scale for all foliage instances. The default value is 1. Use values from range 0-1. Lower values decrease amount of foliage instances in-game. Use it to tweak game performance for slower devices.
     /// </summary>
@@ -150,7 +146,6 @@ public:
     API_PROPERTY() static void SetGlobalDensityScale(float value);
 
 private:
-
     void AddToCluster(ChunkedArray<FoliageCluster, FOLIAGE_CLUSTER_CHUNKS_SIZE>& clusters, FoliageCluster* cluster, FoliageInstance& instance);
 #if !FOLIAGE_USE_SINGLE_QUAD_TREE && FOLIAGE_USE_DRAW_CALLS_BATCHING
     struct DrawKey
@@ -159,9 +154,9 @@ private:
         const Mesh* Geo;
         int32 Lightmap;
 
-        friend bool operator==(const DrawKey& lhs, const DrawKey& rhs)
+        bool operator==(const DrawKey& other) const
         {
-            return lhs.Mat == rhs.Mat && lhs.Geo == rhs.Geo && lhs.Lightmap == rhs.Lightmap;
+            return Mat == other.Mat && Geo == other.Geo && Lightmap == other.Lightmap;
         }
 
         friend uint32 GetHash(const DrawKey& key)
@@ -174,15 +169,21 @@ private:
     };
 
     typedef Array<struct BatchedDrawCall, InlinedAllocation<8>> DrawCallsList;
-    typedef Dictionary<DrawKey, struct BatchedDrawCall, class RenderListAllocation> BatchedDrawCalls;
-    void DrawInstance(RenderContext& renderContext, FoliageInstance& instance, FoliageType& type, Model* model, int32 lod, float lodDitherFactor, DrawCallsList* drawCallsLists, BatchedDrawCalls& result) const;
-    void DrawCluster(RenderContext& renderContext, FoliageCluster* cluster, FoliageType& type, DrawCallsList* drawCallsLists, BatchedDrawCalls& result) const;
+    typedef Dictionary<DrawKey, struct BatchedDrawCall, class RendererAllocation> BatchedDrawCalls;
+    void DrawInstance(RenderContext& renderContext, FoliageInstance& instance, const FoliageType& type, Model* model, int32 lod, float lodDitherFactor, DrawCallsList* drawCallsLists, BatchedDrawCalls& result) const;
+    void DrawCluster(RenderContext& renderContext, FoliageCluster* cluster, const FoliageType& type, DrawCallsList* drawCallsLists, BatchedDrawCalls& result) const;
 #else
     void DrawCluster(RenderContext& renderContext, FoliageCluster* cluster, Mesh::DrawInfo& draw);
 #endif
+#if !FOLIAGE_USE_SINGLE_QUAD_TREE
+    void DrawClusterGlobalSDF(class GlobalSignDistanceFieldPass* globalSDF, const BoundingBox& globalSDFBounds, FoliageCluster* cluster, const FoliageType& type);
+    void DrawClusterGlobalSA(class GlobalSurfaceAtlasPass* globalSA, const Vector4& cullingPosDistance, FoliageCluster* cluster, const FoliageType& type, const BoundingBox& localBounds);
+    void DrawFoliageJob(int32 i);
+    RenderContextBatch* _renderContextBatch;
+#endif
+    void DrawType(RenderContext& renderContext, const FoliageType& type, DrawCallsList* drawCallsLists);
 
 public:
-
     /// <summary>
     /// Determines if there is an intersection between the current object or any it's child and a ray.
     /// </summary>
@@ -191,20 +192,18 @@ public:
     /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
     /// <param name="instanceIndex">When the method completes, contains zero-based index of the foliage instance that is the closest to the ray.</param>
     /// <returns>True whether the two objects intersected, otherwise false.</returns>
-    API_FUNCTION() bool Intersects(API_PARAM(Ref) const Ray& ray, API_PARAM(Out) float& distance, API_PARAM(Out) Vector3& normal, API_PARAM(Out) int32& instanceIndex);
+    API_FUNCTION() bool Intersects(API_PARAM(Ref) const Ray& ray, API_PARAM(Out) Real& distance, API_PARAM(Out) Vector3& normal, API_PARAM(Out) int32& instanceIndex);
 
 public:
-
     // [Actor]
     void Draw(RenderContext& renderContext) override;
-    void DrawGeneric(RenderContext& renderContext) override;
-    bool IntersectsItself(const Ray& ray, float& distance, Vector3& normal) override;
+    void Draw(RenderContextBatch& renderContextBatch) override;
+    bool IntersectsItself(const Ray& ray, Real& distance, Vector3& normal) override;
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
     void OnLayerChanged() override;
 
 protected:
-
     // [Actor]
     void OnEnable() override;
     void OnDisable() override;

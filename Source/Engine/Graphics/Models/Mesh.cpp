@@ -1,22 +1,30 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Mesh.h"
+#include "MeshDeformation.h"
 #include "ModelInstanceEntry.h"
 #include "Engine/Content/Assets/Material.h"
 #include "Engine/Content/Assets/Model.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Math/Transform.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/RenderTask.h"
+#include "Engine/Graphics/RenderTools.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Renderer/RenderList.h"
+#include "Engine/Scripting/ManagedCLR/MCore.h"
 #include "Engine/Serialization/MemoryReadStream.h"
+#include "Engine/Threading/Task.h"
 #include "Engine/Threading/Threading.h"
-#include <ThirdParty/mono-2.0/mono/metadata/appdomain.h>
+#if USE_EDITOR
+#include "Engine/Renderer/GBufferPass.h"
+#endif
 
 namespace
 {
     template<typename IndexType>
-    bool UpdateMesh(Mesh* mesh, uint32 vertexCount, uint32 triangleCount, Vector3* vertices, IndexType* triangles, Vector3* normals, Vector3* tangents, Vector2* uvs, Color32* colors)
+    bool UpdateMesh(Mesh* mesh, uint32 vertexCount, uint32 triangleCount, Float3* vertices, IndexType* triangles, Float3* normals, Float3* tangents, Float2* uvs, Color32* colors)
     {
         auto model = mesh->GetModel();
         CHECK_RETURN(model && model->IsVirtual(), true);
@@ -32,48 +40,27 @@ namespace
             {
                 for (uint32 i = 0; i < vertexCount; i++)
                 {
-                    const Vector3 normal = normals[i];
-                    const Vector3 tangent = tangents[i];
-
-                    // Calculate bitangent sign
-                    Vector3 bitangent = Vector3::Normalize(Vector3::Cross(normal, tangent));
-                    byte sign = static_cast<byte>(Vector3::Dot(Vector3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
-
-                    // Set tangent frame
-                    vb1[i].Tangent = Float1010102(tangent * 0.5f + 0.5f, sign);
-                    vb1[i].Normal = Float1010102(normal * 0.5f + 0.5f, 0);
+                    const Float3 normal = normals[i];
+                    const Float3 tangent = tangents[i];
+                    auto& v = vb1.Get()[i];
+                    RenderTools::CalculateTangentFrame(v.Normal, v.Tangent, normal, tangent);
                 }
             }
             else
             {
                 for (uint32 i = 0; i < vertexCount; i++)
                 {
-                    const Vector3 normal = normals[i];
-
-                    // Calculate tangent
-                    Vector3 c1 = Vector3::Cross(normal, Vector3::UnitZ);
-                    Vector3 c2 = Vector3::Cross(normal, Vector3::UnitY);
-                    Vector3 tangent;
-                    if (c1.LengthSquared() > c2.LengthSquared())
-                        tangent = c1;
-                    else
-                        tangent = c2;
-
-                    // Calculate bitangent sign
-                    Vector3 bitangent = Vector3::Normalize(Vector3::Cross(normal, tangent));
-                    byte sign = static_cast<byte>(Vector3::Dot(Vector3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
-
-                    // Set tangent frame
-                    vb1[i].Tangent = Float1010102(tangent * 0.5f + 0.5f, sign);
-                    vb1[i].Normal = Float1010102(normal * 0.5f + 0.5f, 0);
+                    const Float3 normal = normals[i];
+                    auto& v = vb1.Get()[i];
+                    RenderTools::CalculateTangentFrame(v.Normal, v.Tangent, normal);
                 }
             }
         }
         else
         {
             // Set default tangent frame
-            const auto n = Float1010102(Vector3::UnitZ);
-            const auto t = Float1010102(Vector3::UnitX);
+            const auto n = Float1010102(Float3::UnitZ);
+            const auto t = Float1010102(Float3::UnitX);
             for (uint32 i = 0; i < vertexCount; i++)
             {
                 vb1[i].Normal = n;
@@ -87,12 +74,12 @@ namespace
         }
         else
         {
-            auto v = Half2(0, 0);
+            auto v = Half2::Zero;
             for (uint32 i = 0; i < vertexCount; i++)
                 vb1[i].TexCoord = v;
         }
         {
-            auto v = Half2(0, 0);
+            auto v = Half2::Zero;
             for (uint32 i = 0; i < vertexCount; i++)
                 vb1[i].LightmapUVs = v;
         }
@@ -106,32 +93,36 @@ namespace
         return mesh->UpdateMesh(vertexCount, triangleCount, (VB0ElementType*)vertices, vb1.Get(), vb2.HasItems() ? vb2.Get() : nullptr, triangles);
     }
 
+#if !COMPILE_WITHOUT_CSHARP
+
     template<typename IndexType>
-    bool UpdateMesh(Mesh* mesh, uint32 vertexCount, uint32 triangleCount, MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj, MonoArray* colorsObj)
+    bool UpdateMesh(Mesh* mesh, uint32 vertexCount, uint32 triangleCount, MArray* verticesObj, MArray* trianglesObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj, MArray* colorsObj)
     {
-        ASSERT((uint32)mono_array_length(verticesObj) >= vertexCount);
-        ASSERT((uint32)mono_array_length(trianglesObj) / 3 >= triangleCount);
-        auto vertices = (Vector3*)(void*)mono_array_addr_with_size(verticesObj, sizeof(Vector3), 0);
-        auto triangles = (IndexType*)(void*)mono_array_addr_with_size(trianglesObj, sizeof(IndexType), 0);
-        const auto normals = normalsObj ? (Vector3*)(void*)mono_array_addr_with_size(normalsObj, sizeof(Vector3), 0) : nullptr;
-        const auto tangents = tangentsObj ? (Vector3*)(void*)mono_array_addr_with_size(tangentsObj, sizeof(Vector3), 0) : nullptr;
-        const auto uvs = uvObj ? (Vector2*)(void*)mono_array_addr_with_size(uvObj, sizeof(Vector2), 0) : nullptr;
-        const auto colors = colorsObj ? (Color32*)(void*)mono_array_addr_with_size(colorsObj, sizeof(Color32), 0) : nullptr;
+        ASSERT((uint32)MCore::Array::GetLength(verticesObj) >= vertexCount);
+        ASSERT((uint32)MCore::Array::GetLength(trianglesObj) / 3 >= triangleCount);
+        auto vertices = MCore::Array::GetAddress<Float3>(verticesObj);
+        auto triangles = MCore::Array::GetAddress<IndexType>(trianglesObj);
+        const auto normals = normalsObj ? MCore::Array::GetAddress<Float3>(normalsObj) : nullptr;
+        const auto tangents = tangentsObj ? MCore::Array::GetAddress<Float3>(tangentsObj) : nullptr;
+        const auto uvs = uvObj ? MCore::Array::GetAddress<Float2>(uvObj) : nullptr;
+        const auto colors = colorsObj ? MCore::Array::GetAddress<Color32>(colorsObj) : nullptr;
         return UpdateMesh<IndexType>(mesh, vertexCount, triangleCount, vertices, triangles, normals, tangents, uvs, colors);
     }
 
     template<typename IndexType>
-    bool UpdateTriangles(Mesh* mesh, int32 triangleCount, MonoArray* trianglesObj)
+    bool UpdateTriangles(Mesh* mesh, int32 triangleCount, MArray* trianglesObj)
     {
         const auto model = mesh->GetModel();
         ASSERT(model && model->IsVirtual() && trianglesObj);
 
         // Get buffer data
-        ASSERT((int32)mono_array_length(trianglesObj) / 3 >= triangleCount);
-        auto ib = (IndexType*)(void*)mono_array_addr_with_size(trianglesObj, sizeof(IndexType), 0);
+        ASSERT(MCore::Array::GetLength(trianglesObj) / 3 >= triangleCount);
+        auto ib = MCore::Array::GetAddress<IndexType>(trianglesObj);
 
         return mesh->UpdateTriangles(triangleCount, ib);
     }
+
+#endif
 }
 
 bool Mesh::HasVertexColors() const
@@ -153,7 +144,9 @@ bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, VB0ElementType* 
         model->LODs[_lodIndex]._verticesCount += _vertices;
 
         // Calculate mesh bounds
-        SetBounds(BoundingBox::FromPoints((Vector3*)vb0, vertexCount));
+        BoundingBox bounds;
+        BoundingBox::FromPoints((Float3*)vb0, vertexCount, bounds);
+        SetBounds(bounds);
 
         // Send event (actors using this model can update bounds, etc.)
         model->onLoaded();
@@ -162,12 +155,12 @@ bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, VB0ElementType* 
     return failed;
 }
 
-bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, Vector3* vertices, uint16* triangles, Vector3* normals, Vector3* tangents, Vector2* uvs, Color32* colors)
+bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, Float3* vertices, uint16* triangles, Float3* normals, Float3* tangents, Float2* uvs, Color32* colors)
 {
     return ::UpdateMesh<uint16>(this, vertexCount, triangleCount, vertices, triangles, normals, tangents, uvs, colors);
 }
 
-bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, Vector3* vertices, uint32* triangles, Vector3* normals, Vector3* tangents, Vector2* uvs, Color32* colors)
+bool Mesh::UpdateMesh(uint32 vertexCount, uint32 triangleCount, Float3* vertices, uint32* triangles, Float3* normals, Float3* tangents, Float2* uvs, Color32* colors)
 {
     return ::UpdateMesh<uint32>(this, vertexCount, triangleCount, vertices, triangles, normals, tangents, uvs, colors);
 }
@@ -235,42 +228,25 @@ bool Mesh::Load(uint32 vertices, uint32 triangles, void* vb0, void* vb1, void* v
     GPUBuffer* vertexBuffer2 = nullptr;
     GPUBuffer* indexBuffer = nullptr;
 
-    // Create vertex buffer 0
+    // Create GPU buffers
 #if GPU_ENABLE_RESOURCE_NAMING
-    vertexBuffer0 = GPUDevice::Instance->CreateBuffer(GetModel()->ToString() + TEXT(".VB0"));
+#define MESH_BUFFER_NAME(postfix) GetModel()->GetPath() + TEXT(postfix)
 #else
-	vertexBuffer0 = GPUDevice::Instance->CreateBuffer(String::Empty);
+#define MESH_BUFFER_NAME(postfix) String::Empty
 #endif
+    vertexBuffer0 = GPUDevice::Instance->CreateBuffer(MESH_BUFFER_NAME(".VB0"));
     if (vertexBuffer0->Init(GPUBufferDescription::Vertex(sizeof(VB0ElementType), vertices, vb0)))
         goto ERROR_LOAD_END;
-
-    // Create vertex buffer 1
-#if GPU_ENABLE_RESOURCE_NAMING
-    vertexBuffer1 = GPUDevice::Instance->CreateBuffer(GetModel()->ToString() + TEXT(".VB1"));
-#else
-	vertexBuffer1 = GPUDevice::Instance->CreateBuffer(String::Empty);
-#endif
+    vertexBuffer1 = GPUDevice::Instance->CreateBuffer(MESH_BUFFER_NAME(".VB1"));
     if (vertexBuffer1->Init(GPUBufferDescription::Vertex(sizeof(VB1ElementType), vertices, vb1)))
         goto ERROR_LOAD_END;
-
-    // Create vertex buffer 2
     if (vb2)
     {
-#if GPU_ENABLE_RESOURCE_NAMING
-        vertexBuffer2 = GPUDevice::Instance->CreateBuffer(GetModel()->ToString() + TEXT(".VB2"));
-#else
-		vertexBuffer2 = GPUDevice::Instance->CreateBuffer(String::Empty);
-#endif
+        vertexBuffer2 = GPUDevice::Instance->CreateBuffer(MESH_BUFFER_NAME(".VB2"));
         if (vertexBuffer2->Init(GPUBufferDescription::Vertex(sizeof(VB2ElementType), vertices, vb2)))
             goto ERROR_LOAD_END;
     }
-
-    // Create index buffer
-#if GPU_ENABLE_RESOURCE_NAMING
-    indexBuffer = GPUDevice::Instance->CreateBuffer(GetModel()->ToString() + TEXT(".IB"));
-#else
-	indexBuffer = GPUDevice::Instance->CreateBuffer(String::Empty);
-#endif
+    indexBuffer = GPUDevice::Instance->CreateBuffer(MESH_BUFFER_NAME(".IB"));
     if (indexBuffer->Init(GPUBufferDescription::Index(ibStride, indicesCount, ib)))
         goto ERROR_LOAD_END;
 
@@ -279,9 +255,9 @@ bool Mesh::Load(uint32 vertices, uint32 triangles, void* vb0, void* vb1, void* v
     if (!_collisionProxy.HasData())
     {
         if (use16BitIndexBuffer)
-            _collisionProxy.Init<uint16>(vertices, triangles, (Vector3*)vb0, (uint16*)ib);
+            _collisionProxy.Init<uint16>(vertices, triangles, (Float3*)vb0, (uint16*)ib);
         else
-            _collisionProxy.Init<uint32>(vertices, triangles, (Vector3*)vb0, (uint32*)ib);
+            _collisionProxy.Init<uint32>(vertices, triangles, (Float3*)vb0, (uint32*)ib);
     }
 #endif
 
@@ -299,6 +275,7 @@ bool Mesh::Load(uint32 vertices, uint32 triangles, void* vb0, void* vb1, void* v
 
     return false;
 
+#undef MESH_BUFFER_NAME
 ERROR_LOAD_END:
 
     SAFE_DELETE_GPU_RESOURCE(vertexBuffer0);
@@ -323,11 +300,11 @@ void Mesh::Unload()
     _cachedVertexBuffer[2].Clear();
 }
 
-bool Mesh::Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal) const
+bool Mesh::Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal) const
 {
     // Get bounding box of the mesh bounds transformed by the instance world matrix
     Vector3 corners[8];
-    GetCorners(corners);
+    _box.GetCorners(corners);
     Vector3 tmp;
     Vector3::Transform(corners[0], world, tmp);
     Vector3 min = tmp;
@@ -347,7 +324,38 @@ bool Mesh::Intersects(const Ray& ray, const Matrix& world, float& distance, Vect
         // Use exact test on raw geometry
         return _collisionProxy.Intersects(ray, world, distance, normal);
     }
+    distance = 0;
+    normal = Vector3::Up;
+    return false;
+#else
+	return transformedBox.Intersects(ray, distance, normal);
+#endif
+}
 
+bool Mesh::Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal) const
+{
+    // Get bounding box of the mesh bounds transformed by the instance world matrix
+    Vector3 corners[8];
+    _box.GetCorners(corners);
+    Vector3 tmp;
+    transform.LocalToWorld(corners[0], tmp);
+    Vector3 min = tmp;
+    Vector3 max = tmp;
+    for (int32 i = 1; i < 8; i++)
+    {
+        transform.LocalToWorld(corners[i], tmp);
+        min = Vector3::Min(min, tmp);
+        max = Vector3::Max(max, tmp);
+    }
+    const BoundingBox transformedBox(min, max);
+
+    // Test ray on box
+#if USE_PRECISE_MESH_INTERSECTS
+    if (transformedBox.Intersects(ray, distance))
+    {
+        // Use exact test on raw geometry
+        return _collisionProxy.Intersects(ray, transform, distance, normal);
+    }
     distance = 0;
     normal = Vector3::Up;
     return false;
@@ -379,26 +387,26 @@ void Mesh::Render(GPUContext* context) const
     context->DrawIndexedInstanced(_triangles * 3, 1, 0, 0, 0);
 }
 
-void Mesh::Draw(const RenderContext& renderContext, MaterialBase* material, const Matrix& world, StaticFlags flags, bool receiveDecals, DrawPass drawModes, float perInstanceRandom) const
+void Mesh::Draw(const RenderContext& renderContext, MaterialBase* material, const Matrix& world, StaticFlags flags, bool receiveDecals, DrawPass drawModes, float perInstanceRandom, int16 sortOrder) const
 {
     if (!material || !material->IsSurface() || !IsInitialized())
         return;
+    drawModes &= material->GetDrawModes();
+    if (drawModes == DrawPass::None)
+        return;
 
-    // Submit draw call
+    // Setup draw call
     DrawCall drawCall;
     drawCall.Geometry.IndexBuffer = _indexBuffer;
     drawCall.Geometry.VertexBuffers[0] = _vertexBuffers[0];
     drawCall.Geometry.VertexBuffers[1] = _vertexBuffers[1];
     drawCall.Geometry.VertexBuffers[2] = _vertexBuffers[2];
-    drawCall.Geometry.VertexBuffersOffsets[0] = 0;
-    drawCall.Geometry.VertexBuffersOffsets[1] = 0;
-    drawCall.Geometry.VertexBuffersOffsets[2] = 0;
-    drawCall.Draw.StartIndex = 0;
     drawCall.Draw.IndicesCount = _triangles * 3;
     drawCall.InstanceCount = 1;
     drawCall.Material = material;
     drawCall.World = world;
     drawCall.ObjectPosition = drawCall.World.GetTranslation();
+    drawCall.ObjectRadius = _sphere.Radius * drawCall.World.GetScaleVector().GetAbsolute().MaxValue();
     drawCall.Surface.GeometrySize = _box.GetSize();
     drawCall.Surface.PrevWorld = world;
     drawCall.Surface.Lightmap = nullptr;
@@ -407,22 +415,22 @@ void Mesh::Draw(const RenderContext& renderContext, MaterialBase* material, cons
     drawCall.Surface.LODDitherFactor = 0.0f;
     drawCall.WorldDeterminantSign = Math::FloatSelect(world.RotDeterminant(), 1, -1);
     drawCall.PerInstanceRandom = perInstanceRandom;
-    renderContext.List->AddDrawCall(drawModes, flags, drawCall, receiveDecals);
+#if USE_EDITOR
+    const ViewMode viewMode = renderContext.View.Mode;
+    if (viewMode == ViewMode::LightmapUVsDensity || viewMode == ViewMode::LODPreview)
+        GBufferPass::AddIndexBufferToModelLOD(_indexBuffer, &((Model*)_model)->LODs[_lodIndex]);
+#endif
+
+    // Push draw call to the render list
+    renderContext.List->AddDrawCall(renderContext, drawModes, flags, drawCall, receiveDecals, sortOrder);
 }
 
 void Mesh::Draw(const RenderContext& renderContext, const DrawInfo& info, float lodDitherFactor) const
 {
-    // Cache data
     const auto& entry = info.Buffer->At(_materialSlotIndex);
     if (!entry.Visible || !IsInitialized())
         return;
     const MaterialSlot& slot = _model->MaterialSlots[_materialSlotIndex];
-
-    // Check if skip rendering
-    const auto shadowsMode = static_cast<ShadowsCastingMode>(entry.ShadowsMode & slot.ShadowsMode);
-    const auto drawModes = static_cast<DrawPass>(info.DrawModes & renderContext.View.GetShadowsDrawPassMask(shadowsMode));
-    if (drawModes == DrawPass::None)
-        return;
 
     // Select material
     MaterialBase* material;
@@ -435,15 +443,23 @@ void Mesh::Draw(const RenderContext& renderContext, const DrawInfo& info, float 
     if (!material || !material->IsSurface())
         return;
 
-    // Submit draw call
+    // Check if skip rendering
+    const auto shadowsMode = entry.ShadowsMode & slot.ShadowsMode;
+    const auto drawModes = info.DrawModes & renderContext.View.Pass & renderContext.View.GetShadowsDrawPassMask(shadowsMode) & material->GetDrawModes();
+    if (drawModes == DrawPass::None)
+        return;
+
+    // Setup draw call
     DrawCall drawCall;
     drawCall.Geometry.IndexBuffer = _indexBuffer;
     drawCall.Geometry.VertexBuffers[0] = _vertexBuffers[0];
     drawCall.Geometry.VertexBuffers[1] = _vertexBuffers[1];
     drawCall.Geometry.VertexBuffers[2] = _vertexBuffers[2];
-    drawCall.Geometry.VertexBuffersOffsets[0] = 0;
-    drawCall.Geometry.VertexBuffersOffsets[1] = 0;
-    drawCall.Geometry.VertexBuffersOffsets[2] = 0;
+    if (info.Deformation)
+    {
+        info.Deformation->RunDeformers(this, MeshBufferType::Vertex0, drawCall.Geometry.VertexBuffers[0]);
+        info.Deformation->RunDeformers(this, MeshBufferType::Vertex1, drawCall.Geometry.VertexBuffers[1]);
+    }
     if (info.VertexColors && info.VertexColors[_lodIndex])
     {
         // TODO: cache vertexOffset within the model LOD per-mesh
@@ -453,21 +469,93 @@ void Mesh::Draw(const RenderContext& renderContext, const DrawInfo& info, float 
         drawCall.Geometry.VertexBuffers[2] = info.VertexColors[_lodIndex];
         drawCall.Geometry.VertexBuffersOffsets[2] = vertexOffset * sizeof(VB2ElementType);
     }
-    drawCall.Draw.StartIndex = 0;
     drawCall.Draw.IndicesCount = _triangles * 3;
     drawCall.InstanceCount = 1;
     drawCall.Material = material;
     drawCall.World = *info.World;
     drawCall.ObjectPosition = drawCall.World.GetTranslation();
+    drawCall.ObjectRadius = info.Bounds.Radius; // TODO: should it be kept in sync with ObjectPosition?
     drawCall.Surface.GeometrySize = _box.GetSize();
     drawCall.Surface.PrevWorld = info.DrawState->PrevWorld;
-    drawCall.Surface.Lightmap = info.Flags & StaticFlags::Lightmap ? info.Lightmap : nullptr;
+    drawCall.Surface.Lightmap = (info.Flags & StaticFlags::Lightmap) != StaticFlags::None ? info.Lightmap : nullptr;
     drawCall.Surface.LightmapUVsArea = info.LightmapUVs ? *info.LightmapUVs : Rectangle::Empty;
     drawCall.Surface.Skinning = nullptr;
     drawCall.Surface.LODDitherFactor = lodDitherFactor;
     drawCall.WorldDeterminantSign = Math::FloatSelect(drawCall.World.RotDeterminant(), 1, -1);
     drawCall.PerInstanceRandom = info.PerInstanceRandom;
-    renderContext.List->AddDrawCall(drawModes, info.Flags, drawCall, entry.ReceiveDecals);
+#if USE_EDITOR
+    const ViewMode viewMode = renderContext.View.Mode;
+    if (viewMode == ViewMode::LightmapUVsDensity || viewMode == ViewMode::LODPreview)
+        GBufferPass::AddIndexBufferToModelLOD(_indexBuffer, &((Model*)_model)->LODs[_lodIndex]);
+#endif
+
+    // Push draw call to the render list
+    renderContext.List->AddDrawCall(renderContext, drawModes, info.Flags, drawCall, entry.ReceiveDecals, info.SortOrder);
+}
+
+void Mesh::Draw(const RenderContextBatch& renderContextBatch, const DrawInfo& info, float lodDitherFactor) const
+{
+    const auto& entry = info.Buffer->At(_materialSlotIndex);
+    if (!entry.Visible || !IsInitialized())
+        return;
+    const MaterialSlot& slot = _model->MaterialSlots[_materialSlotIndex];
+
+    // Select material
+    MaterialBase* material;
+    if (entry.Material && entry.Material->IsLoaded())
+        material = entry.Material;
+    else if (slot.Material && slot.Material->IsLoaded())
+        material = slot.Material;
+    else
+        material = GPUDevice::Instance->GetDefaultMaterial();
+    if (!material || !material->IsSurface())
+        return;
+
+    // Setup draw call
+    DrawCall drawCall;
+    drawCall.Geometry.IndexBuffer = _indexBuffer;
+    drawCall.Geometry.VertexBuffers[0] = _vertexBuffers[0];
+    drawCall.Geometry.VertexBuffers[1] = _vertexBuffers[1];
+    drawCall.Geometry.VertexBuffers[2] = _vertexBuffers[2];
+    if (info.Deformation)
+    {
+        info.Deformation->RunDeformers(this, MeshBufferType::Vertex0, drawCall.Geometry.VertexBuffers[0]);
+        info.Deformation->RunDeformers(this, MeshBufferType::Vertex1, drawCall.Geometry.VertexBuffers[1]);
+    }
+    if (info.VertexColors && info.VertexColors[_lodIndex])
+    {
+        // TODO: cache vertexOffset within the model LOD per-mesh
+        uint32 vertexOffset = 0;
+        for (int32 meshIndex = 0; meshIndex < _index; meshIndex++)
+            vertexOffset += ((Model*)_model)->LODs[_lodIndex].Meshes[meshIndex].GetVertexCount();
+        drawCall.Geometry.VertexBuffers[2] = info.VertexColors[_lodIndex];
+        drawCall.Geometry.VertexBuffersOffsets[2] = vertexOffset * sizeof(VB2ElementType);
+    }
+    drawCall.Draw.IndicesCount = _triangles * 3;
+    drawCall.InstanceCount = 1;
+    drawCall.Material = material;
+    drawCall.World = *info.World;
+    drawCall.ObjectPosition = drawCall.World.GetTranslation();
+    drawCall.ObjectRadius = info.Bounds.Radius; // TODO: should it be kept in sync with ObjectPosition?
+    drawCall.Surface.GeometrySize = _box.GetSize();
+    drawCall.Surface.PrevWorld = info.DrawState->PrevWorld;
+    drawCall.Surface.Lightmap = (info.Flags & StaticFlags::Lightmap) != StaticFlags::None ? info.Lightmap : nullptr;
+    drawCall.Surface.LightmapUVsArea = info.LightmapUVs ? *info.LightmapUVs : Rectangle::Empty;
+    drawCall.Surface.Skinning = nullptr;
+    drawCall.Surface.LODDitherFactor = lodDitherFactor;
+    drawCall.WorldDeterminantSign = Math::FloatSelect(drawCall.World.RotDeterminant(), 1, -1);
+    drawCall.PerInstanceRandom = info.PerInstanceRandom;
+#if USE_EDITOR
+    const ViewMode viewMode = renderContextBatch.GetMainContext().View.Mode;
+    if (viewMode == ViewMode::LightmapUVsDensity || viewMode == ViewMode::LODPreview)
+        GBufferPass::AddIndexBufferToModelLOD(_indexBuffer, &((Model*)_model)->LODs[_lodIndex]);
+#endif
+
+    // Push draw call to the render lists
+    const auto shadowsMode = entry.ShadowsMode & slot.ShadowsMode;
+    const auto drawModes = info.DrawModes & material->GetDrawModes();
+    if (drawModes != DrawPass::None)
+        renderContextBatch.GetMainContext().List->AddDrawCall(renderContextBatch, drawModes, info.Flags, shadowsMode, info.Bounds, drawCall, entry.ReceiveDecals, info.SortOrder);
 }
 
 bool Mesh::DownloadDataGPU(MeshBufferType type, BytesContainer& result) const
@@ -521,7 +609,7 @@ bool Mesh::DownloadDataCPU(MeshBufferType type, BytesContainer& result, int32& c
         ScopeLock lock(model->Locker);
         if (model->IsVirtual())
         {
-            LOG(Error, "Cannot access CPU data of virtual models. Use GPU data download");
+            LOG(Error, "Cannot access CPU data of virtual models. Use GPU data download.");
             return true;
         }
 
@@ -554,15 +642,15 @@ bool Mesh::DownloadDataCPU(MeshBufferType type, BytesContainer& result, int32& c
                 LOG(Error, "Invalid mesh data.");
                 return true;
             }
-            auto vb0 = stream.Read<VB0ElementType>(vertices);
-            auto vb1 = stream.Read<VB1ElementType>(vertices);
+            auto vb0 = stream.Move<VB0ElementType>(vertices);
+            auto vb1 = stream.Move<VB1ElementType>(vertices);
             bool hasColors = stream.ReadBool();
             VB2ElementType18* vb2 = nullptr;
             if (hasColors)
             {
-                vb2 = stream.Read<VB2ElementType18>(vertices);
+                vb2 = stream.Move<VB2ElementType18>(vertices);
             }
-            auto ib = stream.Read<byte>(indicesCount * ibStride);
+            auto ib = stream.Move<byte>(indicesCount * ibStride);
 
             if (i != _index)
                 continue;
@@ -607,22 +695,24 @@ ScriptingObject* Mesh::GetParentModel()
     return _model;
 }
 
-bool Mesh::UpdateMeshUInt(int32 vertexCount, int32 triangleCount, MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj, MonoArray* colorsObj)
+#if !COMPILE_WITHOUT_CSHARP
+
+bool Mesh::UpdateMeshUInt(int32 vertexCount, int32 triangleCount, MArray* verticesObj, MArray* trianglesObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj, MArray* colorsObj)
 {
     return ::UpdateMesh<uint32>(this, (uint32)vertexCount, (uint32)triangleCount, verticesObj, trianglesObj, normalsObj, tangentsObj, uvObj, colorsObj);
 }
 
-bool Mesh::UpdateMeshUShort(int32 vertexCount, int32 triangleCount, MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj, MonoArray* colorsObj)
+bool Mesh::UpdateMeshUShort(int32 vertexCount, int32 triangleCount, MArray* verticesObj, MArray* trianglesObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj, MArray* colorsObj)
 {
     return ::UpdateMesh<uint16>(this, (uint32)vertexCount, (uint32)triangleCount, verticesObj, trianglesObj, normalsObj, tangentsObj, uvObj, colorsObj);
 }
 
-bool Mesh::UpdateTrianglesUInt(int32 triangleCount, MonoArray* trianglesObj)
+bool Mesh::UpdateTrianglesUInt(int32 triangleCount, MArray* trianglesObj)
 {
     return ::UpdateTriangles<uint32>(this, triangleCount, trianglesObj);
 }
 
-bool Mesh::UpdateTrianglesUShort(int32 triangleCount, MonoArray* trianglesObj)
+bool Mesh::UpdateTrianglesUShort(int32 triangleCount, MArray* trianglesObj)
 {
     return ::UpdateTriangles<uint16>(this, triangleCount, trianglesObj);
 }
@@ -636,75 +726,11 @@ enum class InternalBufferType
     IB32 = 4,
 };
 
-void ConvertMeshData(Mesh* mesh, InternalBufferType type, MonoArray* resultObj, void* srcData)
+MArray* Mesh::DownloadBuffer(bool forceGpu, MTypeObject* resultType, int32 typeI)
 {
-    auto vertices = mesh->GetVertexCount();
-    auto triangles = mesh->GetTriangleCount();
-    auto indices = triangles * 3;
-    auto use16BitIndexBuffer = mesh->Use16BitIndexBuffer();
-
-    void* managedArrayPtr = mono_array_addr_with_size(resultObj, 0, 0);
-    switch (type)
-    {
-    case InternalBufferType::VB0:
-    {
-        Platform::MemoryCopy(managedArrayPtr, srcData, sizeof(VB0ElementType) * vertices);
-        break;
-    }
-    case InternalBufferType::VB1:
-    {
-        Platform::MemoryCopy(managedArrayPtr, srcData, sizeof(VB1ElementType) * vertices);
-        break;
-    }
-    case InternalBufferType::VB2:
-    {
-        Platform::MemoryCopy(managedArrayPtr, srcData, sizeof(VB2ElementType) * vertices);
-        break;
-    }
-    case InternalBufferType::IB16:
-    {
-        if (use16BitIndexBuffer)
-        {
-            Platform::MemoryCopy(managedArrayPtr, srcData, sizeof(uint16) * indices);
-        }
-        else
-        {
-            auto dst = (uint16*)managedArrayPtr;
-            auto src = (uint32*)srcData;
-            for (int32 i = 0; i < indices; i++)
-            {
-                dst[i] = src[i];
-            }
-        }
-        break;
-    }
-    case InternalBufferType::IB32:
-    {
-        if (use16BitIndexBuffer)
-        {
-            auto dst = (uint32*)managedArrayPtr;
-            auto src = (uint16*)srcData;
-            for (int32 i = 0; i < indices; i++)
-            {
-                dst[i] = src[i];
-            }
-        }
-        else
-        {
-            Platform::MemoryCopy(managedArrayPtr, srcData, sizeof(uint32) * indices);
-        }
-        break;
-    }
-    }
-}
-
-bool Mesh::DownloadBuffer(bool forceGpu, MonoArray* resultObj, int32 typeI)
-{
-    Mesh* mesh = this;
-    InternalBufferType type = (InternalBufferType)typeI;
+    auto mesh = this;
+    auto type = (InternalBufferType)typeI;
     auto model = mesh->GetModel();
-    ASSERT(model && resultObj);
-
     ScopeLock lock(model->Locker);
 
     // Virtual assets always fetch from GPU memory
@@ -713,23 +739,7 @@ bool Mesh::DownloadBuffer(bool forceGpu, MonoArray* resultObj, int32 typeI)
     if (!mesh->IsInitialized() && forceGpu)
     {
         LOG(Error, "Cannot load mesh data from GPU if it's not loaded.");
-        return true;
-    }
-    if (type == InternalBufferType::IB16 || type == InternalBufferType::IB32)
-    {
-        if (mono_array_length(resultObj) != mesh->GetTriangleCount() * 3)
-        {
-            LOG(Error, "Invalid buffer size.");
-            return true;
-        }
-    }
-    else
-    {
-        if (mono_array_length(resultObj) != mesh->GetVertexCount())
-        {
-            LOG(Error, "Invalid buffer size.");
-            return true;
-        }
+        return nullptr;
     }
 
     MeshBufferType bufferType;
@@ -749,33 +759,96 @@ bool Mesh::DownloadBuffer(bool forceGpu, MonoArray* resultObj, int32 typeI)
         bufferType = MeshBufferType::Index;
         break;
     default:
-        return true;
+        return nullptr;
     }
     BytesContainer data;
+    int32 dataCount;
     if (forceGpu)
     {
         // Get data from GPU
         // TODO: support reusing the input memory buffer to perform a single copy from staging buffer to the input CPU buffer
         auto task = mesh->DownloadDataGPUAsync(bufferType, data);
         if (task == nullptr)
-            return true;
+            return nullptr;
         task->Start();
         model->Locker.Unlock();
         if (task->Wait())
         {
             LOG(Error, "Task failed.");
-            return true;
+            return nullptr;
         }
         model->Locker.Lock();
+
+        // Extract elements count from result data
+        switch (bufferType)
+        {
+        case MeshBufferType::Index:
+            dataCount = data.Length() / (Use16BitIndexBuffer() ? sizeof(uint16) : sizeof(uint32));
+            break;
+        case MeshBufferType::Vertex0:
+            dataCount = data.Length() / sizeof(VB0ElementType);
+            break;
+        case MeshBufferType::Vertex1:
+            dataCount = data.Length() / sizeof(VB1ElementType);
+            break;
+        case MeshBufferType::Vertex2:
+            dataCount = data.Length() / sizeof(VB2ElementType);
+            break;
+        }
     }
     else
     {
         // Get data from CPU
-        int32 count;
-        if (DownloadDataCPU(bufferType, data, count))
-            return true;
+        if (DownloadDataCPU(bufferType, data, dataCount))
+            return nullptr;
     }
 
-    ConvertMeshData(mesh, type, resultObj, data.Get());
-    return false;
+    // Convert into managed array
+    MArray* result = MCore::Array::New(MCore::Type::GetClass(INTERNAL_TYPE_OBJECT_GET(resultType)), dataCount);
+    void* managedArrayPtr = MCore::Array::GetAddress(result);
+    const int32 elementSize = data.Length() / dataCount;
+    switch (type)
+    {
+    case InternalBufferType::VB0:
+    case InternalBufferType::VB1:
+    case InternalBufferType::VB2:
+    {
+        Platform::MemoryCopy(managedArrayPtr, data.Get(), data.Length());
+        break;
+    }
+    case InternalBufferType::IB16:
+    {
+        if (elementSize == sizeof(uint16))
+        {
+            Platform::MemoryCopy(managedArrayPtr, data.Get(), data.Length());
+        }
+        else
+        {
+            auto dst = (uint16*)managedArrayPtr;
+            auto src = (uint32*)data.Get();
+            for (int32 i = 0; i < dataCount; i++)
+                dst[i] = src[i];
+        }
+        break;
+    }
+    case InternalBufferType::IB32:
+    {
+        if (elementSize == sizeof(uint16))
+        {
+            auto dst = (uint32*)managedArrayPtr;
+            auto src = (uint16*)data.Get();
+            for (int32 i = 0; i < dataCount; i++)
+                dst[i] = src[i];
+        }
+        else
+        {
+            Platform::MemoryCopy(managedArrayPtr, data.Get(), data.Length());
+        }
+        break;
+    }
+    }
+
+    return result;
 }
+
+#endif

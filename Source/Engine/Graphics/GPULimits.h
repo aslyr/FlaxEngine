@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -173,18 +173,12 @@ API_ENUM(Attributes="Flags") enum class FormatSupport : int32
 
 DECLARE_ENUM_OPERATORS(FormatSupport);
 
-// Helper macro to check if given format does not support a given set of feature flags
-#define FORMAT_FEATURES_ARE_NOT_SUPPORTED(formatSupport, formatSupportFlags) ((formatSupport & (formatSupportFlags)) != static_cast<int>(formatSupportFlags))
-
-// Helper macro to check if given format does support a given set of feature flags
-#define FORMAT_FEATURES_ARE_SUPPORTED(formatSupport, formatSupportFlags) ((formatSupport & (formatSupportFlags)) == static_cast<int>(formatSupportFlags))
-
 /// <summary>
 /// The features exposed for a particular format.
 /// </summary>
 API_STRUCT() struct FormatFeatures
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(FormatFeatures);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(FormatFeatures);
 
     /// <summary>
     /// Gets the maximum MSAA sample count for a particular <see cref="PixelFormat"/>.
@@ -218,7 +212,7 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(FormatFeatures);
 /// </summary>
 API_STRUCT() struct GPULimits
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(GPULimits);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(GPULimits);
 
     /// <summary>
     /// True if device supports Compute shaders.
@@ -264,6 +258,11 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(GPULimits);
     /// True if device supports depth buffer texture as a shader resource view.
     /// </summary>
     API_FIELD() bool HasDepthAsSRV;
+
+    /// <summary>
+    /// True if device supports depth buffer clipping (see GPUPipelineState::Description::DepthClipEnable).
+    /// </summary>
+    API_FIELD() bool HasDepthClip;
 
     /// <summary>
     /// True if device supports depth buffer texture as a readonly depth buffer (can be sampled in the shader while performing depth-test).

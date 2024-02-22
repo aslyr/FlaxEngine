@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
@@ -75,6 +75,7 @@ namespace FlaxEditor.Content
     /// Context proxy object for C++ script files.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.CSharpScriptProxy" />
+    [ContentContextMenu("New/C++/C++ Script")]
     public class CppScriptProxy : CppProxy
     {
         /// <inheritdoc />
@@ -98,6 +99,7 @@ namespace FlaxEditor.Content
     /// Context proxy object for C++ Json Asset files.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.CSharpScriptProxy" />
+    [ContentContextMenu("New/C++/C++ Function Library")]
     public class CppStaticClassProxy : CppProxy
     {
         /// <inheritdoc />
@@ -115,6 +117,7 @@ namespace FlaxEditor.Content
     /// Context proxy object for C++ Json Asset files.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.CSharpScriptProxy" />
+    [ContentContextMenu("New/C++/C++ Json Asset")]
     public class CppAssetProxy : CppProxy
     {
         /// <inheritdoc />

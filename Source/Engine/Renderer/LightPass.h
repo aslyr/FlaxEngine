@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,36 +14,25 @@
 class LightPass : public RendererPass<LightPass>
 {
 private:
-
-    // Lights
     AssetReference<Shader> _shader;
     GPUPipelineStatePermutationsPs<2> _psLightDir;
     GPUPipelineStatePermutationsPs<4> _psLightPointNormal;
     GPUPipelineStatePermutationsPs<4> _psLightPointInverted;
     GPUPipelineStatePermutationsPs<4> _psLightSpotNormal;
     GPUPipelineStatePermutationsPs<4> _psLightSpotInverted;
-    GPUPipelineState* _psLightSkyNormal;
-    GPUPipelineState* _psLightSkyInverted;
-
-    // Msc
+    GPUPipelineState* _psLightSkyNormal = nullptr;
+    GPUPipelineState* _psLightSkyInverted = nullptr;
+    GPUPipelineState* _psClearDiffuse = nullptr;
     AssetReference<Model> _sphereModel;
     PixelFormat _shadowMaskFormat;
 
 public:
-
-    /// <summary>
-    /// Init
-    /// </summary>
-    LightPass();
-
-public:
-
     /// <summary>
     /// Performs the lighting rendering for the input task.
     /// </summary>
-    /// <param name="renderContext">The rendering context.</param>
+    /// <param name="renderContextBatch">The rendering context batch.</param>
     /// <param name="lightBuffer">The light accumulation buffer (input and output).</param>
-    void RenderLight(RenderContext& renderContext, GPUTextureView* lightBuffer);
+    void RenderLight(RenderContextBatch& renderContextBatch, GPUTextureView* lightBuffer);
 
 private:
 

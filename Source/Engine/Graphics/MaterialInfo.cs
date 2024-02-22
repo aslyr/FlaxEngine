@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine
 {
@@ -18,6 +18,7 @@ namespace FlaxEngine
                 UsageFlags = MaterialUsageFlags.None,
                 FeaturesFlags = MaterialFeaturesFlags.None,
                 DecalBlendingMode = MaterialDecalBlendingMode.Translucent,
+                TransparentLightingMode = MaterialTransparentLightingMode.SurfaceNonDirectional,
                 PostFxLocation = MaterialPostFxLocation.AfterPostProcessingPass,
                 MaskThreshold = 0.3f,
                 OpacityThreshold = 0.12f,
@@ -61,6 +62,7 @@ namespace FlaxEngine
                    && UsageFlags == other.UsageFlags
                    && FeaturesFlags == other.FeaturesFlags
                    && DecalBlendingMode == other.DecalBlendingMode
+                   && TransparentLightingMode == other.TransparentLightingMode
                    && PostFxLocation == other.PostFxLocation
                    && Mathf.NearEqual(MaskThreshold, other.MaskThreshold)
                    && Mathf.NearEqual(OpacityThreshold, other.OpacityThreshold)
@@ -86,6 +88,7 @@ namespace FlaxEngine
                 hashCode = (hashCode * 397) ^ (int)FeaturesFlags;
                 hashCode = (hashCode * 397) ^ (int)PostFxLocation;
                 hashCode = (hashCode * 397) ^ (int)DecalBlendingMode;
+                hashCode = (hashCode * 397) ^ (int)TransparentLightingMode;
                 hashCode = (hashCode * 397) ^ (int)(MaskThreshold * 1000.0f);
                 hashCode = (hashCode * 397) ^ (int)(OpacityThreshold * 1000.0f);
                 hashCode = (hashCode * 397) ^ (int)TessellationMode;

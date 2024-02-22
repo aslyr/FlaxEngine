@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -18,57 +18,168 @@ namespace FlaxEngine.GUI
         [HideInEditor]
         protected class DropdownRoot : Panel
         {
-            private bool _isMouseDown;
-
-            /// <summary>
-            /// Occurs when item gets clicked. Argument is item index.
-            /// </summary>
-            public Action<int> ItemClicked;
-
             /// <summary>
             /// Occurs when popup lost focus.
             /// </summary>
             public Action LostFocus;
+            
+            /// <summary>
+            /// The selected control. Used to scroll to the control on popup creation.
+            /// </summary>
+            public ContainerControl SelectedControl = null;
 
             /// <summary>
-            /// The items container control.
+            /// The main panel used to hold the items.
             /// </summary>
-            public ContainerControl ItemsContainer;
+            public Panel MainPanel = null;
 
             /// <inheritdoc />
-            public override bool OnMouseDown(Vector2 location, MouseButton button)
+            public override void OnEndContainsFocus()
             {
-                _isMouseDown = true;
-                var result = base.OnMouseDown(location, button);
-                _isMouseDown = false;
+                base.OnEndContainsFocus();
+                
+                // Dont lose focus when using panel. Does prevent LostFocus even from being called if clicking inside of the panel.
+                if (MainPanel != null && MainPanel.IsMouseOver && !MainPanel.ContainsFocus)
+                {
+                    MainPanel.Focus();
+                    return;
+                }
+                // Call event after this 'focus contains flag' propagation ends to prevent focus issues
+                if (LostFocus != null)
+                    Scripting.RunOnUpdate(LostFocus);
+            }
 
-                if (!result)
-                    return false;
-
-                var itemIndex = ItemsContainer?.GetChildIndexAt(location) ?? -1;
-                if (itemIndex != -1)
-                    ItemClicked(itemIndex);
-
-                return true;
+            private static DropdownLabel FindItem(Control control)
+            {
+                if (control is DropdownLabel item)
+                    return item;
+                if (control is ContainerControl containerControl)
+                {
+                    foreach (var child in containerControl.Children)
+                    {
+                        item = FindItem(child);
+                        if (item != null)
+                            return item;
+                    }
+                }
+                return null;
             }
 
             /// <inheritdoc />
-            public override void OnLostFocus()
+            public override Control OnNavigate(NavDirection direction, Float2 location, Control caller, List<Control> visited)
             {
-                base.OnLostFocus();
-
-                if (!_isMouseDown)
+                if (IsFocused)
                 {
-                    LostFocus?.Invoke();
+                    // Dropdown root is focused
+                    if (direction == NavDirection.Down)
+                    {
+                        // Pick the first item
+                        return FindItem(this);
+                    }
+
+                    // Close popup
+                    Defocus();
+                    return null;
                 }
+
+                return base.OnNavigate(direction, location, caller, visited);
+            }
+
+            /// <inheritdoc />
+            public override void OnSubmit()
+            {
+                Defocus();
+
+                base.OnSubmit();
+            }
+
+            /// <inheritdoc />
+            public override bool OnKeyDown(KeyboardKeys key)
+            {
+                if (key == KeyboardKeys.Escape)
+                {
+                    Defocus();
+                    return true;
+                }
+
+                return base.OnKeyDown(key);
+            }
+
+            /// <inheritdoc />
+            public override bool OnMouseDown(Float2 location, MouseButton button)
+            {
+                if (base.OnMouseDown(location, button))
+                    return true;
+
+                // Close on click outside the popup
+                if (!new Rectangle(Float2.Zero, Size).Contains(ref location))
+                {
+                    Defocus();
+                    return true;
+                }
+
+                return false;
+            }
+
+            /// <inheritdoc />
+            public override bool OnTouchDown(Float2 location, int pointerId)
+            {
+                if (base.OnTouchDown(location, pointerId))
+                    return true;
+
+                // Close on touch outside the popup
+                if (!new Rectangle(Float2.Zero, Size).Contains(ref location))
+                {
+                    Defocus();
+                    return true;
+                }
+
+                return false;
             }
 
             /// <inheritdoc />
             public override void OnDestroy()
             {
-                ItemClicked = null;
                 LostFocus = null;
-                ItemsContainer = null;
+                MainPanel = null;
+                SelectedControl = null;
+
+                base.OnDestroy();
+            }
+        }
+
+        [HideInEditor]
+        private class DropdownLabel : Label
+        {
+            public Action<Label> ItemClicked;
+
+            public override bool OnMouseDown(Float2 location, MouseButton button)
+            {
+                if (base.OnMouseDown(location, button))
+                    return true;
+                ItemClicked?.Invoke(this);
+                return true;
+            }
+
+            public override bool OnTouchDown(Float2 location, int pointerId)
+            {
+                if (base.OnTouchDown(location, pointerId))
+                    return true;
+                ItemClicked?.Invoke(this);
+                return true;
+            }
+
+            /// <inheritdoc />
+            public override void OnSubmit()
+            {
+                ItemClicked?.Invoke(this);
+
+                base.OnSubmit();
+            }
+
+            public override void OnDestroy()
+            {
+                ItemClicked = null;
 
                 base.OnDestroy();
             }
@@ -85,6 +196,7 @@ namespace FlaxEngine.GUI
         protected DropdownRoot _popup;
 
         private bool _touchDown;
+        private bool _hadNavFocus;
 
         /// <summary>
         /// The selected index of the item (-1 for no selection).
@@ -140,6 +252,18 @@ namespace FlaxEngine.GUI
         }
 
         /// <summary>
+        /// Gets or sets whether to show all of the items.
+        /// </summary>
+        [EditorOrder(3), Tooltip("Whether to show all of the items in the drop down.")]
+        public bool ShowAllItems { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the maximum number of items to show at once. Only used if ShowAllItems is false.
+        /// </summary>
+        [EditorOrder(4), VisibleIf(nameof(ShowAllItems), true), Limit(1), Tooltip("The number of items to show in the drop down.")]
+        public int ShowMaxItemsCount { get; set; } = 5;
+
+        /// <summary>
         /// Event fired when selected index gets changed.
         /// </summary>
         public event Action<Dropdown> SelectedIndexChanged;
@@ -152,79 +276,79 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the font used to draw text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Text Style"), EditorOrder(2021)]
         public FontReference Font { get; set; }
 
         /// <summary>
         /// Gets or sets the custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("Custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
+        [EditorDisplay("Text Style"), EditorOrder(2022), Tooltip("Custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
         public MaterialBase FontMaterial { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Text Style"), EditorOrder(2020), ExpandGroups]
         public Color TextColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the border.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Border Style"), EditorOrder(2010), ExpandGroups]
         public Color BorderColor { get; set; }
 
         /// <summary>
         /// Gets or sets the background color when dropdown popup is opened.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2010)]
+        [EditorDisplay("Background Style"), EditorOrder(2002)]
         public Color BackgroundColorSelected { get; set; }
 
         /// <summary>
         /// Gets or sets the border color when dropdown popup is opened.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2020)]
+        [EditorDisplay("Border Style"), EditorOrder(2012)]
         public Color BorderColorSelected { get; set; }
 
         /// <summary>
         /// Gets or sets the background color when dropdown is highlighted.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Background Style"), EditorOrder(2001), ExpandGroups]
         public Color BackgroundColorHighlighted { get; set; }
 
         /// <summary>
         /// Gets or sets the border color when dropdown is highlighted.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Border Style"), EditorOrder(2011)]
         public Color BorderColorHighlighted { get; set; }
 
         /// <summary>
         /// Gets or sets the image used to render dropdown drop arrow icon.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The image used to render dropdown drop arrow icon.")]
+        [EditorDisplay("Icon Style"), EditorOrder(2033), Tooltip("The image used to render dropdown drop arrow icon.")]
         public IBrush ArrowImage { get; set; }
 
         /// <summary>
         /// Gets or sets the color used to render dropdown drop arrow icon.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color used to render dropdown drop arrow icon.")]
+        [EditorDisplay("Icon Style"), EditorOrder(2030), Tooltip("The color used to render dropdown drop arrow icon."), ExpandGroups]
         public Color ArrowColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color used to render dropdown drop arrow icon (menu is opened).
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color used to render dropdown drop arrow icon (menu is opened).")]
+        [EditorDisplay("Icon Style"), EditorOrder(2032), Tooltip("The color used to render dropdown drop arrow icon (menu is opened).")]
         public Color ArrowColorSelected { get; set; }
 
         /// <summary>
         /// Gets or sets the color used to render dropdown drop arrow icon (menu is highlighted).
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color used to render dropdown drop arrow icon (menu is highlighted).")]
+        [EditorDisplay("Icon Style"), EditorOrder(2031), Tooltip("The color used to render dropdown drop arrow icon (menu is highlighted).")]
         public Color ArrowColorHighlighted { get; set; }
 
         /// <summary>
         /// Gets or sets the image used to render dropdown checked item icon.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The image used to render dropdown checked item icon.")]
+        [EditorDisplay("Icon Style"), EditorOrder(2034), Tooltip("The image used to render dropdown checked item icon.")]
         public IBrush CheckedImage { get; set; }
 
         /// <summary>
@@ -233,8 +357,6 @@ namespace FlaxEngine.GUI
         public Dropdown()
         : base(0, 0, 120, 18.0f)
         {
-            AutoFocus = false;
-
             var style = Style.Current;
             Font = new FontReference(style.FontMedium);
             TextColor = style.Foreground;
@@ -319,12 +441,23 @@ namespace FlaxEngine.GUI
 
             // TODO: support item templates
 
-            var container = new VerticalPanel
+            var panel = new Panel
             {
                 AnchorPreset = AnchorPresets.StretchAll,
                 BackgroundColor = BackgroundColor,
-                AutoSize = false,
+                ScrollBars = ScrollBars.Vertical,
+                AutoFocus = true,
                 Parent = popup,
+            };
+            popup.MainPanel = panel;
+
+            var container = new VerticalPanel
+            {
+                AnchorPreset = AnchorPresets.StretchAll,
+                BackgroundColor = Color.Transparent,
+                IsScrollable = true,
+                AutoSize = true,
+                Parent = panel,
             };
             var border = new Border
             {
@@ -336,7 +469,13 @@ namespace FlaxEngine.GUI
 
             var itemsHeight = 20.0f;
             var itemsMargin = 20.0f;
-
+            // Scale height and margive with text height if needed
+            var textHeight = Font.GetFont().Height;
+            if (textHeight > itemsHeight)
+            {
+                itemsHeight = textHeight;
+                itemsMargin = textHeight;
+            }
             /*
             var itemsWidth = 40.0f;
             var font = Font.GetFont();
@@ -350,23 +489,31 @@ namespace FlaxEngine.GUI
 
             for (int i = 0; i < _items.Count; i++)
             {
-                var item = new Spacer
+                var item = new ContainerControl
                 {
+                    AutoFocus = false,
                     Height = itemsHeight,
                     Width = itemsWidth,
                     Parent = container,
                 };
 
-                var label = new Label
+                var label = new DropdownLabel
                 {
+                    AutoFocus = true,
                     X = itemsMargin,
-                    Size = new Vector2(itemsWidth - itemsMargin, itemsHeight),
+                    Size = new Float2(itemsWidth - itemsMargin, itemsHeight),
                     Font = Font,
                     TextColor = Color.White * 0.9f,
                     TextColorHighlighted = Color.White,
                     HorizontalAlignment = TextAlignment.Near,
                     Text = _items[i],
                     Parent = item,
+                    Tag = i,
+                };
+                label.ItemClicked += c =>
+                {
+                    OnItemClicked((int)c.Tag);
+                    DestroyPopup();
                 };
                 height += itemsHeight;
                 if (i != 0)
@@ -377,16 +524,25 @@ namespace FlaxEngine.GUI
                     var icon = new Image
                     {
                         Brush = CheckedImage,
-                        Size = new Vector2(itemsMargin, itemsHeight),
+                        Size = new Float2(itemsMargin, itemsHeight),
                         Margin = new Margin(4.0f, 6.0f, 4.0f, 4.0f),
                         //AnchorPreset = AnchorPresets.VerticalStretchLeft,
                         Parent = item,
                     };
+                    popup.SelectedControl = item;
                 }
             }
 
-            popup.Size = new Vector2(itemsWidth, height);
-            popup.ItemsContainer = container;
+            if (ShowAllItems || _items.Count < ShowMaxItemsCount)
+            {
+                popup.Size = new Float2(itemsWidth, height);
+                panel.Size = popup.Size;
+            }
+            else
+            {
+                popup.Size = new Float2(itemsWidth, (itemsHeight + container.Spacing) * ShowMaxItemsCount);
+                panel.Size = popup.Size;
+            }
 
             return popup;
         }
@@ -413,8 +569,13 @@ namespace FlaxEngine.GUI
             if (_popup != null)
             {
                 OnPopupHide();
+                _popup.EndMouseCapture();
                 _popup.Dispose();
                 _popup = null;
+                if (_hadNavFocus)
+                    NavigationFocus();
+                else
+                    Focus();
             }
         }
 
@@ -423,37 +584,42 @@ namespace FlaxEngine.GUI
         /// </summary>
         public void ShowPopup()
         {
-            var root = Root;
+            // Find canvas scalar and set as root if it exists.
+            ContainerControl c = Parent;
+            while(c.Parent != Root && c.Parent != null)
+            {
+                c = c.Parent;
+                if (c is CanvasScaler scalar)
+                    break;
+            }
+            var root = c is CanvasScaler ? c : Root;
+            
             if (_items.Count == 0 || root == null)
                 return;
 
             // Setup popup
             DestroyPopup();
+            _hadNavFocus = IsNavFocused;
             _popup = CreatePopup();
-
-            // Update layout
             _popup.UnlockChildrenRecursive();
             _popup.PerformLayout();
-
-            // Bind events
-            _popup.ItemClicked += index =>
-            {
-                OnItemClicked(index);
-                DestroyPopup();
-            };
             _popup.LostFocus += DestroyPopup;
 
             // Show dropdown popup
-            Vector2 locationRootSpace = Location + new Vector2(0, Height);
+            var locationRootSpace = Location + new Float2(0, Height - Height * (1 - Scale.Y) / 2);
             var parent = Parent;
-            while (parent != null && parent != Root)
+            while (parent != null && parent != root)
             {
                 locationRootSpace = parent.PointToParent(ref locationRootSpace);
                 parent = parent.Parent;
             }
-            _popup.Location = locationRootSpace;
+            _popup.Scale = Scale;
+            _popup.Location = locationRootSpace - new Float2(0, _popup.Height * (1 - _popup.Scale.Y) / 2);
             _popup.Parent = root;
             _popup.Focus();
+            _popup.StartMouseCapture();
+            if (_popup.SelectedControl != null && _popup.MainPanel != null)
+                _popup.MainPanel.ScrollViewTo(_popup.SelectedControl, true);
             OnPopupShow();
         }
 
@@ -477,7 +643,7 @@ namespace FlaxEngine.GUI
         public override void DrawSelf()
         {
             // Cache data
-            var clientRect = new Rectangle(Vector2.Zero, Size);
+            var clientRect = new Rectangle(Float2.Zero, Size);
             float margin = clientRect.Height * 0.2f;
             float boxSize = clientRect.Height - margin * 2;
             bool isOpened = IsPopupOpened;
@@ -496,7 +662,7 @@ namespace FlaxEngine.GUI
                 borderColor = BorderColorSelected;
                 arrowColor = ArrowColorSelected;
             }
-            else if (IsMouseOver)
+            else if (IsMouseOver || IsNavFocused)
             {
                 backgroundColor = BackgroundColorHighlighted;
                 borderColor = BorderColorHighlighted;
@@ -539,7 +705,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (base.OnMouseDown(location, button))
                 return true;
@@ -547,6 +713,46 @@ namespace FlaxEngine.GUI
             if (button == MouseButton.Left)
             {
                 _touchDown = true;
+                if (!IsPopupOpened)
+                    Focus();
+                return true;
+            }
+            return false;
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseUp(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseUp(location, button))
+                return true;
+
+            if (_touchDown && button == MouseButton.Left)
+            {
+                _touchDown = false;
+                ShowPopup();
+                return true;
+            }
+            return false;
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseDoubleClick(location, button))
+                return true;
+            
+            if (_touchDown && button == MouseButton.Left)
+            {
+                _touchDown = false;
+                ShowPopup();
+                return true;
+            }
+            
+            if (button == MouseButton.Left)
+            {
+                _touchDown = true;
+                if (!IsPopupOpened)
+                    Focus();
                 return true;
             }
 
@@ -554,20 +760,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
-        {
-            if (_touchDown && button == MouseButton.Left)
-            {
-                _touchDown = false;
-                ShowPopup();
-                return true;
-            }
-
-            return base.OnMouseUp(location, button);
-        }
-
-        /// <inheritdoc />
-        public override bool OnTouchDown(Vector2 location, int pointerId)
+        public override bool OnTouchDown(Float2 location, int pointerId)
         {
             if (base.OnTouchDown(location, pointerId))
                 return true;
@@ -577,7 +770,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnTouchUp(Vector2 location, int pointerId)
+        public override bool OnTouchUp(Float2 location, int pointerId)
         {
             if (base.OnTouchUp(location, pointerId))
                 return true;
@@ -595,6 +788,14 @@ namespace FlaxEngine.GUI
             _touchDown = false;
 
             base.OnTouchLeave(pointerId);
+        }
+
+        /// <inheritdoc />
+        public override void OnSubmit()
+        {
+            ShowPopup();
+
+            base.OnSubmit();
         }
     }
 }

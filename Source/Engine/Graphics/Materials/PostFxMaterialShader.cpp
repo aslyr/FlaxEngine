@@ -1,7 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "PostFxMaterialShader.h"
 #include "MaterialParams.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
@@ -11,13 +13,14 @@
 
 PACK_STRUCT(struct PostFxMaterialShaderData {
     Matrix ViewMatrix;
-    Vector3 ViewPos;
+    Float3 ViewPos;
     float ViewFar;
-    Vector3 ViewDir;
+    Float3 ViewDir;
     float TimeParam;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
-    Vector4 TemporalAAJitter;
+    Float4 ViewInfo;
+    Float4 ScreenSize;
+    Float4 TemporalAAJitter;
+    Matrix InverseViewProjectionMatrix;
     });
 
 void PostFxMaterialShader::Bind(BindParameters& params)
@@ -44,6 +47,7 @@ void PostFxMaterialShader::Bind(BindParameters& params)
     // Setup material constants
     {
         Matrix::Transpose(view.View, materialData->ViewMatrix);
+        Matrix::Transpose(view.IVP, materialData->InverseViewProjectionMatrix);
         materialData->ViewPos = view.Position;
         materialData->ViewFar = view.Far;
         materialData->ViewDir = view.Direction;

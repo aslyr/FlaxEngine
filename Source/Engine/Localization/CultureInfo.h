@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,8 @@
 /// </summary>
 API_CLASS(InBuild, Namespace="System.Globalization") class FLAXENGINE_API CultureInfo
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(CultureInfo);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(CultureInfo);
+
 private:
     void* _data;
     int32 _lcid;
@@ -63,11 +64,6 @@ public:
     /// Gets the culture name in English (eg. polski (Polska)).
     /// </summary>
     const String& GetEnglishName() const;
-
-    /// <summary>
-    /// Returns true if culture uses right-to-left (RTL) text layout. Otherwise it's more common left-to-right.
-    /// </summary>
-    bool IsRightToLeft() const;
 
     String ToString() const;
     bool operator==(const CultureInfo& other) const;

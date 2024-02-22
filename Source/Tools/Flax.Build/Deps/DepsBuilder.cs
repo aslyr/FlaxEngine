@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Flax.Build;
 
 namespace Flax.Deps
@@ -21,6 +22,9 @@ namespace Flax.Deps
 
         public static bool Run()
         {
+            // Fix error 'IBM437' is not a supported encoding name from Ionic.Zip.ZipFile
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
             // Setup
             var buildPlatform = Platform.BuildPlatform;
             var options = new Dependency.BuildOptions
@@ -58,7 +62,7 @@ namespace Flax.Deps
             {
                 var dependency = dependencies[i];
                 var name = dependency.GetType().Name;
-                if (depsToBuild.Length > 0)
+                if (depsToBuild.Length > 0 || !dependency.BuildByDefault)
                 {
                     if (!depsToBuild.Contains(name.ToLower()))
                     {
@@ -85,7 +89,7 @@ namespace Flax.Deps
                     continue;
                 }
 
-                var forceEmpty = Configuration.ReBuildDeps;
+                var forceEmpty = false; //Configuration.ReBuildDeps;
                 Dependency.SetupDirectory(options.IntermediateFolder, forceEmpty);
 
                 dependency.Build(options);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -73,7 +73,7 @@ bool DescriptorHeapWithSlotsDX12::Create(D3D12_DESCRIPTOR_HEAP_TYPE type, uint32
 
     // Create heap
     const HRESULT result = _device->GetDevice()->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap), reinterpret_cast<void**>(&_heap));
-    LOG_DIRECTX_RESULT_WITH_RETURN(result);
+    LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
     // Setup
     _type = type;
@@ -128,9 +128,9 @@ void DescriptorHeapWithSlotsDX12::ReleaseSlot(uint32 index)
     value &= ~mask;
 }
 
-GPUResource::ResourceType DescriptorHeapWithSlotsDX12::GetResourceType() const
+GPUResourceType DescriptorHeapWithSlotsDX12::GetResourceType() const
 {
-    return ResourceType::Descriptor;
+    return GPUResourceType::Descriptor;
 }
 
 DescriptorHeapPoolDX12::DescriptorHeapPoolDX12(GPUDeviceDX12* device, D3D12_DESCRIPTOR_HEAP_TYPE type, uint32 descriptorsCountPerHeap, bool shaderVisible)
@@ -196,7 +196,7 @@ bool DescriptorHeapRingBufferDX12::Init()
     desc.Flags = _shaderVisible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE : D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     desc.NodeMask = 0;
     const HRESULT result = _device->GetDevice()->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&_heap));
-    LOG_DIRECTX_RESULT_WITH_RETURN(result);
+    LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
     // Setup
     _firstFree = 0;

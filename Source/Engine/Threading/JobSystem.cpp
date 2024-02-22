@@ -1,17 +1,15 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "JobSystem.h"
 #include "IRunnable.h"
 #include "Engine/Platform/CPUInfo.h"
 #include "Engine/Platform/Thread.h"
 #include "Engine/Platform/ConditionVariable.h"
+#include "Engine/Core/Collections/Dictionary.h"
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Profiler/ProfilerCPU.h"
+#if USE_CSHARP
 #include "Engine/Scripting/ManagedCLR/MCore.h"
-#if USE_MONO
-#include "Engine/Scripting/ManagedCLR/MDomain.h"
-#include <ThirdParty/mono-2.0/mono/metadata/appdomain.h>
-#include <ThirdParty/mono-2.0/mono/metadata/threads.h>
 #endif
 
 // Jobs storage perf info:
@@ -38,7 +36,6 @@
 class JobSystemService : public EngineService
 {
 public:
-
     JobSystemService()
         : EngineService(TEXT("JobSystem"), -800)
     {
@@ -53,12 +50,13 @@ struct JobData
 {
     Function<void(int32)> Job;
     int32 Index;
+    int64 JobKey;
 };
 
 template<>
 struct TIsPODType<JobData>
 {
-    enum { Value = true };
+    enum { Value = false };
 };
 
 class JobSystemThread : public IRunnable
@@ -67,7 +65,6 @@ public:
     uint64 Index;
 
 public:
-
     // [IRunnable]
     String ToString() const override
     {
@@ -82,20 +79,33 @@ public:
     }
 };
 
+struct JobContext
+{
+    volatile int64 JobsLeft;
+};
+
+template<>
+struct TIsPODType<JobContext>
+{
+    enum { Value = true };
+};
+
 namespace
 {
     JobSystemService JobSystemInstance;
-    Thread* Threads[PLATFORM_THREADS_LIMIT] = {};
+    Thread* Threads[PLATFORM_THREADS_LIMIT / 2] = {};
     int32 ThreadsCount = 0;
     bool JobStartingOnDispatch = true;
     volatile int64 ExitFlag = 0;
-    volatile int64 DoneLabel = 0;
-    volatile int64 NextLabel = 0;
+    volatile int64 JobLabel = 0;
+    Dictionary<int64, JobContext> JobContexts;
     ConditionVariable JobsSignal;
+    CriticalSection JobsMutex;
     ConditionVariable WaitSignal;
-#if JOB_SYSTEM_USE_MUTEX
+    CriticalSection WaitMutex;
     CriticalSection JobsLocker;
-    RingBuffer<JobData, InlinedAllocation<256>> Jobs;
+#if JOB_SYSTEM_USE_MUTEX
+    RingBuffer<JobData> Jobs;
 #else
     ConcurrentQueue<JobData> Jobs;
 #endif
@@ -136,8 +146,7 @@ void JobSystemService::Dispose()
     {
         if (Threads[i])
         {
-            if (Threads[i]->IsRunning())
-                Threads[i]->Kill(true);
+            Threads[i]->Kill(true);
             Delete(Threads[i]);
             Threads[i] = nullptr;
         }
@@ -149,8 +158,7 @@ int32 JobSystemThread::Run()
     Platform::SetThreadAffinityMask(1ull << Index);
 
     JobData data;
-    CriticalSection mutex;
-    bool attachMonoThread = true;
+    bool attachCSharpThread = true;
 #if !JOB_SYSTEM_USE_MUTEX
     moodycamel::ConsumerToken consumerToken(Jobs);
 #endif
@@ -179,13 +187,12 @@ int32 JobSystemThread::Run()
 
         if (data.Job.IsBinded())
         {
-#if USE_MONO
+#if USE_CSHARP
             // Ensure to have C# thread attached to this thead (late init due to MCore being initialized after Job System)
-            if (attachMonoThread && !mono_domain_get())
+            if (attachCSharpThread)
             {
-                const auto domain = MCore::Instance()->GetActiveDomain();
-                mono_thread_attach(domain->GetNative());
-                attachMonoThread = false;
+                MCore::Thread::Attach();
+                attachCSharpThread = false;
             }
 #endif
 
@@ -193,7 +200,15 @@ int32 JobSystemThread::Run()
             data.Job(data.Index);
 
             // Move forward with the job queue
-            Platform::InterlockedIncrement(&DoneLabel);
+            JobsLocker.Lock();
+            JobContext& context = JobContexts.At(data.JobKey);
+            if (Platform::InterlockedDecrement(&context.JobsLeft) <= 0)
+            {
+                ASSERT_LOW_LAYER(context.JobsLeft <= 0);
+                JobContexts.Remove(data.JobKey);
+            }
+            JobsLocker.Unlock();
+
             WaitSignal.NotifyAll();
 
             data.Job.Unbind();
@@ -201,15 +216,34 @@ int32 JobSystemThread::Run()
         else
         {
             // Wait for signal
-            mutex.Lock();
-            JobsSignal.Wait(mutex);
-            mutex.Unlock();
+            JobsMutex.Lock();
+            JobsSignal.Wait(JobsMutex);
+            JobsMutex.Unlock();
         }
     }
     return 0;
 }
 
 #endif
+
+void JobSystem::Execute(const Function<void(int32)>& job, int32 jobCount)
+{
+#if JOB_SYSTEM_ENABLED
+    // TODO: disable async if called on job thread? or maybe Wait should handle waiting in job thread to do the processing?
+    if (jobCount > 1)
+    {
+        // Async
+        const int64 jobWaitHandle = Dispatch(job, jobCount);
+        Wait(jobWaitHandle);
+    }
+    else
+#endif
+    {
+        // Sync
+        for (int32 i = 0; i < jobCount; i++)
+            job(i);
+    }
+}
 
 int64 JobSystem::Dispatch(const Function<void(int32)>& job, int32 jobCount)
 {
@@ -220,20 +254,28 @@ int64 JobSystem::Dispatch(const Function<void(int32)>& job, int32 jobCount)
 #if JOB_SYSTEM_USE_STATS
     const auto start = Platform::GetTimeCycles();
 #endif
+    const auto label = Platform::InterlockedAdd(&JobLabel, (int64)jobCount) + jobCount;
 
     JobData data;
     data.Job = job;
+    data.JobKey = label;
+
+    JobContext context;
+    context.JobsLeft = jobCount;
 
 #if JOB_SYSTEM_USE_MUTEX
     JobsLocker.Lock();
+    JobContexts.Add(label, context);
     for (data.Index = 0; data.Index < jobCount; data.Index++)
         Jobs.PushBack(data);
     JobsLocker.Unlock();
 #else
+    JobsLocker.Lock();
+    JobContexts.Add(label, context);
+    JobsLocker.Unlock();
     for (data.Index = 0; data.Index < jobCount; data.Index++)
         Jobs.enqueue(data);
 #endif
-    const auto label = Platform::InterlockedAdd(&NextLabel, (int64)jobCount) + jobCount;
 
 #if JOB_SYSTEM_USE_STATS
     LOG(Info, "Job enqueue time: {0} cycles", (int64)(Platform::GetTimeCycles() - start));
@@ -258,7 +300,20 @@ int64 JobSystem::Dispatch(const Function<void(int32)>& job, int32 jobCount)
 void JobSystem::Wait()
 {
 #if JOB_SYSTEM_ENABLED
-    Wait(Platform::AtomicRead(&NextLabel));
+    JobsLocker.Lock();
+    int32 numJobs = JobContexts.Count();
+    JobsLocker.Unlock();
+
+    while (numJobs > 0)
+    {
+        WaitMutex.Lock();
+        WaitSignal.Wait(WaitMutex, 1);
+        WaitMutex.Unlock();
+
+        JobsLocker.Lock();
+        numJobs = JobContexts.Count();
+        JobsLocker.Unlock();
+    }
 #endif
 }
 
@@ -267,18 +322,24 @@ void JobSystem::Wait(int64 label)
 #if JOB_SYSTEM_ENABLED
     PROFILE_CPU();
 
-    // Early out
-    if (label <= Platform::AtomicRead(&DoneLabel))
-        return;
-
-    // Wait on signal until input label is not yet done
-    CriticalSection mutex;
-    do
+    while (Platform::AtomicRead(&ExitFlag) == 0)
     {
-        mutex.Lock();
-        WaitSignal.Wait(mutex, 1);
-        mutex.Unlock();
-    } while (label > Platform::AtomicRead(&DoneLabel) && Platform::AtomicRead(&ExitFlag) == 0);
+        JobsLocker.Lock();
+        const JobContext* context = JobContexts.TryGet(label);
+        JobsLocker.Unlock();
+
+        // Skip if context has been already executed (last job removes it)
+        if (!context)
+            break;
+
+        // Wait on signal until input label is not yet done
+        WaitMutex.Lock();
+        WaitSignal.Wait(WaitMutex, 1);
+        WaitMutex.Unlock();
+
+        // Wake up any thread to prevent stalling in highly multi-threaded environment
+        JobsSignal.NotifyOne();
+    }
 
 #if JOB_SYSTEM_USE_STATS
     LOG(Info, "Job average dequeue time: {0} cycles", DequeueSum / DequeueCount);
@@ -294,13 +355,26 @@ void JobSystem::SetJobStartingOnDispatch(bool value)
 
     if (value)
     {
+#if JOB_SYSTEM_USE_MUTEX
         JobsLocker.Lock();
         const int32 count = Jobs.Count();
         JobsLocker.Unlock();
+#else
+        const int32 count = Jobs.Count();
+#endif
         if (count == 1)
             JobsSignal.NotifyOne();
         else if (count != 0)
             JobsSignal.NotifyAll();
     }
+#endif
+}
+
+int32 JobSystem::GetThreadsCount()
+{
+#if JOB_SYSTEM_ENABLED
+    return ThreadsCount;
+#else
+    return 0;
 #endif
 }

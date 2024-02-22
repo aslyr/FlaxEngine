@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,6 +10,7 @@ struct Guid;
 struct CPUInfo;
 struct MemoryStats;
 struct ProcessMemoryStats;
+struct CreateProcessSettings;
 struct CreateWindowSettings;
 struct BatteryInfo;
 
@@ -124,12 +125,13 @@ enum class ThreadPriority
 
 extern FLAXENGINE_API const Char* ToString(ThreadPriority value);
 
-API_INJECT_CPP_CODE("#include \"Engine/Platform/Platform.h\"");
+API_INJECT_CODE(cpp, "#include \"Engine/Platform/Platform.h\"");
 
 /// <summary>
 /// Runtime platform service.
 /// </summary>
-API_CLASS(Static, Name="Platform") class FLAXENGINE_API PlatformBase
+API_CLASS(Static, Name="Platform", Tag="NativeInvokeUseName")
+class FLAXENGINE_API PlatformBase
 {
 DECLARE_SCRIPTING_TYPE_MINIMAL(PlatformBase);
 
@@ -165,7 +167,6 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(PlatformBase);
     static void Exit();
 
 public:
-
     /// <summary>
     /// Copy memory region
     /// </summary>
@@ -332,7 +333,6 @@ public:
     static void FreePages(void* ptr);
 
 public:
-
     /// <summary>
     /// Returns the current runtime platform type. It's compile-time constant.
     /// </summary>
@@ -407,7 +407,6 @@ public:
     static void Sleep(int32 milliseconds) = delete;
 
 public:
-
     /// <summary>
     /// Gets the current time in seconds.
     /// </summary>
@@ -453,7 +452,6 @@ public:
     static void GetUTCTime(int32& year, int32& month, int32& dayOfWeek, int32& day, int32& hour, int32& minute, int32& second, int32& millisecond) = delete;
 
 public:
-
     /// <summary>
     /// Shows the fatal error message to the user.
     /// </summary>
@@ -480,7 +478,6 @@ public:
     static void Info(const Char* msg);
 
 public:
-
     /// <summary>
     /// Shows the fatal error message to the user.
     /// </summary>
@@ -518,7 +515,6 @@ public:
     static bool IsDebuggerPresent();
 
 public:
-
     /// <summary>
     /// Performs a fatal crash.
     /// </summary>
@@ -558,7 +554,6 @@ public:
     static void CheckFailed(const char* message, const char* file, int line);
 
 public:
-
     /// <summary>
     /// Sets the High DPI awareness.
     /// </summary>
@@ -595,7 +590,7 @@ public:
     API_PROPERTY() static ScreenOrientationType GetScreenOrientationType();
 
     /// <summary>
-    /// Gets the current  locale culture (eg. "pl-PL" or "en-US").
+    /// Gets the current locale culture (eg. "pl-PL" or "en-US").
     /// </summary>
     API_PROPERTY() static String GetUserLocaleName() = delete;
 
@@ -607,7 +602,7 @@ public:
     /// <summary>
     /// Gets the user name.
     /// </summary>
-    API_PROPERTY() static String GetUserName() = delete;
+    API_PROPERTY() static String GetUserName();
 
     /// <summary>
     /// Returns true if app has user focus.
@@ -626,48 +621,73 @@ public:
     static void CreateGuid(Guid& result);
 
 public:
+    /// <summary>
+    /// The list of users.
+    /// </summary>
+    API_FIELD(ReadOnly) static Array<User*, FixedAllocation<8>> Users;
 
+    /// <summary>
+    /// Event called when user gets added (eg. logged in).
+    /// </summary>
+    API_EVENT() static Delegate<User*> UserAdded;
+
+    /// <summary>
+    /// Event called when user gets removed (eg. logged out).
+    /// </summary>
+    API_EVENT() static Delegate<User*> UserRemoved;
+
+public:
     /// <summary>
     /// Returns a value indicating whether can open a given URL in a web browser.
     /// </summary>
     /// <param name="url">The URI to assign to web browser.</param>
     /// <returns>True if can open URL, otherwise false.</returns>
-    API_FUNCTION() static bool CanOpenUrl(const StringView& url) = delete;
+    API_FUNCTION() static bool CanOpenUrl(const StringView& url);
 
     /// <summary>
     /// Launches a web browser and opens a given URL.
     /// </summary>
     /// <param name="url">The URI to assign to web browser.</param>
-    API_FUNCTION() static void OpenUrl(const StringView& url) = delete;
+    API_FUNCTION() static void OpenUrl(const StringView& url);
 
 public:
+    /// <summary>
+    /// Gets the mouse cursor position in screen-space coordinates.
+    /// </summary>
+    /// <returns>Mouse cursor coordinates.</returns>
+    API_PROPERTY() static Float2 GetMousePosition();
+
+    /// <summary>
+    /// Sets the mouse cursor position in screen-space coordinates.
+    /// </summary>
+    /// <param name="position">Cursor position to set.</param>
+    API_PROPERTY() static void SetMousePosition(const Float2& position);
 
     /// <summary>
     /// Gets the origin position and size of the monitor at the given screen-space location.
     /// </summary>
     /// <param name="screenPos">The screen position (in pixels).</param>
     /// <returns>The monitor bounds.</returns>
-    API_FUNCTION() static Rectangle GetMonitorBounds(const Vector2& screenPos) = delete;
+    API_FUNCTION() static Rectangle GetMonitorBounds(const Float2& screenPos);
 
     /// <summary>
     /// Gets size of the primary desktop.
     /// </summary>
     /// <returns>Desktop size.</returns>
-    API_PROPERTY() static Vector2 GetDesktopSize() = delete;
+    API_PROPERTY() static Float2 GetDesktopSize() = delete;
 
     /// <summary>
     /// Gets virtual bounds of the desktop made of all the monitors outputs attached.
     /// </summary>
     /// <returns>Whole desktop size.</returns>
-    API_PROPERTY() static Rectangle GetVirtualDesktopBounds() = delete;
+    API_PROPERTY() static Rectangle GetVirtualDesktopBounds();
 
     /// <summary>
     /// Gets virtual size of the desktop made of all the monitors outputs attached.
     /// </summary>
-    API_PROPERTY() static Vector2 GetVirtualDesktopSize();
+    API_PROPERTY() static Float2 GetVirtualDesktopSize();
 
 public:
-
     /// <summary>
     /// Gets full path of the main engine directory.
     /// </summary>
@@ -700,7 +720,6 @@ public:
     static bool SetWorkingDirectory(const String& path);
 
 public:
-
     /// <summary>
     /// Gets the process environment variables (pairs of key and value).
     /// </summary>
@@ -724,36 +743,45 @@ public:
     static bool SetEnvironmentVariable(const String& name, const String& value);
 
 public:
-
     /// <summary>
-    /// Starts a new process.
+    /// Starts a new process (runs app).
+    /// [Deprecated in v1.6]
     /// </summary>
-    /// <param name="filename">The path to the file.</param>
+    /// <param name="filename">The path to the executable file.</param>
     /// <param name="args">Custom arguments for command line</param>
     /// <param name="workingDir">The custom name of the working directory</param>
     /// <param name="hiddenWindow">True if start process with hidden window</param>
     /// <param name="waitForEnd">True if wait for process competition</param>
     /// <returns>Retrieves the termination status of the specified process. Valid only if processed ended.</returns>
-    API_FUNCTION() static int32 StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow = false, bool waitForEnd = false);
+    API_FUNCTION() DEPRECATED static int32 StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow = false, bool waitForEnd = false);
 
     /// <summary>
-    /// Starts a new process. Waits for it's end and captures its output.
+    /// Starts a new process (runs commandline). Waits for it's end and captures its output.
+    /// [Deprecated in v1.6]
     /// </summary>
     /// <param name="cmdLine">Command line to execute</param>
     /// <param name="workingDir">The custom path of the working directory.</param>
     /// <param name="hiddenWindow">True if start process with hidden window.</param>
     /// <returns>Retrieves the termination status of the specified process. Valid only if processed ended.</returns>
-    API_FUNCTION() static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow = true);
+    API_FUNCTION() DEPRECATED static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow = true);
 
     /// <summary>
-    /// Starts a new process. Waits for it's end and captures its output.
+    /// Starts a new process (runs commandline). Waits for it's end and captures its output.
+    /// [Deprecated in v1.6]
     /// </summary>
     /// <param name="cmdLine">Command line to execute</param>
     /// <param name="workingDir">The custom path of the working directory.</param>
     /// <param name="environment">The process environment variables. If null the current process environment is used.</param>
     /// <param name="hiddenWindow">True if start process with hidden window.</param>
     /// <returns>Retrieves the termination status of the specified process. Valid only if processed ended.</returns>
-    API_FUNCTION() static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String, HeapAllocation>& environment, bool hiddenWindow = true);
+    API_FUNCTION() DEPRECATED static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String, HeapAllocation>& environment, bool hiddenWindow = true);
+
+    /// <summary>
+    /// Creates a new process.
+    /// </summary>
+    /// <param name="settings">The process settings.</param>
+    /// <returns>Retrieves the termination status of the specified process. Valid only if processed ended.</returns>
+    API_FUNCTION() static int32 CreateProcess(API_PARAM(Ref) CreateProcessSettings& settings);
 
     /// <summary>
     /// Creates the window.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -18,25 +18,22 @@ class IPhysicsActor;
 /// <seealso cref="Actor" />
 API_CLASS(Abstract) class FLAXENGINE_API Joint : public Actor
 {
-DECLARE_SCENE_OBJECT_ABSTRACT(Joint);
+    DECLARE_SCENE_OBJECT_ABSTRACT(Joint);
 protected:
-
-    PxJoint* _joint;
+    void* _joint;
     float _breakForce;
     float _breakTorque;
     Vector3 _targetAnchor;
     Quaternion _targetAnchorRotation;
-    bool _enableCollision;
+    bool _enableCollision = true;
+    bool _enableAutoAnchor = false;
 
 public:
-
     /// <summary>
     /// The target actor for the joint. It has to be IPhysicsActor type (eg. RigidBody or CharacterController).
     /// </summary>
     API_FIELD(Attributes="EditorOrder(0), DefaultValue(null), EditorDisplay(\"Joint\")")
     ScriptingObjectReference<Actor> Target;
-
-public:
 
     /// <summary>
     /// Gets the break force. Determines the maximum force the joint can apply before breaking. Broken joints no longer participate in physics simulation.
@@ -81,12 +78,23 @@ public:
     API_PROPERTY() void SetEnableCollision(bool value);
 
     /// <summary>
+    /// Determines whether use automatic target anchor position and rotation based on the joint world-space frame (computed when creating joint).
+    /// </summary>
+    API_PROPERTY(Attributes="EditorOrder(39), DefaultValue(false), EditorDisplay(\"Joint\")")
+    bool GetEnableAutoAnchor() const;
+
+    /// <summary>
+    /// Determines whether use automatic target anchor position and rotation based on the joint world-space frame (computed when creating joint).
+    /// </summary>
+    API_PROPERTY() void SetEnableAutoAnchor(bool value);
+
+    /// <summary>
     /// Gets the target anchor.
     /// </summary>
     /// <remarks>
     /// This is the relative pose which locates the joint frame relative to the target actor.
     /// </remarks>
-    API_PROPERTY(Attributes="EditorOrder(40), DefaultValue(typeof(Vector3), \"0,0,0\"), EditorDisplay(\"Joint\")")
+    API_PROPERTY(Attributes="EditorOrder(40), DefaultValue(typeof(Vector3), \"0,0,0\"), EditorDisplay(\"Joint\"), VisibleIf(nameof(EnableAutoAnchor), true)")
     FORCE_INLINE Vector3 GetTargetAnchor() const
     {
         return _targetAnchor;
@@ -106,7 +114,7 @@ public:
     /// <remarks>
     /// This is the relative pose rotation which locates the joint frame relative to the target actor.
     /// </remarks>
-    API_PROPERTY(Attributes="EditorOrder(50), DefaultValue(typeof(Quaternion), \"0,0,0,1\"), EditorDisplay(\"Joint\")")
+    API_PROPERTY(Attributes="EditorOrder(50), DefaultValue(typeof(Quaternion), \"0,0,0,1\"), EditorDisplay(\"Joint\"), VisibleIf(nameof(EnableAutoAnchor), true)")
     FORCE_INLINE Quaternion GetTargetAnchorRotation() const
     {
         return _targetAnchorRotation;
@@ -121,14 +129,24 @@ public:
     API_PROPERTY() void SetTargetAnchorRotation(const Quaternion& value);
 
 public:
+    /// <summary>
+    /// Gets the native physics backend object.
+    /// </summary>
+    void* GetPhysicsImpl() const;
 
     /// <summary>
-    /// Gets the native PhysX joint object.
+    /// Sets the location of the joint by automatically computing local position and target anchor to place a joint at the given location (world-space).
     /// </summary>
-    FORCE_INLINE PxJoint* GetPhysXJoint() const
-    {
-        return _joint;
-    }
+    /// <remarks>Use this utility to automatically place joint at the given location after setting up joint parent and target.</remarks>
+    /// <param name="location">The joint location to set (world-space).</param>
+    API_FUNCTION() void SetJointLocation(const Vector3& location);
+
+    /// <summary>
+    /// Sets the orientation of the joint by automatically computing local orientation and target anchor orientation to orient a joint at the given rotation (world-space).
+    /// </summary>
+    /// <remarks>Use this utility to automatically rotate joint at the given location after setting up joint parent and target.</remarks>
+    /// <param name="orientation">The joint orientation to set (world-space).</param>
+    API_FUNCTION() void SetJointOrientation(const Quaternion& orientation);
 
     /// <summary>
     /// Gets the current force applied by the solver to maintain all constraints.
@@ -137,14 +155,10 @@ public:
     /// <param name="angular">The result angular force.</param>
     API_FUNCTION() void GetCurrentForce(API_PARAM(Out) Vector3& linear, API_PARAM(Out) Vector3& angular) const;
 
-public:
-
     /// <summary>
     /// Creates native join object.
     /// </summary>
     void Create();
-
-public:
 
     /// <summary>
     /// Occurs when a joint gets broken during simulation.
@@ -157,31 +171,19 @@ public:
     virtual void OnJointBreak();
 
 protected:
-
-    struct JointData
-    {
-        PxPhysics* Physics;
-        PxRigidActor* Actor0;
-        PxRigidActor* Actor1;
-        Quaternion Rot0;
-        Quaternion Rot1;
-        Vector3 Pos0;
-        Vector3 Pos1;
-    };
-
-    virtual PxJoint* CreateJoint(JointData& data) = 0;
+    Vector3 GetTargetPosition() const;
+    Quaternion GetTargetOrientation() const;
+    virtual void* CreateJoint(const struct PhysicsJointDesc& desc) = 0;
+#if USE_EDITOR
+    virtual void DrawPhysicsDebug(RenderView& view);
+#endif
 
 private:
-
     void Delete();
     void SetActors();
     void OnTargetChanged();
-#if USE_EDITOR
-    void DrawPhysicsDebug(RenderView& view);
-#endif
 
 public:
-
     // [Actor]
 #if USE_EDITOR
     void OnDebugDrawSelected() override;
@@ -190,7 +192,6 @@ public:
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
 
 protected:
-
     // [Actor]
     void BeginPlay(SceneBeginData* data) override;
     void EndPlay() override;

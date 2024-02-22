@@ -1,14 +1,16 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using FlaxEditor.Options;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
-using Object = System.Object;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Modules.SourceCodeEditing
 {
@@ -21,13 +23,17 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         private sealed class CachedVisualScriptPropertyTypesCollection : CachedTypesCollection
         {
             public CachedVisualScriptPropertyTypesCollection(int capacity, Func<Assembly, bool> checkAssembly)
-            : base(capacity, new ScriptType(typeof(Object)), CheckFunc, checkAssembly)
+            : base(capacity, ScriptType.Object, CheckFunc, checkAssembly)
             {
             }
 
             private static bool CheckFunc(ScriptType scriptType)
             {
-                if (scriptType.IsStatic || scriptType.IsGenericType || !scriptType.IsPublic || scriptType.HasAttribute(typeof(HideInEditorAttribute), true))
+                if (scriptType.IsStatic ||
+                    scriptType.IsGenericType ||
+                    !scriptType.IsPublic ||
+                    scriptType.HasAttribute(typeof(HideInEditorAttribute), true) ||
+                    scriptType.HasAttribute(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), false))
                     return false;
                 var managedType = TypeUtils.GetType(scriptType);
                 return !TypeUtils.IsDelegate(managedType);
@@ -47,16 +53,6 @@ namespace FlaxEditor.Modules.SourceCodeEditing
                 _list.Add(new ScriptType(typeof(float)));
                 _list.Add(new ScriptType(typeof(double)));
                 _list.Add(new ScriptType(typeof(string)));
-                _list.Add(new ScriptType(typeof(Vector2)));
-                _list.Add(new ScriptType(typeof(Vector3)));
-                _list.Add(new ScriptType(typeof(Vector4)));
-                _list.Add(new ScriptType(typeof(Color)));
-                _list.Add(new ScriptType(typeof(Quaternion)));
-                _list.Add(new ScriptType(typeof(BoundingBox)));
-                _list.Add(new ScriptType(typeof(BoundingSphere)));
-                _list.Add(new ScriptType(typeof(Rectangle)));
-                _list.Add(new ScriptType(typeof(Matrix)));
-                _list.Add(new ScriptType(typeof(Ray)));
                 _list.Add(new ScriptType(typeof(Guid)));
 
                 base.Search();
@@ -157,7 +153,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         /// <summary> 
         /// The all types collection from all assemblies (excluding C# system libraries). Includes only primitive and basic types from std lib.
         /// </summary>
-        public readonly CachedTypesCollection All = new CachedAllTypesCollection(8096, new ScriptType(typeof(object)), type => true, HasAssemblyValidAnyTypes);
+        public readonly CachedTypesCollection All = new CachedAllTypesCollection(8096, ScriptType.Null, type => true, HasAssemblyValidAnyTypes);
 
         /// <summary>
         /// The all valid types collection for the Visual Script property types (includes basic types like int/float, structures, object references).
@@ -183,6 +179,11 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         /// The Animation Graph custom nodes collection.
         /// </summary>
         public readonly CachedCustomAnimGraphNodesCollection AnimGraphNodes = new CachedCustomAnimGraphNodesCollection(32, new ScriptType(typeof(AnimationGraph.CustomNodeArchetypeFactoryAttribute)), IsTypeValidScriptingType, HasAssemblyValidScriptingTypes);
+
+        /// <summary>
+        /// The Behavior Tree custom nodes collection.
+        /// </summary>
+        public readonly CachedTypesCollection BehaviorTreeNodes = new CachedTypesCollection(64, new ScriptType(typeof(BehaviorTreeNode)), IsTypeValidScriptingType, HasAssemblyValidScriptingTypes);
 
         internal CodeEditingModule(Editor editor)
         : base(editor)
@@ -281,6 +282,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         {
             ScriptsBuilder.ScriptsReload += OnScriptsReload;
             ScriptsBuilder.ScriptsReloadEnd += OnScriptsReloadEnd;
+            ScriptsBuilder.ScriptsLoaded += OnScriptsLoaded;
             Editor.Options.OptionsChanged += OnOptionsChanged;
 
             // Add default code editors (in-build)
@@ -330,15 +332,89 @@ namespace FlaxEditor.Modules.SourceCodeEditing
             Editor.Instance.CodeEditing.SelectedEditor = editor;
         }
 
+        /// <summary>
+        /// Starts creating a new module
+        /// </summary>
+        internal void CreateModule(string path, string moduleName, bool editorModule, bool cpp)
+        {
+            if (string.IsNullOrEmpty(moduleName) || string.IsNullOrEmpty(path))
+            {
+                Editor.LogWarning("Failed to create module due to no name");
+                return;
+            }
+
+            // Create folder
+            var moduleFolderPath = Path.Combine(path, moduleName);
+            Directory.CreateDirectory(moduleFolderPath);
+
+            // Create module
+            var moduleText = "using Flax.Build;\n" +
+                             "using Flax.Build.NativeCpp;\n" +
+                             $"\npublic class {moduleName} : Game{(editorModule ? "Editor" : "")}Module\n" +
+                             "{\n    " +
+                             "/// <inheritdoc />\n" +
+                             "    public override void Init()\n" +
+                             "    {\n" +
+                             "        base.Init();\n" +
+                             "\n" +
+                             "        // C#-only scripting if false\n" +
+                             $"        BuildNativeCode = {(cpp ? "true" : "false")};\n" +
+                             "    }\n" +
+                             "\n" +
+                             "    /// <inheritdoc />\n" +
+                             "    public override void Setup(BuildOptions options)\n" +
+                             "    {" +
+                             "\n" +
+                             "        base.Setup(options);\n" +
+                             "\n" +
+                             "        options.ScriptingAPI.IgnoreMissingDocumentationWarnings = true;\n" +
+                             "\n" +
+                             "        // Here you can modify the build options for your game module\n" +
+                             "        // To reference another module use: options.PublicDependencies.Add(\"Audio\");\n" +
+                             "        // To add C++ define use: options.PublicDefinitions.Add(\"COMPILE_WITH_FLAX\");\n" +
+                             "        // To learn more see scripting documentation.\n" +
+                             "    }\n" +
+                             "}";
+            moduleText = Encoding.UTF8.GetString(Encoding.Default.GetBytes(moduleText));
+            var modulePath = Path.Combine(moduleFolderPath, $"{moduleName}.Build.cs");
+            File.WriteAllText(modulePath, moduleText);
+            Editor.Log($"Module created at {modulePath}");
+
+            // Get editor target and target files and add module
+            var files = Directory.GetFiles(path);
+            var targetModuleText = $"Modules.Add(\"{moduleName}\");\n        ";
+            foreach (var file in files)
+            {
+                if (!file.Contains(".Build.cs", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var targetText = File.ReadAllText(file);
+
+                // Skip game project if it is suppose to be an editor module
+                if (editorModule && targetText.Contains("GameProjectTarget", StringComparison.Ordinal))
+                    continue;
+
+                // TODO: Handle edge case when there are no modules in a target
+                var index = targetText.IndexOf("Modules.Add");
+                if (index != -1)
+                {
+                    var newText = targetText.Insert(index, targetModuleText);
+                    File.WriteAllText(file, newText);
+                    Editor.Log($"Module added to Target: {file}");
+                }
+            }
+        }
+
         /// <inheritdoc />
         public override void OnUpdate()
         {
             base.OnUpdate();
 
             // Automatic project files generation after workspace modifications
-            if (_autoGenerateScriptsProjectFiles && ScriptsBuilder.IsSourceWorkspaceDirty)
+            if (_autoGenerateScriptsProjectFiles && ScriptsBuilder.IsSourceWorkspaceDirty && !ScriptsBuilder.IsCompiling)
             {
-                Editor.ProgressReporting.GenerateScriptsProjectFiles.RunAsync();
+                // Try to delay generation when a lot of files are added at once
+                if (ScriptsBuilder.IsSourceDirtyFor(TimeSpan.FromMilliseconds(150)))
+                    Editor.ProgressReporting.GenerateScriptsProjectFiles.RunAsync();
             }
         }
 
@@ -351,6 +427,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
 
             ScriptsBuilder.ScriptsReload -= OnScriptsReload;
             ScriptsBuilder.ScriptsReloadEnd -= OnScriptsReloadEnd;
+            ScriptsBuilder.ScriptsLoaded -= OnScriptsLoaded;
         }
 
         /// <summary>
@@ -365,6 +442,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
             Scripts.ClearTypes();
             Controls.ClearTypes();
             AnimGraphNodes.ClearTypes();
+            BehaviorTreeNodes.ClearTypes();
             TypesCleared?.Invoke();
         }
 
@@ -386,6 +464,12 @@ namespace FlaxEditor.Modules.SourceCodeEditing
             OnTypesChanged();
         }
 
+        private void OnScriptsLoaded()
+        {
+            // Clear any state with engine-only types
+            ClearTypes();
+        }
+
         private static bool IsTypeValidScriptingType(ScriptType t)
         {
             return !t.IsGenericType && !t.IsAbstract && !t.HasAttribute(typeof(HideInEditorAttribute), false);
@@ -402,9 +486,27 @@ namespace FlaxEditor.Modules.SourceCodeEditing
 
         private static bool HasAssemblyValidAnyTypes(Assembly assembly)
         {
+            var codeBase = Utils.GetAssemblyLocation(assembly);
+#if USE_NETCORE
+            if (assembly.ManifestModule.FullyQualifiedName == "<In Memory Module>")
+                return false;
+
+            if (string.IsNullOrEmpty(codeBase))
+                return true;
+
+            // Skip runtime related assemblies
+            string repositoryUrl = assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(x => x.Key == "RepositoryUrl")?.Value ?? "";
+            if (repositoryUrl != "https://github.com/dotnet/runtime")
+                return true;
+#else
+            if (string.IsNullOrEmpty(codeBase))
+                return true;
+
             // Skip assemblies from in-build Mono directory
-            var codeBase = assembly.CodeBase;
-            return string.IsNullOrEmpty(codeBase) || !codeBase.Contains("/Mono/lib/mono/");
+            if (!codeBase.Contains("/Mono/lib/mono/"))
+                return true;
+#endif
+            return false;
         }
 
         private static bool HasAssemblyValidScriptingTypes(Assembly a)

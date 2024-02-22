@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEditor.Utilities
 {
@@ -14,5 +14,11 @@ namespace FlaxEditor.Utilities
         public const string FacebookUrl = "https://facebook.com/FlaxEngine";
         public const string YoutubeUrl = "https://youtube.com/c/FlaxEngine";
         public const string TwitterUrl = "https://twitter.com/FlaxEngine";
+
+#if PLATFORM_MAC
+        public const string ShowInExplorer = "Show in Finder";
+#else
+        public const string ShowInExplorer = "Show in explorer";
+#endif
     }
 }

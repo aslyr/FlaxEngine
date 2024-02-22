@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -48,6 +48,8 @@ protected:
     // [ContentLoadTask]
     Result run() override
     {
+        if (IsCancelRequested())
+            return Result::Ok;
         PROFILE_CPU();
 
         AssetReference<BinaryAsset> ref = _asset.Get();
@@ -67,8 +69,6 @@ protected:
                 {
                     if (IsCancelRequested())
                         return Result::Ok;
-
-                    // Load it
 #if TRACY_ENABLE
                     ZoneScoped;
                     ZoneName(*name, name.Length());

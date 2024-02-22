@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #ifndef __COMMON__
 #define __COMMON__
@@ -16,6 +16,9 @@
 #if defined(PLATFORM_PS4)
 #include "./FlaxPlatforms/PS4/Shaders/PS4Common.hlsl"
 #endif
+#if defined(PLATFORM_PS5)
+#include "./FlaxPlatforms/PS5/Shaders/PS5Common.hlsl"
+#endif
 
 // Feature levels
 #define FEATURE_LEVEL_ES2 0
@@ -23,6 +26,7 @@
 #define FEATURE_LEVEL_ES3_1 2
 #define FEATURE_LEVEL_SM4 3
 #define FEATURE_LEVEL_SM5 4
+#define FEATURE_LEVEL_SM6 5
 #if !defined(FEATURE_LEVEL)
 #error "Invalid platform defines"
 #endif
@@ -131,12 +135,12 @@ SamplerComparisonState ShadowSamplerPCF : register(s5);
 // Structure that contains information about GBuffer
 struct GBufferData
 {
-	float4 ViewInfo; // x-1/Projection[0,0]   y-1/Projection[1,1]   z-(Far / (Far - Near)   w-(-Far * Near) / (Far - Near) / Far)
-	float4 ScreenSize; // x-Width               y-Height              z-1/Width               w-1/Height
-	float3 ViewPos; // view position (in world space)
-	float ViewFar; // view far plane distance (in world space)
-	float4x4 InvViewMatrix; // inverse view matrix (4 rows by 4 columns)
-	float4x4 InvProjectionMatrix; // inverse projection matrix (4 rows by 4 columns)
+    float4 ViewInfo; // x-1/Projection[0,0], y-1/Projection[1,1], z-(Far / (Far - Near), w-(-Far * Near) / (Far - Near) / Far)
+    float4 ScreenSize; // x-Width, y-Height, z-1/Width, w-1/Height
+    float3 ViewPos; // view position (in world space)
+    float ViewFar; // view far plane distance (in world space)
+    float4x4 InvViewMatrix; // inverse view matrix (4 rows by 4 columns)
+    float4x4 InvProjectionMatrix; // inverse projection matrix (4 rows by 4 columns)
 };
 
 #ifdef PLATFORM_ANDROID
@@ -149,28 +153,28 @@ struct GBufferData
 // Structure that contains information about atmosphere fog
 struct AtmosphericFogData
 {
-	float AtmosphericFogDensityScale;
-	float AtmosphericFogSunDiscScale;
-	float AtmosphericFogDistanceScale;
-	float AtmosphericFogGroundOffset;
+    float AtmosphericFogDensityScale;
+    float AtmosphericFogSunDiscScale;
+    float AtmosphericFogDistanceScale;
+    float AtmosphericFogGroundOffset;
 
-	float AtmosphericFogAltitudeScale;
-	float AtmosphericFogStartDistance;
-	float AtmosphericFogPower;
-	float AtmosphericFogDistanceOffset;
+    float AtmosphericFogAltitudeScale;
+    float AtmosphericFogStartDistance;
+    float AtmosphericFogPower;
+    float AtmosphericFogDistanceOffset;
 
-	float3 AtmosphericFogSunDirection;
-	float AtmosphericFogSunPower;
+    float3 AtmosphericFogSunDirection;
+    float AtmosphericFogSunPower;
 
-	float3 AtmosphericFogSunColor;
-	float AtmosphericFogDensityOffset;
+    float3 AtmosphericFogSunColor;
+    float AtmosphericFogDensityOffset;
 };
 
 // Packed env probe data
 struct ProbeData
 {
-	float4 Data0; // x - Position.x,  y - Position.y,  z - Position.z,  w - unused
-	float4 Data1; // x - Radius    ,  y - 1 / Radius,  z - Brightness,  w - unused
+    float4 Data0; // x - Position.x,  y - Position.y,  z - Position.z,  w - unused
+    float4 Data1; // x - Radius    ,  y - 1 / Radius,  z - Brightness,  w - unused
 };
 
 #define ProbePos Data0.xyz
@@ -180,37 +184,50 @@ struct ProbeData
 
 struct Quad_VS2PS
 {
-	float4 Position : SV_Position;
-	noperspective float2 TexCoord : TEXCOORD0;
+    float4 Position : SV_Position;
+    noperspective float2 TexCoord : TEXCOORD0;
 };
 
 struct Quad_VS2GS
 {
-	Quad_VS2PS Vertex;
-	uint LayerIndex : TEXCOORD1;
+    Quad_VS2PS Vertex;
+    uint LayerIndex : TEXCOORD1;
 };
 
 struct Quad_GS2PS
 {
-	Quad_VS2PS Vertex;
-	uint LayerIndex : SV_RenderTargetArrayIndex;
+    Quad_VS2PS Vertex;
+    uint LayerIndex : SV_RenderTargetArrayIndex;
 };
 
 float Luminance(float3 color)
 {
-	return dot(color, float3(0.299f, 0.587f, 0.114f));
+    return dot(color, float3(0.299f, 0.587f, 0.114f));
+}
+
+// Quaternion multiplication (http://mathworld.wolfram.com/Quaternion.html)
+float4 QuatMultiply(float4 q1, float4 q2)
+{
+    return float4(q2.xyz * q1.w + q1.xyz * q2.w + cross(q1.xyz, q2.xyz), q1.w * q2.w - dot(q1.xyz, q2.xyz));
+}
+
+// Vector rotation with a quaternion (http://mathworld.wolfram.com/Quaternion.html)
+float3 QuatRotateVector(float4 q, float3 v)
+{
+    float4 nq = q * float4(-1, -1, -1, 1);
+    return QuatMultiply(q, QuatMultiply(float4(v, 0), nq)).xyz;
 }
 
 // Samples the unwrapped 3D texture (eg. volume texture of size 16x16x16 would be unwrapped to 256x16)
-half4 SampleUnwrappedTexture3D(Texture2D tex, SamplerState s, float3 uvw, float size)
+float4 SampleUnwrappedTexture3D(Texture2D tex, SamplerState s, float3 uvw, float size)
 {
-	float intW = floor(uvw.z * size - 0.5);
-	half fracW = uvw.z * size - 0.5 - intW;
-	float u = (uvw.x + intW) / size;
-	float v = uvw.y;
-	half4 rg0 = tex.Sample(s, float2(u, v));
-	half4 rg1 = tex.Sample(s, float2(u + 1.0f / size, v));
-	return lerp(rg0, rg1, fracW);
+    float intW = floor(uvw.z * size - 0.5);
+    half fracW = uvw.z * size - 0.5 - intW;
+    float u = (uvw.x + intW) / size;
+    float v = uvw.y;
+    float4 rg0 = tex.Sample(s, float2(u, v));
+    float4 rg1 = tex.Sample(s, float2(u + 1.0f / size, v));
+    return lerp(rg0, rg1, fracW);
 }
 
 #endif

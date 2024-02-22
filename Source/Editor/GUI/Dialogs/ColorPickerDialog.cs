@@ -1,8 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.GUI.Input;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Json;
+using System.Collections.Generic;
 
 namespace FlaxEditor.GUI.Dialogs
 {
@@ -25,16 +27,19 @@ namespace FlaxEditor.GUI.Dialogs
     {
         private const float ButtonsWidth = 60.0f;
         private const float PickerMargin = 6.0f;
+        private const float EyedropperMargin = 8.0f;
         private const float RGBAMargin = 12.0f;
         private const float HSVMargin = 0.0f;
         private const float ChannelsMargin = 4.0f;
         private const float ChannelTextWidth = 12.0f;
+        private const float SavedColorButtonWidth = 20.0f;
+        private const float SavedColorButtonHeight = 20.0f;
 
         private Color _initialValue;
         private Color _value;
         private bool _disableEvents;
         private bool _useDynamicEditing;
-        private bool _isClosing;
+        private bool _activeEyedropper;
         private ColorValueBox.ColorPickerEvent _onChanged;
         private ColorValueBox.ColorPickerClosedEvent _onClosed;
 
@@ -49,13 +54,14 @@ namespace FlaxEditor.GUI.Dialogs
         private TextBox _cHex;
         private Button _cCancel;
         private Button _cOK;
+        private Button _cEyedropper;
+
+        private List<Color> _savedColors = new List<Color>();
+        private List<Button> _savedColorButtons = new List<Button>();
 
         /// <summary>
         /// Gets the selected color.
         /// </summary>
-        /// <value>
-        /// The color.
-        /// </value>
         public Color SelectedColor
         {
             get => _value;
@@ -112,10 +118,16 @@ namespace FlaxEditor.GUI.Dialogs
             _onChanged = colorChanged;
             _onClosed = pickerClosed;
 
+            // Get saved colors if they exist
+            if (Editor.Instance.ProjectCache.TryGetCustomData("ColorPickerSavedColors", out var savedColors))
+            {
+                _savedColors = JsonSerializer.Deserialize<List<Color>>(savedColors);
+            }
+
             // Selector
             _cSelector = new ColorSelectorWithSliders(180, 18)
             {
-                Location = new Vector2(PickerMargin, PickerMargin),
+                Location = new Float2(PickerMargin, PickerMargin),
                 Parent = this
             };
             _cSelector.ColorChanged += x => SelectedColor = x;
@@ -142,7 +154,7 @@ namespace FlaxEditor.GUI.Dialogs
             _cBlue.ValueChanged += OnRGBAChanged;
 
             // Alpha
-            _cAlpha = new FloatValueBox(0, _cRed.X, _cBlue.Bottom + ChannelsMargin, _cRed.Width, 0, float.MaxValue, 0.001f) 
+            _cAlpha = new FloatValueBox(0, _cRed.X, _cBlue.Bottom + ChannelsMargin, _cRed.Width, 0, float.MaxValue, 0.001f)
             {
                 Parent = this
             };
@@ -170,7 +182,7 @@ namespace FlaxEditor.GUI.Dialogs
             _cValue.ValueChanged += OnHSVChanged;
 
             // Set valid dialog size based on UI content
-            _dialogSize = Size = new Vector2(_cRed.Right + PickerMargin, 300);
+            _dialogSize = Size = new Float2(_cRed.Right + PickerMargin, 300);
 
             // Hex
             const float hexTextBoxWidth = 80;
@@ -186,7 +198,7 @@ namespace FlaxEditor.GUI.Dialogs
                 Text = "Cancel",
                 Parent = this
             };
-            _cCancel.Clicked += OnCancelClicked;
+            _cCancel.Clicked += OnCancel;
 
             // OK
             _cOK = new Button(_cCancel.Left - ButtonsWidth - PickerMargin, _cCancel.Y, ButtonsWidth)
@@ -194,40 +206,91 @@ namespace FlaxEditor.GUI.Dialogs
                 Text = "Ok",
                 Parent = this
             };
-            _cOK.Clicked += OnOkClicked;
+            _cOK.Clicked += OnSubmit;
+
+            // Create saved color buttons
+            CreateAllSaveButtons();
+
+            // Eyedropper button
+            var style = Style.Current;
+            _cEyedropper = new Button(_cOK.X - EyedropperMargin, _cHex.Bottom + PickerMargin)
+            {
+                TooltipText = "Eyedropper tool to pick a color directly from the screen",
+                BackgroundBrush = new SpriteBrush(Editor.Instance.Icons.Search32),
+                BackgroundColor = style.Foreground,
+                BackgroundColorHighlighted = style.Foreground.RGBMultiplied(0.9f),
+                BorderColor = Color.Transparent,
+                BorderColorHighlighted = style.BorderSelected,
+                Parent = this,
+            };
+            _cEyedropper.Clicked += OnEyedropStart;
+            _cEyedropper.Height = (_cValue.Bottom - _cEyedropper.Y) * 0.5f;
+            _cEyedropper.Width = _cEyedropper.Height;
+            _cEyedropper.X -= _cEyedropper.Width;
 
             // Set initial color
             SelectedColor = initialValue;
         }
 
-        private void OnOkClicked()
+        private void OnSavedColorButtonClicked(Button button)
         {
-            if (_isClosing)
-                return;
-            _isClosing = true;
-
-            // Send color event if modified
-            if (_value != _initialValue)
+            if (button.Tag == null)
             {
-                _onChanged?.Invoke(_value, false);
-            }
+                // Prevent setting same color 2 times... because why...
+                foreach (var color in _savedColors)
+                {
+                    if (color == _value)
+                    {
+                        return;
+                    }
+                }
 
-            Close(DialogResult.OK);
+                // Set color of button to current value;
+                button.BackgroundColor = _value;
+                button.BackgroundColorHighlighted = _value;
+                button.BackgroundColorSelected = _value.RGBMultiplied(0.8f);
+                button.Text = "";
+                button.Tag = _value;
+
+                // Save new colors
+                _savedColors.Add(_value);
+                var savedColors = JsonSerializer.Serialize(_savedColors, typeof(List<Color>));
+                Editor.Instance.ProjectCache.SetCustomData("ColorPickerSavedColors", savedColors);
+
+                // create new + button
+                if (_savedColorButtons.Count < 8)
+                {
+                    var savedColorButton = new Button(PickerMargin * (_savedColorButtons.Count + 1) + SavedColorButtonWidth * _savedColorButtons.Count, Height - SavedColorButtonHeight - PickerMargin, SavedColorButtonWidth, SavedColorButtonHeight)
+                    {
+                        Text = "+",
+                        Parent = this,
+                        Tag = null,
+                    };
+                    savedColorButton.ButtonClicked += (b) => OnSavedColorButtonClicked(b);
+                    _savedColorButtons.Add(savedColorButton);
+                }
+            }
+            else
+            {
+                SelectedColor = (Color)button.Tag;
+            }
         }
 
-        private void OnCancelClicked()
+        private void OnColorPicked(Color32 colorPicked)
         {
-            if (_isClosing)
-                return;
-            _isClosing = true;
-
-            // Restore color if modified
-            if (_useDynamicEditing && _initialValue != _value)
+            if (_activeEyedropper)
             {
-                _onChanged?.Invoke(_initialValue, false);
+                _activeEyedropper = false;
+                SelectedColor = colorPicked;
+                ScreenUtilities.PickColorDone -= OnColorPicked;
             }
+        }
 
-            Close(DialogResult.Cancel);
+        private void OnEyedropStart()
+        {
+            _activeEyedropper = true;
+            ScreenUtilities.PickColor();
+            ScreenUtilities.PickColorDone += OnColorPicked;
         }
 
         private void OnRGBAChanged()
@@ -253,6 +316,19 @@ namespace FlaxEditor.GUI.Dialogs
 
             if (Color.TryParseHex(_cHex.Text, out Color color))
                 SelectedColor = color;
+        }
+
+        /// <inheritdoc />
+        public override void Update(float deltaTime)
+        {
+            base.Update(deltaTime);
+
+            // Update eye dropper tool
+            if (_activeEyedropper)
+            {
+                Float2 mousePosition = Platform.MousePosition;
+                SelectedColor = ScreenUtilities.GetColorAt(mousePosition);
+            }
         }
 
         /// <inheritdoc />
@@ -303,9 +379,162 @@ namespace FlaxEditor.GUI.Dialogs
         protected override void OnShow()
         {
             // Auto cancel on lost focus
-            ((WindowRootControl)Root).Window.LostFocus += OnCancelClicked;
+#if !PLATFORM_LINUX
+            ((WindowRootControl)Root).Window.LostFocus += OnCancel;
+#endif
 
             base.OnShow();
+        }
+
+        /// <inheritdoc />
+        public override bool OnKeyDown(KeyboardKeys key)
+        {
+            if (_activeEyedropper && key == KeyboardKeys.Escape)
+            {
+                // Cancel eye dropping
+                _activeEyedropper = false;
+                ScreenUtilities.PickColorDone -= OnColorPicked;
+                return true;
+            }
+
+            return base.OnKeyDown(key);
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseUp(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseUp(location, button))
+            {
+                return true;
+            }
+
+            var child = GetChildAtRecursive(location);
+            if (button == MouseButton.Right && child is Button b && b.Tag is Color c)
+            {
+                // Show menu
+                var menu = new ContextMenu.ContextMenu();
+                var replaceButton = menu.AddButton("Replace");
+                replaceButton.Clicked += () => OnSavedColorReplace(b);
+                var deleteButton = menu.AddButton("Delete");
+                deleteButton.Clicked += () => OnSavedColorDelete(b);
+                _disableEvents = true;
+                menu.Show(this, location);
+                menu.VisibleChanged += (c) => _disableEvents = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void OnSavedColorReplace(Button button)
+        {
+            // Prevent setting same color 2 times... because why...
+            foreach (var color in _savedColors)
+            {
+                if (color == _value)
+                {
+                    return;
+                }
+            }
+
+            // Set new Color in spot
+            for (int i = 0; i < _savedColors.Count; i++)
+            {
+                var color = _savedColors[i];
+                if (color == (Color)button.Tag)
+                {
+                    color = _value;
+                }
+            }
+
+            // Set color of button to current value;
+            button.BackgroundColor = _value;
+            button.BackgroundColorHighlighted = _value;
+            button.Text = "";
+            button.Tag = _value;
+
+            // Save new colors
+            var savedColors = JsonSerializer.Serialize(_savedColors, typeof(List<Color>));
+            Editor.Instance.ProjectCache.SetCustomData("ColorPickerSavedColors", savedColors);
+        }
+
+        private void OnSavedColorDelete(Button button)
+        {
+            _savedColors.Remove((Color)button.Tag);
+
+            foreach (var b in _savedColorButtons)
+            {
+                Children.Remove(b);
+            }
+            _savedColorButtons.Clear();
+
+            CreateAllSaveButtons();
+
+            // Save new colors
+            var savedColors = JsonSerializer.Serialize(_savedColors, typeof(List<Color>));
+            Editor.Instance.ProjectCache.SetCustomData("ColorPickerSavedColors", savedColors);
+        }
+
+        private void CreateAllSaveButtons()
+        {
+            // Create saved color buttons
+            for (int i = 0; i < _savedColors.Count; i++)
+            {
+                var savedColor = _savedColors[i];
+                var savedColorButton = new Button(PickerMargin * (i + 1) + SavedColorButtonWidth * i, Height - SavedColorButtonHeight - PickerMargin, SavedColorButtonWidth, SavedColorButtonHeight)
+                {
+                    Parent = this,
+                    Tag = savedColor,
+                    BackgroundColor = savedColor,
+                    BackgroundColorHighlighted = savedColor,
+                    BackgroundColorSelected = savedColor.RGBMultiplied(0.8f),
+                };
+                savedColorButton.ButtonClicked += (b) => OnSavedColorButtonClicked(b);
+                _savedColorButtons.Add(savedColorButton);
+            }
+            if (_savedColors.Count < 8)
+            {
+                var savedColorButton = new Button(PickerMargin * (_savedColors.Count + 1) + SavedColorButtonWidth * _savedColors.Count, Height - SavedColorButtonHeight - PickerMargin, SavedColorButtonWidth, SavedColorButtonHeight)
+                {
+                    Text = "+",
+                    Parent = this,
+                    Tag = null,
+                };
+                savedColorButton.ButtonClicked += (b) => OnSavedColorButtonClicked(b);
+                _savedColorButtons.Add(savedColorButton);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void OnSubmit()
+        {
+            if (_disableEvents)
+                return;
+            _disableEvents = true;
+
+            // Send color event if modified
+            if (_value != _initialValue)
+            {
+                _onChanged?.Invoke(_value, false);
+            }
+
+            base.OnSubmit();
+        }
+
+        /// <inheritdoc />
+        public override void OnCancel()
+        {
+            if (_disableEvents)
+                return;
+            _disableEvents = true;
+
+            // Restore color if modified
+            if (_useDynamicEditing && _initialValue != _value)
+            {
+                _onChanged?.Invoke(_initialValue, false);
+            }
+
+            base.OnCancel();
         }
 
         /// <inheritdoc />
@@ -319,7 +548,7 @@ namespace FlaxEditor.GUI.Dialogs
         /// <inheritdoc />
         public void ClosePicker()
         {
-            OnCancelClicked();
+            OnCancel();
         }
     }
 }

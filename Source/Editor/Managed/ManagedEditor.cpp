@@ -1,22 +1,21 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ManagedEditor.h"
 #include "Editor/Editor.h"
 #include "FlaxEngine.Gen.h"
-#include "Engine/Scripting/MException.h"
-#include "Engine/Scripting/Scripting.h"
-#include "Engine/Scripting/MainThreadManagedInvokeAction.h"
 #include "Engine/ShadowsOfMordor/Builder.h"
+#include "Engine/Scripting/Scripting.h"
 #include "Engine/Scripting/ScriptingType.h"
 #include "Engine/Scripting/BinaryModule.h"
 #include "Engine/Scripting/ManagedCLR/MAssembly.h"
 #include "Engine/Scripting/ManagedCLR/MClass.h"
+#include "Engine/Scripting/ManagedCLR/MException.h"
+#include "Engine/Scripting/Internal/MainThreadManagedInvokeAction.h"
 #include "Engine/Content/Assets/VisualScript.h"
 #include "Engine/CSG/CSGBuilder.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Renderer/ProbesRenderer.h"
 #include "Engine/Animations/Graph/AnimGraph.h"
-#include <ThirdParty/mono-2.0/mono/metadata/threads.h>
 
 ManagedEditor::InternalOptions ManagedEditor::ManagedEditorOptions;
 
@@ -27,6 +26,7 @@ MMethod* Internal_LightmapsBake = nullptr;
 MMethod* Internal_CanReloadScripts = nullptr;
 MMethod* Internal_CanAutoBuildCSG = nullptr;
 MMethod* Internal_CanAutoBuildNavMesh = nullptr;
+MMethod* Internal_FocusGameViewport = nullptr;
 MMethod* Internal_HasGameViewportFocus = nullptr;
 MMethod* Internal_ScreenToGameViewport = nullptr;
 MMethod* Internal_GameViewportToScreen = nullptr;
@@ -78,7 +78,7 @@ void OnBakeEvent(bool started, const ProbesRenderer::Entry& e)
         ASSERT(Internal_EnvProbeBake);
     }
 
-    MonoObject* probeObj = e.Actor ? e.Actor->GetManagedInstance() : nullptr;
+    MObject* probeObj = e.Actor ? e.Actor->GetManagedInstance() : nullptr;
 
     MainThreadManagedInvokeAction::ParamsBuilder params;
     params.AddParam(started);
@@ -106,8 +106,8 @@ void OnBrushModified(CSG::Brush* brush)
 
 struct VisualScriptingDebugFlowInfo
 {
-    MonoObject* Script;
-    MonoObject* ScriptInstance;
+    MObject* Script;
+    MObject* ScriptInstance;
     uint32 NodeId;
     int32 BoxId;
 };
@@ -126,7 +126,7 @@ void OnVisualScriptingDebugFlow()
     flowInfo.ScriptInstance = stack->Instance ? stack->Instance->GetOrCreateManagedInstance() : nullptr;
     flowInfo.NodeId = stack->Node->ID;
     flowInfo.BoxId = stack->Box->ID;
-    MonoObject* exception = nullptr;
+    MObject* exception = nullptr;
     void* params[1];
     params[0] = &flowInfo;
     Internal_OnVisualScriptingDebugFlow->Invoke(nullptr, params, &exception);
@@ -140,7 +140,7 @@ void OnVisualScriptingDebugFlow()
 void OnLogMessage(LogType type, const StringView& msg);
 
 ManagedEditor::ManagedEditor()
-    : PersistentScriptingObject(SpawnParams(ObjectID, ManagedEditor::TypeInitializer))
+    : ScriptingObject(SpawnParams(ObjectID, ManagedEditor::TypeInitializer))
 {
     // Link events
     auto editor = ((NativeBinaryModule*)GetBinaryModuleFlaxEngine())->Assembly;
@@ -186,12 +186,12 @@ void ManagedEditor::Init()
     {
         LOG(Fatal, "Invalid Editor assembly! Missing initialization method.");
     }
-    MonoObject* instance = GetOrCreateManagedInstance();
+    MObject* instance = GetOrCreateManagedInstance();
     if (instance == nullptr)
     {
         LOG(Fatal, "Failed to create editor instance.");
     }
-    MonoObject* exception = nullptr;
+    MObject* exception = nullptr;
     bool isHeadless = CommandLine::Options.Headless.IsTrue();
     bool skipCompile = CommandLine::Options.SkipCompile.IsTrue();
     bool newProject = CommandLine::Options.NewProject.IsTrue();
@@ -241,6 +241,13 @@ void ManagedEditor::Init()
     }
 }
 
+void ManagedEditor::BeforeRun()
+{
+    // If during last lightmaps baking engine crashed we could try to restore the progress
+    if (ShadowsOfMordor::Builder::Instance()->RestoreState())
+        GetClass()->GetMethod("Internal_StartLightingBake")->Invoke(GetOrCreateManagedInstance(), nullptr, nullptr);
+}
+
 void ManagedEditor::Update()
 {
     // Skip if managed object is missing
@@ -259,7 +266,7 @@ void ManagedEditor::Update()
     }
 
     // Call update
-    MonoObject* exception = nullptr;
+    MObject* exception = nullptr;
     UpdateMethod->Invoke(instance, nullptr, &exception);
     if (exception)
     {
@@ -291,7 +298,7 @@ void ManagedEditor::Exit()
     {
         LOG(Fatal, "Invalid Editor assembly!");
     }
-    MonoObject* exception = nullptr;
+    MObject* exception = nullptr;
     exitMethod->Invoke(instance, nullptr, &exception);
     if (exception)
     {
@@ -323,13 +330,14 @@ bool ManagedEditor::CanReloadScripts()
 
 bool ManagedEditor::CanAutoBuildCSG()
 {
+    if (!ManagedEditorOptions.AutoRebuildCSG)
+        return false;
+
     // Skip calls from non-managed thread (eg. physics worker)
-    if (!mono_domain_get() || !mono_thread_current())
+    if (!MCore::Thread::IsAttached())
         return false;
 
     if (!HasManagedInstance())
-        return false;
-    if (!ManagedEditorOptions.AutoRebuildCSG)
         return false;
     if (Internal_CanAutoBuildCSG == nullptr)
     {
@@ -341,13 +349,14 @@ bool ManagedEditor::CanAutoBuildCSG()
 
 bool ManagedEditor::CanAutoBuildNavMesh()
 {
+    if (!ManagedEditorOptions.AutoRebuildNavMesh)
+        return false;
+
     // Skip calls from non-managed thread (eg. physics worker)
-    if (!mono_domain_get() || !mono_thread_current())
+    if (!MCore::Thread::IsAttached())
         return false;
 
     if (!HasManagedInstance())
-        return false;
-    if (!ManagedEditorOptions.AutoRebuildNavMesh)
         return false;
     if (Internal_CanAutoBuildNavMesh == nullptr)
     {
@@ -372,9 +381,22 @@ bool ManagedEditor::HasGameViewportFocus() const
     return result;
 }
 
-Vector2 ManagedEditor::ScreenToGameViewport(const Vector2& screenPos) const
+void ManagedEditor::FocusGameViewport() const
 {
-    Vector2 result = screenPos;
+    if (HasManagedInstance())
+    {
+        if (Internal_FocusGameViewport == nullptr)
+        {
+            Internal_FocusGameViewport = GetClass()->GetMethod("Internal_FocusGameViewport");
+            ASSERT(Internal_FocusGameViewport);
+        }
+        Internal_FocusGameViewport->Invoke(GetManagedInstance(), nullptr, nullptr);
+    }
+}
+
+Float2 ManagedEditor::ScreenToGameViewport(const Float2& screenPos) const
+{
+    Float2 result = screenPos;
     if (HasManagedInstance())
     {
         if (Internal_ScreenToGameViewport == nullptr)
@@ -389,9 +411,9 @@ Vector2 ManagedEditor::ScreenToGameViewport(const Vector2& screenPos) const
     return result;
 }
 
-Vector2 ManagedEditor::GameViewportToScreen(const Vector2& viewportPos) const
+Float2 ManagedEditor::GameViewportToScreen(const Float2& viewportPos) const
 {
-    Vector2 result = viewportPos;
+    Float2 result = viewportPos;
     if (HasManagedInstance())
     {
         if (Internal_GameViewportToScreen == nullptr)
@@ -425,7 +447,7 @@ Window* ManagedEditor::GetGameWindow(bool forceGet)
     return nullptr;
 }
 
-Vector2 ManagedEditor::GetGameWindowSize()
+Float2 ManagedEditor::GetGameWindowSize()
 {
     if (HasManagedInstance())
     {
@@ -434,13 +456,13 @@ Vector2 ManagedEditor::GetGameWindowSize()
             Internal_GetGameWindowSize = GetClass()->GetMethod("Internal_GetGameWindowSize", 1);
             ASSERT(Internal_GetGameWindowSize);
         }
-        Vector2 size;
+        Float2 size;
         void* params[1];
         params[0] = &size;
         Internal_GetGameWindowSize->Invoke(GetManagedInstance(), params, nullptr);
         return size;
     }
-    return Vector2::Zero;
+    return Float2::Zero;
 }
 
 bool ManagedEditor::OnAppExit()
@@ -467,6 +489,95 @@ void ManagedEditor::RequestStartPlayOnEditMode()
     Internal_RequestStartPlayOnEditMode->Invoke(GetManagedInstance(), nullptr, nullptr);
 }
 
+Array<ManagedEditor::VisualScriptStackFrame> ManagedEditor::GetVisualScriptStackFrames()
+{
+    Array<VisualScriptStackFrame> result;
+    const auto stack = VisualScripting::GetThreadStackTop();
+    auto s = stack;
+    while (s)
+    {
+        VisualScriptStackFrame& frame = result.AddOne();
+        frame.Script = s->Script;
+        frame.NodeId = s->Node->ID;
+        frame.BoxId = s->Box ? s->Box->ID : MAX_uint32;
+        s = s->PreviousFrame;
+    }
+    return result;
+}
+
+ManagedEditor::VisualScriptStackFrame ManagedEditor::GetVisualScriptPreviousScopeFrame()
+{
+    VisualScriptStackFrame frame;
+    Platform::MemoryClear(&frame, sizeof(frame));
+    const auto stack = VisualScripting::GetThreadStackTop();
+    if (stack)
+    {
+        auto s = stack;
+        while (s->PreviousFrame && s->PreviousFrame->Scope == stack->Scope)
+            s = s->PreviousFrame;
+        if (s && s->PreviousFrame)
+        {
+            s = s->PreviousFrame;
+            frame.Script = s->Script;
+            frame.NodeId = s->Node->ID;
+            frame.BoxId = s->Box ? s->Box->ID : MAX_uint32;
+        }
+    }
+    return frame;
+}
+
+Array<ManagedEditor::VisualScriptLocal> ManagedEditor::GetVisualScriptLocals()
+{
+    Array<VisualScriptLocal> result;
+    const auto stack = VisualScripting::GetThreadStackTop();
+    if (stack && stack->Scope)
+    {
+        const int32 count = stack->Scope->Parameters.Length() + stack->Scope->ReturnedValues.Count();
+        result.Resize(count);
+        VisualScriptLocal local;
+        local.NodeId = MAX_uint32;
+        if (stack->Scope->Parameters.Length() != 0)
+        {
+            auto s = stack;
+            while (s->PreviousFrame && s->PreviousFrame->Scope == stack->Scope)
+                s = s->PreviousFrame;
+            if (s)
+                local.NodeId = s->Node->ID;
+        }
+        for (int32 i = 0; i < stack->Scope->Parameters.Length(); i++)
+        {
+            auto& v = stack->Scope->Parameters[i];
+            local.BoxId = i + 1;
+            local.Value = v.ToString();
+            local.ValueTypeName = v.Type.GetTypeName();
+            result[i] = local;
+        }
+        for (int32 i = 0; i < stack->Scope->ReturnedValues.Count(); i++)
+        {
+            auto& v = stack->Scope->ReturnedValues[i];
+            local.NodeId = v.NodeId;
+            local.BoxId = v.BoxId;
+            local.Value = v.Value.ToString();
+            local.ValueTypeName = v.Value.Type.GetTypeName();
+            result[stack->Scope->Parameters.Length() + i] = local;
+        }
+    }
+    return result;
+}
+
+bool ManagedEditor::EvaluateVisualScriptLocal(VisualScript* script, VisualScriptLocal& local)
+{
+    Variant v;
+    const auto stack = VisualScripting::GetThreadStackTop();
+    if (stack && VisualScripting::Evaluate(script, stack->Instance, local.NodeId, local.BoxId, v))
+    {
+        local.Value = v.ToString();
+        local.ValueTypeName = v.Type.GetTypeName();
+        return true;
+    }
+    return false;
+}
+
 void ManagedEditor::OnEditorAssemblyLoaded(MAssembly* assembly)
 {
     ASSERT(!HasManagedInstance());
@@ -474,11 +585,6 @@ void ManagedEditor::OnEditorAssemblyLoaded(MAssembly* assembly)
     // FlaxEditor.CSharp.dll has been loaded, let's create managed object for C# editor
 
     CreateManaged();
-}
-
-String ManagedEditor::ToString() const
-{
-    return TEXT("ManagedEditor");
 }
 
 void ManagedEditor::DestroyManaged()
@@ -499,5 +605,5 @@ void ManagedEditor::DestroyManaged()
     Internal_OnVisualScriptingDebugFlow = nullptr;
 
     // Base
-    PersistentScriptingObject::DestroyManaged();
+    ScriptingObject::DestroyManaged();
 }

@@ -1,15 +1,14 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "EyeAdaptationPass.h"
 #include "HistogramPass.h"
 #include "RenderList.h"
-#include "Engine/Core/Math/Int2.h"
+#include "Engine/Core/Math/Vector2.h"
 #include "Engine/Content/Assets/Shader.h"
 #include "Engine/Content/Content.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPULimits.h"
-#include "Engine/Graphics/PostProcessBase.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/RenderTargetPool.h"
@@ -36,7 +35,6 @@ PACK_STRUCT(struct EyeAdaptationData {
 
 void EyeAdaptationPass::Render(RenderContext& renderContext, GPUTexture* colorBuffer)
 {
-    // Cache data
     auto device = GPUDevice::Instance;
     auto context = device->GetMainContext();
     auto& view = renderContext.View;
@@ -46,12 +44,8 @@ void EyeAdaptationPass::Render(RenderContext& renderContext, GPUTexture* colorBu
     //const float frameDelta = Time::ElapsedGameTime.GetTotalSeconds();
     const float frameDelta = time - renderContext.Buffers->LastEyeAdaptationTime;
     renderContext.Buffers->LastEyeAdaptationTime = 0.0f;
-
-    // Optionally skip the rendering
-    if (checkIfSkipPass() || (view.Flags & ViewFlags::EyeAdaptation) == 0 || settings.Mode == EyeAdaptationMode::None)
-    {
+    if ((view.Flags & ViewFlags::EyeAdaptation) == ViewFlags::None || settings.Mode == EyeAdaptationMode::None || checkIfSkipPass())
         return;
-    }
 
     PROFILE_GPU_CPU("Eye Adaptation");
 
@@ -119,6 +113,7 @@ void EyeAdaptationPass::Render(RenderContext& renderContext, GPUTexture* colorBu
         previousLuminanceMap = nullptr;
     }
     GPUTexture* currentLuminanceMap = RenderTargetPool::Get(GPUTextureDescription::New2D(1, 1, PixelFormat::R16_Float));
+    RENDER_TARGET_POOL_SET_NAME(currentLuminanceMap, "EyeAdaptation.LuminanceMap");
 
     switch (mode)
     {
@@ -140,7 +135,8 @@ void EyeAdaptationPass::Render(RenderContext& renderContext, GPUTexture* colorBu
     {
         const Int2 luminanceMapSize(colorBuffer->Width() / 2, colorBuffer->Height() / 2);
         GPUTexture* luminanceMap = RenderTargetPool::Get(GPUTextureDescription::New2D(luminanceMapSize.X, luminanceMapSize.Y, 0, PixelFormat::R16_Float, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews));
-
+        RENDER_TARGET_POOL_SET_NAME(luminanceMap, "EyeAdaptation.LuminanceMap");
+        
         // Calculate the luminance for the scene color
         context->BindSR(0, *colorBuffer);
         context->SetRenderTarget(luminanceMap->View(0, 0));

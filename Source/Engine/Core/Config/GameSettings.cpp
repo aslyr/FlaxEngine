@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "GameSettings.h"
 #include "Engine/Serialization/JsonTools.h"
@@ -12,6 +12,7 @@
 #include "BuildSettings.h"
 #include "Engine/Input/InputSettings.h"
 #include "Engine/Audio/AudioSettings.h"
+#include "Engine/Networking/NetworkSettings.h"
 #include "Engine/Navigation/NavigationSettings.h"
 #include "Engine/Localization/LocalizationSettings.h"
 #include "Engine/Content/Content.h"
@@ -21,11 +22,13 @@
 #include "Engine/Engine/Globals.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Streaming/StreamingSettings.h"
+#if FLAX_TESTS || USE_EDITOR
+#include "Engine/Platform/FileSystem.h"
+#endif
 
 class GameSettingsService : public EngineService
 {
 public:
-
     GameSettingsService()
         : EngineService(TEXT("GameSettings"), -70)
     {
@@ -37,32 +40,39 @@ public:
     }
 };
 
-IMPLEMENT_SETTINGS_GETTER(BuildSettings, GameCooking);
-IMPLEMENT_SETTINGS_GETTER(GraphicsSettings, Graphics);
-IMPLEMENT_SETTINGS_GETTER(LayersAndTagsSettings, LayersAndTags);
-IMPLEMENT_SETTINGS_GETTER(TimeSettings, Time);
-IMPLEMENT_SETTINGS_GETTER(AudioSettings, Audio);
-IMPLEMENT_SETTINGS_GETTER(PhysicsSettings, Physics);
-IMPLEMENT_SETTINGS_GETTER(InputSettings, Input);
-IMPLEMENT_SETTINGS_GETTER(StreamingSettings, Streaming);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(BuildSettings, GameCooking);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(GraphicsSettings, Graphics);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(NetworkSettings, Network);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(LayersAndTagsSettings, LayersAndTags);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(TimeSettings, Time);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(AudioSettings, Audio);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(PhysicsSettings, Physics);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(InputSettings, Input);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(StreamingSettings, Streaming);
 
 #if !USE_EDITOR
 #if PLATFORM_WINDOWS
-IMPLEMENT_SETTINGS_GETTER(WindowsPlatformSettings, WindowsPlatform);
-#elif PLATFORM_UWP 
-IMPLEMENT_SETTINGS_GETTER(UWPPlatformSettings, UWPPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(WindowsPlatformSettings, WindowsPlatform);
+#elif PLATFORM_UWP
+IMPLEMENT_ENGINE_SETTINGS_GETTER(UWPPlatformSettings, UWPPlatform);
 #elif PLATFORM_LINUX
-IMPLEMENT_SETTINGS_GETTER(LinuxPlatformSettings, LinuxPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(LinuxPlatformSettings, LinuxPlatform);
 #elif PLATFORM_PS4
-IMPLEMENT_SETTINGS_GETTER(PS4PlatformSettings, PS4Platform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(PS4PlatformSettings, PS4Platform);
+#elif PLATFORM_PS5
+IMPLEMENT_ENGINE_SETTINGS_GETTER(PS5PlatformSettings, PS5Platform);
 #elif PLATFORM_XBOX_ONE
-IMPLEMENT_SETTINGS_GETTER(XboxOnePlatformSettings, XboxOnePlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(XboxOnePlatformSettings, XboxOnePlatform);
 #elif PLATFORM_XBOX_SCARLETT
-IMPLEMENT_SETTINGS_GETTER(XboxScarlettPlatformSettings, XboxScarlettPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(XboxScarlettPlatformSettings, XboxScarlettPlatform);
 #elif PLATFORM_ANDROID
-IMPLEMENT_SETTINGS_GETTER(AndroidPlatformSettings, AndroidPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(AndroidPlatformSettings, AndroidPlatform);
 #elif PLATFORM_SWITCH
-IMPLEMENT_SETTINGS_GETTER(SwitchPlatformSettings, SwitchPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(SwitchPlatformSettings, SwitchPlatform);
+#elif PLATFORM_MAC
+IMPLEMENT_ENGINE_SETTINGS_GETTER(MacPlatformSettings, MacPlatform);
+#elif PLATFORM_IOS
+IMPLEMENT_ENGINE_SETTINGS_GETTER(iOSPlatformSettings, iOSPlatform);
 #else
 #error Unknown platform
 #endif
@@ -79,6 +89,24 @@ GameSettings* GameSettings::Get()
         // It may be missing in editor during dev but must be ready in the build game.
         PROFILE_CPU();
         const auto assetPath = Globals::ProjectContentFolder / TEXT("GameSettings.json");
+#if FLAX_TESTS
+        // Silence missing GameSettings during test run before Editor creates it (not important)
+        if (!FileSystem::FileExists(assetPath))
+            return nullptr;
+#endif
+#if USE_EDITOR
+        // Log once missing GameSettings in Editor
+        if (!FileSystem::FileExists(assetPath))
+        {
+            static bool LogOnce = true;
+            if (LogOnce)
+            {
+                LogOnce = false;
+                LOG(Error, "Missing file game settings asset ({0})", assetPath);
+            }
+            return nullptr;
+        }
+#endif
         GameSettingsAsset = Content::LoadAsync<JsonAsset>(assetPath);
         if (GameSettingsAsset == nullptr)
         {
@@ -135,6 +163,7 @@ bool GameSettings::Load()
     PRELOAD_SETTINGS(Physics);
     PRELOAD_SETTINGS(Input);
     PRELOAD_SETTINGS(Graphics);
+    PRELOAD_SETTINGS(Network);
     PRELOAD_SETTINGS(Navigation);
     PRELOAD_SETTINGS(Localization);
     PRELOAD_SETTINGS(GameCooking);
@@ -169,6 +198,7 @@ void GameSettings::Apply()
     APPLY_SETTINGS(StreamingSettings);
     APPLY_SETTINGS(InputSettings);
     APPLY_SETTINGS(GraphicsSettings);
+    APPLY_SETTINGS(NetworkSettings);
     APPLY_SETTINGS(NavigationSettings);
     APPLY_SETTINGS(LocalizationSettings);
     APPLY_SETTINGS(BuildSettings);
@@ -209,6 +239,7 @@ void GameSettings::Deserialize(DeserializeStream& stream, ISerializeModifier* mo
     DESERIALIZE(Physics);
     DESERIALIZE(Input);
     DESERIALIZE(Graphics);
+    DESERIALIZE(Network);
     DESERIALIZE(Navigation);
     DESERIALIZE(Localization);
     DESERIALIZE(GameCooking);
@@ -223,6 +254,9 @@ void GameSettings::Deserialize(DeserializeStream& stream, ISerializeModifier* mo
     DESERIALIZE(XboxScarlettPlatform);
     DESERIALIZE(AndroidPlatform);
     DESERIALIZE(SwitchPlatform);
+    DESERIALIZE(PS5Platform);
+    DESERIALIZE(MacPlatform);
+    DESERIALIZE(iOSPlatform);
 }
 
 void LayersAndTagsSettings::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)

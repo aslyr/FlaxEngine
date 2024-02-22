@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -77,9 +77,10 @@ void GPUBufferDX12::Unmap()
         writtenRangePtr = nullptr;
         break;
     default:
-    CRASH;
+        return;
     }
     _resource->Unmap(0, writtenRangePtr);
+    _lastMapMode = (GPUResourceMapMode)255;
 }
 
 GPUResource* GPUBufferDX12::AsGPUResource() const
@@ -110,7 +111,7 @@ bool GPUBufferDX12::OnInit()
     if (useUAV)
         resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 #if PLATFORM_XBOX_SCARLETT || PLATFORM_XBOX_ONE
-    if (_desc.Flags & GPUBufferFlags::Argument)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Argument))
         resourceDesc.Flags |= D3D12XBOX_RESOURCE_FLAG_ALLOW_INDIRECT_BUFFER;
 #endif
 
@@ -135,7 +136,7 @@ bool GPUBufferDX12::OnInit()
     // Create resource
     ID3D12Resource* resource;
     D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COPY_DEST;
-    VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, initialState, nullptr, IID_PPV_ARGS(&resource)));
+    VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, initialState, nullptr, IID_PPV_ARGS(&resource)));
 
     // Set state
     initResource(resource, initialState, 1);
@@ -171,10 +172,10 @@ bool GPUBufferDX12::OnInit()
     }
 
     // Check if need to use a counter
-    if (_desc.Flags & GPUBufferFlags::Counter || _desc.Flags & GPUBufferFlags::Append)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Counter) || EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Append))
     {
 #if GPU_ENABLE_RESOURCE_NAMING
-        String name = GetName() + TEXT(".Counter");
+        String name = String(GetName()) + TEXT(".Counter");
         _counter = ::New<GPUBufferDX12>(_device, name);
 #else
         _counter = ::New<GPUBufferDX12>(_device, String::Empty);
@@ -191,7 +192,7 @@ bool GPUBufferDX12::OnInit()
     if (useSRV)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc;
-        if (_desc.Flags & GPUBufferFlags::RawBuffer)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
             srvDesc.Format = RenderToolsDX::ToDxgiFormat(_desc.Format);
         else
             srvDesc.Format = RenderToolsDX::ToDxgiFormat(PixelFormatExtensions::FindShaderResourceFormat(_desc.Format, false));
@@ -200,7 +201,7 @@ bool GPUBufferDX12::OnInit()
         srvDesc.Buffer.FirstElement = 0;
         srvDesc.Buffer.NumElements = numElements;
         srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-        if (_desc.Flags & GPUBufferFlags::Structured)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
         {
             srvDesc.Buffer.StructureByteStride = _desc.Stride;
             srvDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -209,7 +210,7 @@ bool GPUBufferDX12::OnInit()
         {
             srvDesc.Buffer.StructureByteStride = 0;
         }
-        if (_desc.Flags & GPUBufferFlags::RawBuffer)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
             srvDesc.Buffer.Flags |= D3D12_BUFFER_SRV_FLAG_RAW;
         _view.SetSRV(srvDesc);
     }
@@ -222,11 +223,11 @@ bool GPUBufferDX12::OnInit()
         uavDesc.Buffer.CounterOffsetInBytes = 0;
         uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
         uavDesc.Buffer.NumElements = numElements;
-        if (_desc.Flags & GPUBufferFlags::Structured)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
             uavDesc.Buffer.StructureByteStride = _desc.Stride;
-        if (_desc.Flags & GPUBufferFlags::RawBuffer)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
             uavDesc.Buffer.Flags |= D3D12_BUFFER_UAV_FLAG_RAW;
-        if (_desc.Flags & GPUBufferFlags::Structured)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
             uavDesc.Format = DXGI_FORMAT_UNKNOWN;
         else
             uavDesc.Format = RenderToolsDX::ToDxgiFormat(PixelFormatExtensions::FindUnorderedAccessFormat(_desc.Format));

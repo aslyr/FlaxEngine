@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine;
@@ -69,8 +69,13 @@ namespace FlaxEditor.Surface
         NoSpawnViaPaste = 512,
 
         /// <summary>
+        /// Node can be used in the Behavior Tree graphs.
+        /// </summary>
+        BehaviorTreeGraph = 1024,
+
+        /// <summary>
         /// Node can be used in the all visual graphs.
         /// </summary>
-        AllGraphs = MaterialGraph | ParticleEmitterGraph | AnimGraph | VisualScriptGraph,
+        AllGraphs = MaterialGraph | ParticleEmitterGraph | AnimGraph | VisualScriptGraph | BehaviorTreeGraph,
     }
 }

@@ -1,10 +1,12 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Engine/Platform/Platform.h"
 #include "Engine/Platform/CPUInfo.h"
 #include "Engine/Platform/MemoryStats.h"
 #include "Engine/Platform/MessageBox.h"
 #include "Engine/Platform/FileSystem.h"
+#include "Engine/Platform/Window.h"
+#include "Engine/Platform/User.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Types/DateTime.h"
 #include "Engine/Core/Types/TimeSpan.h"
@@ -39,7 +41,14 @@ static_assert(sizeof(bool) == 1, "Invalid bool type size.");
 static_assert(sizeof(float) == 4, "Invalid float type size.");
 static_assert(sizeof(double) == 8, "Invalid double type size.");
 
+// Check configuration
+static_assert((PLATFORM_THREADS_LIMIT & (PLATFORM_THREADS_LIMIT - 1)) == 0, "Threads limit must be power of two.");
+static_assert(PLATFORM_THREADS_LIMIT % 4 == 0, "Threads limit must be multiple of 4.");
+
 float PlatformBase::CustomDpiScale = 1.0f;
+Array<User*, FixedAllocation<8>> PlatformBase::Users;
+Delegate<User*> PlatformBase::UserAdded;
+Delegate<User*> PlatformBase::UserRemoved;
 
 const Char* ToString(NetworkConnectionType value)
 {
@@ -102,6 +111,22 @@ const Char* ToString(ThreadPriority value)
     }
 }
 
+UserBase::UserBase(const String& name)
+    : UserBase(SpawnParams(Guid::New(), TypeInitializer), name)
+{
+}
+
+UserBase::UserBase(const SpawnParams& params, const String& name)
+    : ScriptingObject(params)
+    , _name(name)
+{
+}
+
+String UserBase::GetName() const
+{
+    return _name;
+}
+
 bool PlatformBase::Init()
 {
 #if BUILD_DEBUG
@@ -137,7 +162,7 @@ void PlatformBase::LogInfo()
     LOG(Info, "CPU package count: {0}, Core count: {1}, Logical processors: {2}", cpuInfo.ProcessorPackageCount, cpuInfo.ProcessorCoreCount, cpuInfo.LogicalProcessorCount);
     LOG(Info, "CPU Page size: {0}, cache line size: {1} bytes", Utilities::BytesToText(cpuInfo.PageSize), cpuInfo.CacheLineSize);
     LOG(Info, "L1 cache: {0}, L2 cache: {1}, L3 cache: {2}", Utilities::BytesToText(cpuInfo.L1CacheSize), Utilities::BytesToText(cpuInfo.L2CacheSize), Utilities::BytesToText(cpuInfo.L3CacheSize));
-    LOG(Info, "Clock speed: {0} GHz", Utilities::RoundTo2DecimalPlaces(cpuInfo.ClockSpeed * 1e-9f));
+    LOG(Info, "Clock speed: {0}", Utilities::HertzToText(cpuInfo.ClockSpeed));
 
     const MemoryStats memStats = Platform::GetMemoryStats();
     LOG(Info, "Physical Memory: {0} total, {1} used ({2}%)", Utilities::BytesToText(memStats.TotalPhysicalMemory), Utilities::BytesToText(memStats.UsedPhysicalMemory), Utilities::RoundTo2DecimalPlaces((float)memStats.UsedPhysicalMemory * 100.0f / (float)memStats.TotalPhysicalMemory));
@@ -176,8 +201,8 @@ void PlatformBase::OnMemoryAlloc(void* ptr, uint64 size)
 
 #if TRACY_ENABLE_MEMORY
     // Track memory allocation in Tracy
-    //tracy::Profiler::MemAlloc(ptr, size, false);
-    tracy::Profiler::MemAllocCallstack(ptr, size, 12, false);
+    //tracy::Profiler::MemAlloc(ptr, (size_t)size, false);
+    tracy::Profiler::MemAllocCallstack(ptr, (size_t)size, 12, false);
 #endif
 
     // Register allocation during the current CPU event
@@ -462,6 +487,11 @@ ScreenOrientationType PlatformBase::GetScreenOrientationType()
     return ScreenOrientationType::Unknown;
 }
 
+String PlatformBase::GetUserName()
+{
+    return Users.Count() != 0 ? Users[0]->GetName() : String::Empty;
+}
+
 bool PlatformBase::GetIsPaused()
 {
     return false;
@@ -495,7 +525,41 @@ void PlatformBase::CreateGuid(Guid& result)
     result = Guid(dateThingHigh, randomThing | (sequentialThing << 16), cyclesThing, dateThingLow);
 }
 
-Vector2 PlatformBase::GetVirtualDesktopSize()
+bool PlatformBase::CanOpenUrl(const StringView& url)
+{
+    return false;
+}
+
+void PlatformBase::OpenUrl(const StringView& url)
+{
+}
+
+Float2 PlatformBase::GetMousePosition()
+{
+    const Window* win = Engine::MainWindow;
+    if (win)
+        return win->ClientToScreen(win->GetMousePosition());
+    return Float2::Minimum;
+}
+
+void PlatformBase::SetMousePosition(const Float2& position)
+{
+    const Window* win = Engine::MainWindow;
+    if (win)
+        win->SetMousePosition(win->ScreenToClient(position));
+}
+
+Rectangle PlatformBase::GetMonitorBounds(const Float2& screenPos)
+{
+    return Rectangle(Float2::Zero, Platform::GetDesktopSize());
+}
+
+Rectangle PlatformBase::GetVirtualDesktopBounds()
+{
+    return Rectangle(Float2::Zero, Platform::GetDesktopSize());
+}
+
+Float2 PlatformBase::GetVirtualDesktopSize()
 {
     return Platform::GetVirtualDesktopBounds().Size;
 }
@@ -517,22 +581,49 @@ bool PlatformBase::SetEnvironmentVariable(const String& name, const String& valu
     return true;
 }
 
-int32 PlatformBase::StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow, bool waitForEnd)
+int32 PlatformBase::CreateProcess(CreateProcessSettings& settings)
 {
     // Not supported
     return -1;
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+#include "Engine/Platform/CreateProcessSettings.h"
+
+int32 PlatformBase::StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow, bool waitForEnd)
+{
+    CreateProcessSettings procSettings;
+    procSettings.FileName = filename;
+    procSettings.Arguments = args;
+    procSettings.WorkingDirectory = workingDir;
+    procSettings.HiddenWindow = hiddenWindow;
+    procSettings.WaitForEnd = waitForEnd;
+    procSettings.LogOutput = waitForEnd;
+    procSettings.ShellExecute = true;
+    return Platform::CreateProcess(procSettings);
 }
 
 int32 PlatformBase::RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow)
 {
-    return Platform::RunProcess(cmdLine, workingDir, Dictionary<String, String>(), hiddenWindow);
+    CreateProcessSettings procSettings;
+    procSettings.FileName = cmdLine;
+    procSettings.WorkingDirectory = workingDir;
+    procSettings.HiddenWindow = hiddenWindow;
+    return Platform::CreateProcess(procSettings);
 }
 
 int32 PlatformBase::RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String>& environment, bool hiddenWindow)
 {
-    // Not supported
-    return -1;
+    CreateProcessSettings procSettings;
+    procSettings.FileName = cmdLine;
+    procSettings.WorkingDirectory = workingDir;
+    procSettings.Environment = environment;
+    procSettings.HiddenWindow = hiddenWindow;
+    return Platform::CreateProcess(procSettings);
 }
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 Array<PlatformBase::StackFrame> PlatformBase::GetStackFrames(int32 skipCount, int32 maxDepth, void* context)
 {
@@ -546,14 +637,21 @@ String PlatformBase::GetStackTrace(int32 skipCount, int32 maxDepth, void* contex
     for (const auto& frame : stackFrames)
     {
         StringAsUTF16<ARRAY_COUNT(StackFrame::FunctionName)> functionName(frame.FunctionName);
+        const StringView functionNameStr(functionName.Get());
         if (StringUtils::Length(frame.FileName) != 0)
         {
             StringAsUTF16<ARRAY_COUNT(StackFrame::FileName)> fileName(frame.FileName);
-            result.AppendFormat(TEXT("   at {0}() in {1}:line {2}\n"), functionName.Get(), fileName.Get(), frame.LineNumber);
+            result.Append(TEXT("   at ")).Append(functionNameStr);
+            if (!functionNameStr.EndsWith(')'))
+                result.Append(TEXT("()"));
+            result.AppendFormat(TEXT("in {0}:line {1}\n"),fileName.Get(), frame.LineNumber);
         }
         else if (StringUtils::Length(frame.FunctionName) != 0)
         {
-            result.AppendFormat(TEXT("   at {0}()\n"), functionName.Get());
+            result.Append(TEXT("   at ")).Append(functionNameStr);
+            if (!functionNameStr.EndsWith(')'))
+                result.Append(TEXT("()"));
+            result.Append('\n');
         }
         else
         {
@@ -587,6 +685,12 @@ const Char* ToString(PlatformType type)
         return TEXT("Android");
     case PlatformType::Switch:
         return TEXT("Switch");
+    case PlatformType::PS5:
+        return TEXT("PlayStation 5");
+    case PlatformType::Mac:
+        return TEXT("Mac");
+    case PlatformType::iOS:
+        return TEXT("iOS");
     default:
         return TEXT("");
     }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 
@@ -19,7 +19,7 @@ namespace FlaxEditor.Surface.Archetypes
                 Description = desc,
                 AlternativeTitles = altTitles,
                 Flags = NodeFlags.AllGraphs,
-                Size = new Vector2(140, 20),
+                Size = new Float2(140, 20),
                 Elements = new[]
                 {
                     NodeElementArchetype.Factory.Input(0, "A", true, typeof(bool), 0),
@@ -37,7 +37,7 @@ namespace FlaxEditor.Surface.Archetypes
                 Description = desc,
                 AlternativeTitles = altTitles,
                 Flags = NodeFlags.AllGraphs,
-                Size = new Vector2(140, 40),
+                Size = new Float2(140, 40),
                 DefaultValues = new object[]
                 {
                     false,
@@ -60,7 +60,7 @@ namespace FlaxEditor.Surface.Archetypes
             Op1(1, "Boolean NOT", "Negates the boolean value", new[] { "!", "~" }),
             Op2(2, "Boolean AND", "Performs a logical conjunction on two values", new[] { "&&" }),
             Op2(3, "Boolean OR", "Returns true if either (or both) of its operands is true", new[] { "||" }),
-            Op2(4, "Boolean XOR", ""),
+            Op2(4, "Boolean XOR", "", new [] { "^" } ),
             Op2(5, "Boolean NOR", ""),
             Op2(6, "Boolean NAND", ""),
         };

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -6,9 +6,54 @@ using System.Linq;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.CustomEditors
 {
+    /// <summary>
+    /// The per-feature flags for custom editors system.
+    /// </summary>
+    [HideInEditor, Flags]
+    public enum FeatureFlags
+    {
+        /// <summary>
+        /// Nothing.
+        /// </summary>
+        None = 0,
+
+        /// <summary>
+        /// Enables caching the expanded groups in this presenter. Used to preserve the expanded groups using project cache.
+        /// </summary>
+        CacheExpandedGroups = 1 << 0,
+
+        /// <summary>
+        /// Enables using prefab-related features of the properties editor (eg. revert to prefab option).
+        /// </summary>
+        UsePrefab = 1 << 1,
+
+        /// <summary>
+        /// Enables using default-value-related features of the properties editor (eg. revert to default option).
+        /// </summary>
+        UseDefault = 1 << 2,
+    }
+
+    /// <summary>
+    /// The interface for Editor context that owns the presenter. Can be <see cref="FlaxEditor.Windows.PropertiesWindow"/> or <see cref="FlaxEditor.Windows.Assets.PrefabWindow"/> or other window/panel - custom editor scan use it for more specific features.
+    /// </summary>
+    public interface IPresenterOwner
+    {
+        /// <summary>
+        /// Gets the viewport linked with properties presenter (optional, null if unused).
+        /// </summary>
+        public Viewport.EditorViewport PresenterViewport { get; }
+
+        /// <summary>
+        /// Selects the scene objects.
+        /// </summary>
+        /// <param name="nodes">The nodes to select</param>
+        public void Select(List<SceneGraph.SceneGraphNode> nodes);
+    }
+
     /// <summary>
     /// Main class for Custom Editors used to present selected objects properties and allow to modify them.
     /// </summary>
@@ -40,8 +85,15 @@ namespace FlaxEditor.CustomEditors
             /// <inheritdoc />
             public override void Update(float deltaTime)
             {
-                // Update editors
-                _presenter.Update();
+                try
+                {
+                    // Update editors
+                    _presenter.Update();
+                }
+                catch (Exception ex)
+                {
+                    FlaxEditor.Editor.LogWarning(ex);
+                }
 
                 base.Update(deltaTime);
             }
@@ -61,7 +113,6 @@ namespace FlaxEditor.CustomEditors
         /// <seealso cref="FlaxEditor.CustomEditors.SyncPointEditor" />
         protected class RootEditor : SyncPointEditor
         {
-            private readonly string _noSelectionText;
             private CustomEditor _overrideEditor;
 
             /// <summary>
@@ -83,12 +134,17 @@ namespace FlaxEditor.CustomEditors
             }
 
             /// <summary>
+            /// The text to show when no object is selected.
+            /// </summary>
+            public string NoSelectionText;
+
+            /// <summary>
             /// Initializes a new instance of the <see cref="RootEditor"/> class.
             /// </summary>
             /// <param name="noSelectionText">The text to show when no item is selected.</param>
             public RootEditor(string noSelectionText)
             {
-                _noSelectionText = noSelectionText ?? "No selection";
+                NoSelectionText = noSelectionText ?? "No selection";
             }
 
             /// <summary>
@@ -116,7 +172,7 @@ namespace FlaxEditor.CustomEditors
                     }
                     else
                     {
-                        var type = new ScriptType(typeof(object));
+                        var type = ScriptType.Object;
                         if (selection.HasDifferentTypes == false)
                             type = TypeUtils.GetObjectType(selection[0]);
                         Editor = CustomEditorsUtil.CreateEditor(type, false);
@@ -127,7 +183,7 @@ namespace FlaxEditor.CustomEditors
                 }
                 else
                 {
-                    var label = layout.Label(_noSelectionText, TextAlignment.Center);
+                    var label = layout.Label(NoSelectionText, TextAlignment.Center);
                     label.Label.Height = 20.0f;
                 }
 
@@ -205,9 +261,9 @@ namespace FlaxEditor.CustomEditors
         public bool BuildOnUpdate => _buildOnUpdate;
 
         /// <summary>
-        /// True if cache the expanded groups in this presenter, otherwise will disable this feature. Used to preserve the expanded groups using project cache.
+        /// The features to use for properties editor.
         /// </summary>
-        public bool CacheExpandedGroups;
+        public FeatureFlags Features = FeatureFlags.UsePrefab | FeatureFlags.UseDefault;
 
         /// <summary>
         /// Occurs when before creating layout for the selected objects editor UI. Can be used to inject custom UI to the layout.
@@ -219,16 +275,54 @@ namespace FlaxEditor.CustomEditors
         /// </summary>
         public event Action<LayoutElementsContainer> AfterLayout;
 
+        /// <summary>
+        /// The Editor context that owns this presenter. Can be <see cref="FlaxEditor.Windows.PropertiesWindow"/> or <see cref="FlaxEditor.Windows.Assets.PrefabWindow"/> or other window/panel - custom editor scan use it for more specific features.
+        /// </summary>
+        public IPresenterOwner Owner;
+
+        /// <summary>
+        /// Gets or sets the text to show when no object is selected.
+        /// </summary>
+        public string NoSelectionText
+        {
+            get => Editor.NoSelectionText;
+            set
+            {
+                Editor.NoSelectionText = value;
+                if (SelectionCount == 0)
+                    BuildLayoutOnUpdate();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the value indicating whether properties are read-only.
+        /// </summary>
+        public bool ReadOnly
+        {
+            get => _readOnly;
+            set
+            {
+                if (_readOnly != value)
+                {
+                    _readOnly = value;
+                    UpdateReadOnly();
+                }
+            }
+        }
+
         private bool _buildOnUpdate;
+        private bool _readOnly;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="CustomEditorPresenter"/> class.
         /// </summary>
         /// <param name="undo">The undo. It's optional.</param>
         /// <param name="noSelectionText">The custom text to display when no object is selected. Default is No selection.</param>
-        public CustomEditorPresenter(Undo undo, string noSelectionText = null)
+        /// <param name="owner">The owner of the presenter.</param>
+        public CustomEditorPresenter(Undo undo, string noSelectionText = null, IPresenterOwner owner = null)
         {
             Undo = undo;
+            Owner = owner;
             Panel = new PresenterPanel(this);
             Editor = new RootEditor(noSelectionText);
             Editor.Initialize(this, this, null);
@@ -311,6 +405,8 @@ namespace FlaxEditor.CustomEditors
             // Restore scroll value
             if (parentScrollV > -1)
                 panel.VScrollBar.Value = parentScrollV;
+            if (_readOnly)
+                UpdateReadOnly();
         }
 
         /// <summary>
@@ -319,6 +415,16 @@ namespace FlaxEditor.CustomEditors
         public void BuildLayoutOnUpdate()
         {
             _buildOnUpdate = true;
+        }
+
+        private void UpdateReadOnly()
+        {
+            // Only scrollbars are enabled
+            foreach (var child in Panel.Children)
+            {
+                if (!(child is ScrollBar))
+                    child.Enabled = !_readOnly;
+            }
         }
 
         private void ExpandGroups(LayoutElementsContainer c, bool open)

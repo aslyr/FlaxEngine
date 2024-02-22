@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -13,9 +13,13 @@ namespace Flax.Build.Bindings
     {
         public AccessLevel Access;
         public AccessLevel BaseTypeInheritance;
+        public bool IsTemplate;
         public ClassStructInfo BaseType;
         public List<InterfaceInfo> Interfaces;
         public List<TypeInfo> Inheritance; // Data from parsing, used to interfaces and base type construct in Init
+        public List<FunctionInfo> Functions = new List<FunctionInfo>();
+
+        public override bool SkipGeneration => IsInBuild || IsTemplate;
 
         public override void Init(Builder.BuildData buildData)
         {
@@ -50,8 +54,10 @@ namespace Flax.Build.Bindings
         {
             writer.Write((byte)Access);
             writer.Write((byte)BaseTypeInheritance);
+            writer.Write(IsTemplate);
             BindingsGenerator.Write(writer, BaseType);
             BindingsGenerator.Write(writer, Inheritance);
+            BindingsGenerator.Write(writer, Functions);
 
             base.Write(writer);
         }
@@ -60,10 +66,51 @@ namespace Flax.Build.Bindings
         {
             Access = (AccessLevel)reader.ReadByte();
             BaseTypeInheritance = (AccessLevel)reader.ReadByte();
+            IsTemplate = reader.ReadBoolean();
             BaseType = BindingsGenerator.Read(reader, BaseType);
             Inheritance = BindingsGenerator.Read(reader, Inheritance);
+            Functions = BindingsGenerator.Read(reader, Functions);
 
             base.Read(reader);
+        }
+    }
+
+    /// <summary>
+    /// The native class or interface information for bindings generator that contains virtual functions.
+    /// </summary>
+    public abstract class VirtualClassInfo : ClassStructInfo
+    {
+        internal HashSet<string> UniqueFunctionNames;
+
+        public override void Init(Builder.BuildData buildData)
+        {
+            base.Init(buildData);
+
+            foreach (var functionInfo in Functions)
+                ProcessAndValidate(functionInfo);
+        }
+
+        protected void ProcessAndValidate(FunctionInfo functionInfo)
+        {
+            // Ensure that methods have unique names for bindings
+            if (UniqueFunctionNames == null)
+                UniqueFunctionNames = new HashSet<string>();
+            int idx = 1;
+            functionInfo.UniqueName = functionInfo.Name;
+            while (UniqueFunctionNames.Contains(functionInfo.UniqueName))
+                functionInfo.UniqueName = functionInfo.Name + idx++;
+            UniqueFunctionNames.Add(functionInfo.UniqueName);
+        }
+
+        public abstract int GetScriptVTableSize(out int offset);
+
+        public abstract int GetScriptVTableOffset(VirtualClassInfo classInfo);
+
+        public override void AddChild(ApiTypeInfo apiTypeInfo)
+        {
+            apiTypeInfo.Namespace = null;
+
+            base.AddChild(apiTypeInfo);
         }
     }
 }

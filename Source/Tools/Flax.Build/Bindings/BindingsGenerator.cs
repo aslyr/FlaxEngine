@@ -1,8 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flax.Build.NativeCpp;
@@ -34,6 +36,48 @@ namespace Flax.Build.Bindings
             /// The generated C# file path that contains a API bindings wrapper code to setup the glue code.
             /// </summary>
             public string GeneratedCSharpFilePath;
+
+            /// <summary>
+            /// The custom data per-scripting language.
+            /// </summary>
+            public Dictionary<string, string> CustomScriptingData;
+        }
+
+        public delegate void GenerateModuleBindingsDelegate(BuildData buildData, IGrouping<string, Module> binaryModule);
+
+        public delegate void GenerateBinaryModuleBindingsDelegate(BuildData buildData, ModuleInfo moduleInfo, ref BindingsResult bindings);
+
+        public delegate void ParseTypeTagDelegate(ref bool valid, TagParameter tag, ApiTypeInfo typeInfo);
+
+        public delegate void ParseMemberTagDelegate(ref bool valid, TagParameter tag, MemberInfo memberInfo);
+
+        public delegate void ParseFunctionParameterTagDelegate(ref bool valid, TagParameter tag, ref FunctionInfo.ParameterInfo parameterInfo);
+
+        public static event GenerateModuleBindingsDelegate GenerateModuleBindings;
+        public static event GenerateBinaryModuleBindingsDelegate GenerateBinaryModuleBindings;
+        public static event ParseTypeTagDelegate ParseTypeTag;
+        public static event ParseMemberTagDelegate ParseMemberTag;
+        public static event ParseFunctionParameterTagDelegate ParseFunctionParameterTag;
+        public static ModuleInfo CurrentModule;
+
+        private static List<StringBuilder> _strignBuilderCache;
+
+        public static StringBuilder GetStringBuilder()
+        {
+            if (_strignBuilderCache == null || _strignBuilderCache.Count == 0)
+                return new StringBuilder();
+            var idx = _strignBuilderCache.Count - 1;
+            var result = _strignBuilderCache[idx];
+            _strignBuilderCache.RemoveAt(idx);
+            result.Clear();
+            return result;
+        }
+
+        public static void PutStringBuilder(StringBuilder value)
+        {
+            if (_strignBuilderCache == null)
+                _strignBuilderCache = new List<StringBuilder>();
+            _strignBuilderCache.Add(value);
         }
 
         public static ModuleInfo ParseModule(BuildData buildData, Module module, BuildOptions moduleOptions = null)
@@ -68,6 +112,8 @@ namespace Flax.Build.Bindings
             };
             if (string.IsNullOrEmpty(moduleInfo.Name))
                 throw new Exception("Module name cannot be empty.");
+            if (module.Tags != null && module.Tags.Count != 0)
+                moduleInfo.Tags = new Dictionary<string, string>(module.Tags);
             buildData.ModulesInfo.Add(module, moduleInfo);
 
             // Skip for modules that cannot have API bindings
@@ -204,6 +250,7 @@ namespace Flax.Build.Bindings
                     ScopeAccessStack = new Stack<AccessLevel>(),
                     PreprocessorDefines = new Dictionary<string, string>(),
                 };
+                context.PreprocessorDefines.Add("FLAX_BUILD_BINDINGS", "1");
                 context.EnterScope(fileInfo);
 
                 // Process the source code
@@ -243,6 +290,8 @@ namespace Flax.Build.Bindings
                                 classInfo.Functions.Add(functionInfo);
                             else if (context.ScopeInfo is StructureInfo structureInfo)
                                 structureInfo.Functions.Add(functionInfo);
+                            else if (context.ScopeInfo is InterfaceInfo interfaceInfo)
+                                interfaceInfo.Functions.Add(functionInfo);
                             else
                                 throw new Exception($"Not supported free-function {functionInfo.Name} at line {tokenizer.CurrentLine}. Place it in the class to use API bindings for it.");
                         }
@@ -280,10 +329,15 @@ namespace Flax.Build.Bindings
                             else
                                 throw new Exception($"Not supported location for event {eventInfo.Name} at line {tokenizer.CurrentLine}. Place it in the class to use API bindings for it.");
                         }
-                        else if (string.Equals(token.Value, ApiTokens.InjectCppCode, StringComparison.Ordinal))
+                        else if (string.Equals(token.Value, ApiTokens.Typedef, StringComparison.Ordinal))
                         {
-                            var injectCppCodeInfo = ParseInjectCppCode(ref context);
-                            fileInfo.AddChild(injectCppCodeInfo);
+                            var typeInfo = ParseTypedef(ref context);
+                            fileInfo.AddChild(typeInfo);
+                        }
+                        else if (string.Equals(token.Value, ApiTokens.InjectCode, StringComparison.Ordinal))
+                        {
+                            var injectCodeInfo = ParseInjectCode(ref context);
+                            fileInfo.AddChild(injectCodeInfo);
                         }
                         else if (string.Equals(token.Value, ApiTokens.Interface, StringComparison.Ordinal))
                         {
@@ -345,6 +399,7 @@ namespace Flax.Build.Bindings
                             break;
                         }
                         case "if":
+                        case "elif":
                         {
                             // Parse condition
                             var condition = string.Empty;
@@ -359,7 +414,10 @@ namespace Flax.Build.Bindings
                                 }
 
                                 // Very simple defines processing
-                                tokenValue = ReplacePreProcessorDefines(tokenValue, context.PreprocessorDefines.Keys);
+                                var negate = tokenValue[0] == '!';
+                                if (negate)
+                                    tokenValue = tokenValue.Substring(1);
+                                tokenValue = ReplacePreProcessorDefines(tokenValue, context.PreprocessorDefines);
                                 tokenValue = ReplacePreProcessorDefines(tokenValue, moduleOptions.PublicDefinitions);
                                 tokenValue = ReplacePreProcessorDefines(tokenValue, moduleOptions.PrivateDefinitions);
                                 tokenValue = ReplacePreProcessorDefines(tokenValue, moduleOptions.CompileEnv.PreprocessorDefinitions);
@@ -368,15 +426,34 @@ namespace Flax.Build.Bindings
                                 tokenValue = tokenValue.Replace("||", "|");
                                 if (tokenValue.Length != 0 && tokenValue != "1" && tokenValue != "0" && tokenValue != "|")
                                     tokenValue = "0";
+                                if (negate)
+                                    tokenValue = tokenValue == "1" ? "0" : "1";
 
                                 condition += tokenValue;
                                 token = tokenizer.NextToken(true);
                             }
 
                             // Filter condition
-                            condition = condition.Replace("1|1", "1");
-                            condition = condition.Replace("1|0", "1");
-                            condition = condition.Replace("0|1", "1");
+                            bool modified;
+                            do
+                            {
+                                modified = false;
+                                if (condition.Contains("1|1"))
+                                {
+                                    condition = condition.Replace("1|1", "1");
+                                    modified = true;
+                                }
+                                if (condition.Contains("1|0"))
+                                {
+                                    condition = condition.Replace("1|0", "1");
+                                    modified = true;
+                                }
+                                if (condition.Contains("0|1"))
+                                {
+                                    condition = condition.Replace("0|1", "1");
+                                    modified = true;
+                                }
+                            } while (modified);
 
                             // Skip chunk of code of condition fails
                             if (condition != "1")
@@ -447,6 +524,16 @@ namespace Flax.Build.Bindings
             return text;
         }
 
+        private static string ReplacePreProcessorDefines(string text, IDictionary<string, string> defines)
+        {
+            foreach (var e in defines)
+            {
+                if (string.Equals(text, e.Key, StringComparison.Ordinal))
+                    text = text.Replace(e.Key, string.IsNullOrEmpty(e.Value) ? "1" : e.Value);
+            }
+            return text;
+        }
+
         private static void ParsePreprocessorIf(FileInfo fileInfo, Tokenizer tokenizer, ref Token token)
         {
             int ifsCount = 1;
@@ -462,6 +549,22 @@ namespace Flax.Build.Bindings
                     case "ifdef":
                         ifsCount++;
                         break;
+                    case "else":
+                        if (ifsCount == 1)
+                        {
+                            // Continue with `else` block
+                            return;
+                        }
+                        break;
+                    case "elif":
+                        if (ifsCount == 1)
+                        {
+                            // Rollback to process conditional block
+                            tokenizer.PreviousToken();
+                            tokenizer.PreviousToken();
+                            return;
+                        }
+                        break;
                     case "endif":
                         ifsCount--;
                         break;
@@ -476,7 +579,7 @@ namespace Flax.Build.Bindings
         private static bool UseBindings(object type)
         {
             var apiTypeInfo = type as ApiTypeInfo;
-            if (apiTypeInfo != null && apiTypeInfo.IsInBuild)
+            if (apiTypeInfo != null && apiTypeInfo.SkipGeneration)
                 return false;
             if ((type is ModuleInfo || type is FileInfo) && apiTypeInfo != null)
             {
@@ -489,7 +592,7 @@ namespace Flax.Build.Bindings
             return type is ClassInfo ||
                    type is StructureInfo ||
                    type is InterfaceInfo ||
-                   type is InjectCppCodeInfo;
+                   type is InjectCodeInfo;
         }
 
         /// <summary>
@@ -511,7 +614,7 @@ namespace Flax.Build.Bindings
                 buildData.Modules.TryGetValue(moduleInfo.Module, out var moduleBuildInfo);
 
                 // Ensure that generated files are included into build
-                if (!moduleBuildInfo.SourceFiles.Contains(bindings.GeneratedCSharpFilePath))
+                if (EngineConfiguration.WithCSharp(buildData.TargetOptions) && !moduleBuildInfo.SourceFiles.Contains(bindings.GeneratedCSharpFilePath))
                     moduleBuildInfo.SourceFiles.Add(bindings.GeneratedCSharpFilePath);
             }
 
@@ -531,10 +634,12 @@ namespace Flax.Build.Bindings
                 Log.Verbose($"Generating API bindings for {module.Name} ({moduleInfo.Name})");
                 using (new ProfileEventScope("Cpp"))
                     GenerateCpp(buildData, moduleInfo, ref bindings);
-                using (new ProfileEventScope("CSharp"))
-                    GenerateCSharp(buildData, moduleInfo, ref bindings);
-
-                // TODO: add support for extending this code and support generating bindings for other scripting languages
+                if (EngineConfiguration.WithCSharp(buildData.TargetOptions))
+                {
+                    using (new ProfileEventScope("CSharp"))
+                        GenerateCSharp(buildData, moduleInfo, ref bindings);
+                }
+                GenerateBinaryModuleBindings?.Invoke(buildData, moduleInfo, ref bindings);
             }
         }
 
@@ -550,9 +655,11 @@ namespace Flax.Build.Bindings
                     // Generate bindings for binary module
                     Log.Verbose($"Generating binary module bindings for {binaryModule.Key}");
                     GenerateCpp(buildData, binaryModule);
-                    GenerateCSharp(buildData, binaryModule);
-
-                    // TODO: add support for extending this code and support generating bindings for other scripting languages
+                    if (EngineConfiguration.WithCSharp(buildData.TargetOptions))
+                    {
+                        GenerateCSharp(buildData, binaryModule);
+                    }
+                    GenerateModuleBindings?.Invoke(buildData, binaryModule);
                 }
             }
         }

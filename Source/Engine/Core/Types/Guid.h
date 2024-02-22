@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -15,7 +15,6 @@ class String;
 API_STRUCT(InBuild, Namespace="System") struct FLAXENGINE_API Guid
 {
 public:
-
     /// <summary>
     /// Accepted format specifiers for the format parameter
     /// </summary>
@@ -39,7 +38,6 @@ public:
     };
 
 public:
-
     union
     {
         struct
@@ -65,12 +63,10 @@ public:
     };
 
 public:
-
     // Empty Guid (considered as invalid ID)
     static Guid Empty;
 
 public:
-
     /// <summary>
     /// Empty constructor.
     /// </summary>
@@ -92,23 +88,14 @@ public:
     }
 
 public:
-
-    // Compares two Guids for equality
-    // @param left The first Guid to compare
-    // @param right The second Guid to compare
-    // @returns True if the Guids are equal, otherwise false
-    friend bool operator==(const Guid& left, const Guid& right)
+    bool operator==(const Guid& other) const
     {
-        return ((left.A ^ right.A) | (left.B ^ right.B) | (left.C ^ right.C) | (left.D ^ right.D)) == 0;
+        return ((A ^ other.A) | (B ^ other.B) | (C ^ other.C) | (D ^ other.D)) == 0;
     }
 
-    // Compares two Guids for inequality
-    // @param left The first Guid to compare
-    // @param right The second Guid to compare
-    // @returns True if the GUIDs are not equal, otherwise false
-    friend bool operator!=(const Guid& left, const Guid& right)
+    bool operator!=(const Guid& other) const
     {
-        return ((left.A ^ right.A) | (left.B ^ right.B) | (left.C ^ right.C) | (left.D ^ right.D)) != 0;
+        return ((A ^ other.A) | (B ^ other.B) | (C ^ other.C) | (D ^ other.D)) != 0;
     }
 
     // Provides access to the GUIDs components
@@ -152,14 +139,12 @@ public:
     }
 
 public:
-
     String ToString() const;
     String ToString(FormatType format) const;
     void ToString(char* buffer, FormatType format) const;
     void ToString(Char* buffer, FormatType format) const;
 
 public:
-
     /// <summary>
     /// Try to parse Guid from string
     /// </summary>

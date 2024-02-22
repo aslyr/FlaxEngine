@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_VULKAN
 
@@ -20,19 +20,21 @@
 #include "Config.h"
 #include "CmdBufferVulkan.h"
 #include "FlaxEngine.Gen.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Utilities.h"
+#include "Engine/Core/Math/Color32.h"
 #include "Engine/Core/Collections/ArrayExtensions.h"
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Platform/File.h"
 #include "Engine/Graphics/Textures/GPUSamplerDescription.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
-#include "Engine/Core/Utilities.h"
-#include "Engine/Core/Math/Color32.h"
 #include "Engine/Engine/Engine.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Utilities/StringConverter.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Threading/Threading.h"
+#include "Engine/Scripting/Enums.h"
 
 #if !USE_EDITOR && (PLATFORM_WINDOWS || PLATFORM_LINUX)
 #include "Engine/Core/Config/PlatformSettings.h"
@@ -142,6 +144,7 @@ static VKAPI_ATTR VkBool32 VKAPI_PTR DebugUtilsCallback(VkDebugUtilsMessageSever
         case 7060244: //  Image Operand Offset can only be used with OpImage*Gather operations
         case -1539028524: // SortedIndices is null so Vulkan backend sets it to default R32_SFLOAT format which is not good for UINT format of the buffer
         case -1810835948: // SortedIndices is null so Vulkan backend sets it to default R32_SFLOAT format which is not good for UINT format of the buffer
+        case -1621360350: // VkFramebufferCreateInfo attachment #0 has a layer count (1) smaller than the corresponding framebuffer layer count (64). The Vulkan spec states: If flags does not include VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT, each element of pAttachments that is used as an input, color, resolve, or depth/stencil attachment by renderPass must have been created with a VkImageViewCreateInfo::subresourceRange.layerCount greater than or equal to layers
             return VK_FALSE;
         }
         break;
@@ -209,11 +212,25 @@ static VKAPI_ATTR VkBool32 VKAPI_PTR DebugUtilsCallback(VkDebugUtilsMessageSever
         type = TEXT("Perf");
     }
 
-    if (callbackData->pMessageIdName)
-        LOG(Info, "[Vulkan] {0} {1}:{2}({3}) {4}", type, severity, callbackData->messageIdNumber, String(callbackData->pMessageIdName), String(callbackData->pMessage));
-    else
-        LOG(Info, "[Vulkan] {0} {1}:{2} {3}", type, severity, callbackData->messageIdNumber, String(callbackData->pMessage));
+    // Fix invalid characters in hex values (bug in Debug Layer)
+    char* handleStart = (char*)StringUtils::FindIgnoreCase(callbackData->pMessage, "0x");
+    while (handleStart != nullptr)
+    {
+        while (*handleStart != ' ' && *handleStart != 0)
+        {
+            *handleStart = Math::Clamp<char>(*handleStart, '0', 'z');
+            handleStart++;
+        }
+        if (*handleStart == 0)
+            break;
+        handleStart = (char*)StringUtils::FindIgnoreCase(handleStart, "0x");
+    }
 
+    const String message(callbackData->pMessage);
+    if (callbackData->pMessageIdName)
+        LOG(Info, "[Vulkan] {0} {1}:{2}({3}) {4}", type, severity, callbackData->messageIdNumber, String(callbackData->pMessageIdName), message);
+    else
+        LOG(Info, "[Vulkan] {0} {1}:{2} {3}", type, severity, callbackData->messageIdNumber, message);
     return VK_FALSE;
 }
 
@@ -414,7 +431,7 @@ void DeferredDeletionQueueVulkan::EnqueueGenericResource(Type type, uint64 handl
     ScopeLock lock(_locker);
 
 #if BUILD_DEBUG
-    const std::function<bool(const Entry&)> ContainsHandle = [handle](const Entry& e)
+    const Function<bool(const Entry&)> ContainsHandle = [handle](const Entry& e)
     {
         return e.Handle == handle;
     };
@@ -509,7 +526,10 @@ RenderPassVulkan::RenderPassVulkan(GPUDeviceVulkan* device, const RenderTargetLa
         attachment.samples = (VkSampleCountFlagBits)layout.MSAA;
 #if PLATFORM_ANDROID
         attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // TODO: Adreno 640 has glitches when blend is disabled and rt data not loaded 
+#elif PLATFORM_MAC || PLATFORM_IOS
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // MoltenVK seams to have glitches (tiled arch of gpu)
 #else
+        // TODO: we need render passes into high-level rendering api to perform more optimal rendering (esp. for tiled gpus)
         attachment.loadOp = layout.BlendEnable ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 #endif
         attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -848,7 +868,7 @@ GPUBufferVulkan* HelperResourcesVulkan::GetDummyBuffer()
     if (!_dummyBuffer)
     {
         _dummyBuffer = (GPUBufferVulkan*)_device->CreateBuffer(TEXT("DummyBuffer"));
-        _dummyBuffer->Init(GPUBufferDescription::Buffer(sizeof(int32), GPUBufferFlags::ShaderResource | GPUBufferFlags::UnorderedAccess, PixelFormat::R32_SInt));
+        _dummyBuffer->Init(GPUBufferDescription::Buffer(sizeof(int32) * 256, GPUBufferFlags::ShaderResource | GPUBufferFlags::UnorderedAccess, PixelFormat::R32_SInt));
     }
 
     return _dummyBuffer;
@@ -1058,13 +1078,16 @@ GPUDevice* GPUDeviceVulkan::Create()
 
     VkInstanceCreateInfo instInfo;
     RenderToolsVulkan::ZeroStruct(instInfo, VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO);
+#if PLATFORM_APPLE_FAMILY
+    instInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
     instInfo.pApplicationInfo = &appInfo;
 
     GetInstanceLayersAndExtensions(InstanceExtensions, InstanceLayers, SupportsDebugUtilsExt);
 
     const auto hasExtension = [](const Array<const char*>& extensions, const char* name) -> bool
     {
-        const std::function<bool(const char* const&)> callback = [&name](const char* const& extension) -> bool
+        const Function<bool(const char* const&)> callback = [&name](const char* const& extension) -> bool
         {
             return extension && StringUtils::Compare(extension, name) == 0;
         };
@@ -1084,7 +1107,11 @@ GPUDevice* GPUDeviceVulkan::Create()
     if (result == VK_ERROR_INCOMPATIBLE_DRIVER)
     {
         // Missing driver
-        Platform::Fatal(TEXT("Cannot find a compatible Vulkan driver.\nPlease look at the Getting Started guide for additional information."));
+#if PLATFORM_APPLE_FAMILY
+        Platform::Fatal(TEXT("Cannot find a compatible Metal driver."));
+#else
+        Platform::Fatal(TEXT("Cannot find a compatible Vulkan driver."));
+#endif
         return nullptr;
     }
     if (result == VK_ERROR_EXTENSION_NOT_PRESENT)
@@ -1134,18 +1161,27 @@ GPUDevice* GPUDeviceVulkan::Create()
 #endif
 
     // Enumerate all GPU devices and pick one
+    int32 selectedAdapterIndex = -1;
     uint32 gpuCount = 0;
     VALIDATE_VULKAN_RESULT(vkEnumeratePhysicalDevices(Instance, &gpuCount, nullptr));
+    if (gpuCount <= 0)
+    {
+        LOG(Warning, "No valid GPU found for Vulkan.");
+        Platform::Fatal(TEXT("Vulkan failed to create instance\n\nDo you have a Vulkan-compatible GPU?"));
+        return nullptr;
+    }
     ASSERT(gpuCount >= 1);
-    Array<VkPhysicalDevice> gpus;
-    gpus.AddZeroed(gpuCount);
+    Array<VkPhysicalDevice, InlinedAllocation<4>> gpus;
+    gpus.Resize(gpuCount);
     VALIDATE_VULKAN_RESULT(vkEnumeratePhysicalDevices(Instance, &gpuCount, gpus.Get()));
-    Array<GPUAdapterVulkan> adapters;
-    adapters.EnsureCapacity(gpuCount);
+    Array<GPUAdapterVulkan, InlinedAllocation<4>> adapters;
+    adapters.Resize(gpuCount);
     for (uint32 gpuIndex = 0; gpuIndex < gpuCount; gpuIndex++)
     {
-        GPUAdapterVulkan adapter(gpus[gpuIndex]);
-        adapters.Add(adapter);
+        GPUAdapterVulkan& adapter = adapters[gpuIndex];
+        adapter.Gpu = gpus[gpuIndex];
+        vkGetPhysicalDeviceProperties(adapter.Gpu, &adapter.GpuProps);
+        adapter.Description = adapter.GpuProps.deviceName;
 
         const Char* type;
         switch (adapter.GpuProps.deviceType)
@@ -1158,6 +1194,9 @@ GPUDevice* GPUDeviceVulkan::Create()
             break;
         case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
             type = TEXT("Discrete GPU");
+            // Select the first discrete GPU device
+            if (selectedAdapterIndex == -1)
+                selectedAdapterIndex = gpuIndex;
             break;
         case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
             type = TEXT("Virtual GPU");
@@ -1174,7 +1213,13 @@ GPUDevice* GPUDeviceVulkan::Create()
     }
 
     // Select the adapter to use
-    int32 selectedAdapter = 0;
+    if (selectedAdapterIndex < 0)
+        selectedAdapterIndex = 0;
+    if (adapters.Count() == 0 || selectedAdapterIndex >= adapters.Count())
+    {
+        LOG(Error, "Failed to find valid Vulkan adapter!");
+        return nullptr;
+    }
     uint32 vendorId = 0;
     if (CommandLine::Options.NVIDIA)
         vendorId = GPU_VENDOR_ID_NVIDIA;
@@ -1188,15 +1233,15 @@ GPUDevice* GPUDeviceVulkan::Create()
         {
             if (adapters[i].GetVendorId() == vendorId)
             {
-                selectedAdapter = i;
+                selectedAdapterIndex = i;
                 break;
             }
         }
     }
-    ASSERT(selectedAdapter != -1 && adapters[selectedAdapter].IsValid());
+    ASSERT(adapters[selectedAdapterIndex].IsValid());
 
     // Create device
-    auto device = New<GPUDeviceVulkan>(ShaderProfile::Vulkan_SM5, New<GPUAdapterVulkan>(adapters[selectedAdapter]));
+    auto device = New<GPUDeviceVulkan>(ShaderProfile::Vulkan_SM5, New<GPUAdapterVulkan>(adapters[selectedAdapterIndex]));
     if (device->Init())
     {
         LOG(Warning, "Graphics Device init failed");
@@ -1294,19 +1339,19 @@ PixelFormat GPUDeviceVulkan::GetClosestSupportedPixelFormat(PixelFormat format, 
 {
     // Collect features to use
     VkFormatFeatureFlags wantedFeatureFlags = 0;
-    if (flags & GPUTextureFlags::ShaderResource)
+    if (EnumHasAnyFlags(flags, GPUTextureFlags::ShaderResource))
         wantedFeatureFlags |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-    if (flags & GPUTextureFlags::RenderTarget)
+    if (EnumHasAnyFlags(flags, GPUTextureFlags::RenderTarget))
         wantedFeatureFlags |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-    if (flags & GPUTextureFlags::DepthStencil)
+    if (EnumHasAnyFlags(flags, GPUTextureFlags::DepthStencil))
         wantedFeatureFlags |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    if (flags & GPUTextureFlags::UnorderedAccess)
+    if (EnumHasAnyFlags(flags, GPUTextureFlags::UnorderedAccess))
         wantedFeatureFlags |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
 
     if (!IsVkFormatSupported(RenderToolsVulkan::ToVulkanFormat(format), wantedFeatureFlags, optimalTiling))
     {
         // Special case for depth-stencil formats
-        if (flags & GPUTextureFlags::DepthStencil)
+        if (EnumHasAnyFlags(flags, GPUTextureFlags::DepthStencil))
         {
             const bool hasStencil = PixelFormatExtensions::HasStencil(format);
 
@@ -1326,12 +1371,73 @@ PixelFormat GPUDeviceVulkan::GetClosestSupportedPixelFormat(PixelFormat format, 
         }
         else
         {
-            // TODO: implement it?
-            LOG(Warning, "Unsupported Vulkan format {0}", (int32)format);
+            // Perform remapping to bigger format that might be supported (more likely)
+            auto remap = format;
+            switch (format)
+            {
+            case PixelFormat::R11G11B10_Float:
+            case PixelFormat::R10G10B10A2_UNorm:
+                remap = PixelFormat::R16G16B16A16_Float;
+                break;
+            case PixelFormat::R16_Float:
+                remap = PixelFormat::R32_Float;
+                break;
+            case PixelFormat::R16G16_UNorm:
+            case PixelFormat::R16G16_Float:
+                remap = PixelFormat::R32G32_Float;
+                break;
+            case PixelFormat::R32G32B32A32_Float:
+                // RGBA32 is essential
+                return PixelFormat::Unknown;
+            default:
+                // Ultimate performance eater
+                remap = PixelFormat::R32G32B32A32_Float;
+                break;
+            }
+#if !BUILD_RELEASE
+            if (format != remap)
+            {
+                LOG(Warning, "Unsupported Vulkan format {0}. Remapping to {1}", ScriptingEnum::ToString(format), ScriptingEnum::ToString(remap));
+                format = GetClosestSupportedPixelFormat(remap, flags, optimalTiling);
+            }
+#endif
         }
     }
 
     return format;
+}
+
+void GetPipelineCachePath(String& path)
+{
+#if USE_EDITOR
+    path = Globals::ProjectCacheFolder / TEXT("VulkanPipeline.cache");
+#else
+    path = Globals::ProductLocalFolder / TEXT("VulkanPipeline.cache");
+#endif
+}
+
+bool GPUDeviceVulkan::SavePipelineCache()
+{
+    if (PipelineCache == VK_NULL_HANDLE || !vkGetPipelineCacheData)
+        return false;
+
+    // Query data size
+    size_t dataSize = 0;
+    VkResult result = vkGetPipelineCacheData(Device, PipelineCache, &dataSize, nullptr);
+    LOG_VULKAN_RESULT_WITH_RETURN(result);
+    if (dataSize <= 0)
+        return false;
+
+    // Query data
+    Array<byte> data;
+    data.Resize((int32)dataSize);
+    result = vkGetPipelineCacheData(Device, PipelineCache, &dataSize, data.Get());
+    LOG_VULKAN_RESULT_WITH_RETURN(result);
+
+    // Save data
+    String path;
+    GetPipelineCachePath(path);
+    return File::WriteAllBytes(path, data);
 }
 
 #if VK_EXT_validation_cache
@@ -1345,54 +1451,8 @@ void GetValidationCachePath(String& path)
 #endif
 }
 
-void GPUDeviceVulkan::LoadValidationCache()
-{
-    Array<uint8> data;
-
-    String path;
-    GetValidationCachePath(path);
-
-    if (FileSystem::FileExists(path))
-    {
-        LOG(Info, "Trying to load Vulkan validation cache file {0}", path);
-        File::ReadAllBytes(path, data);
-
-        if (data.HasItems())
-        {
-            int32* dataPtr = (int32*)data.Get();
-            if (*dataPtr > 0)
-            {
-                dataPtr++;
-                const int32 version = *dataPtr++;
-                if (version == VK_PIPELINE_CACHE_HEADER_VERSION_ONE)
-                {
-                    dataPtr += VK_UUID_SIZE / sizeof(int32);
-                }
-                else
-                {
-                    LOG(Warning, "Bad validation cache file, version: {0}, expected: {1}", version, VK_PIPELINE_CACHE_HEADER_VERSION_ONE);
-                    data.Clear();
-                }
-            }
-            else
-            {
-                LOG(Warning, "Bad validation cache file, header size: {0}", *dataPtr);
-                data.Clear();
-            }
-        }
-    }
-
-    VkValidationCacheCreateInfoEXT validationCreateInfo;
-    RenderToolsVulkan::ZeroStruct(validationCreateInfo, VK_STRUCTURE_TYPE_VALIDATION_CACHE_CREATE_INFO_EXT);
-    validationCreateInfo.initialDataSize = data.Count();
-    validationCreateInfo.pInitialData = data.Count() > 0 ? data.Get() : nullptr;
-    const VkResult result = vkCreateValidationCacheEXT(Device, &validationCreateInfo, nullptr, &ValidationCache);
-    LOG_VULKAN_RESULT(result);
-}
-
 bool GPUDeviceVulkan::SaveValidationCache()
 {
-    // Skip if missing
     if (ValidationCache == VK_NULL_HANDLE || !vkGetValidationCacheDataEXT)
         return false;
 
@@ -1443,7 +1503,10 @@ GPUAdapter* GPUDeviceVulkan::GetAdapter() const
 
 void* GPUDeviceVulkan::GetNativePtr() const
 {
-    return static_cast<void*>(Device);
+    // Return both Instance and Device as pointer to void*[2]
+    _nativePtr[0] = (void*)Instance;
+    _nativePtr[1] = (void*)Device;
+    return _nativePtr;
 }
 
 static int32 GetMaxSampleCount(VkSampleCountFlags counts)
@@ -1490,7 +1553,7 @@ bool GPUDeviceVulkan::Init()
     vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, QueueFamilyProps.Get());
 
     // Query device features
-    vkGetPhysicalDeviceFeatures(Adapter->Gpu, &PhysicalDeviceFeatures);
+    vkGetPhysicalDeviceFeatures(gpu, &PhysicalDeviceFeatures);
 
     // Get extensions and layers
     Array<const char*> deviceExtensions;
@@ -1626,8 +1689,12 @@ bool GPUDeviceVulkan::Init()
 
         auto& limits = Limits;
         limits.HasCompute = GetShaderProfile() == ShaderProfile::Vulkan_SM5 && PhysicalDeviceLimits.maxComputeWorkGroupCount[0] >= GPU_MAX_CS_DISPATCH_THREAD_GROUPS && PhysicalDeviceLimits.maxComputeWorkGroupCount[1] >= GPU_MAX_CS_DISPATCH_THREAD_GROUPS;
+#if PLATFORM_MAC || PLATFORM_IOS
+        limits.HasTessellation = false; // MoltenVK has artifacts when using tess
+#else
         limits.HasTessellation = !!PhysicalDeviceFeatures.tessellationShader && PhysicalDeviceLimits.maxBoundDescriptorSets > (uint32_t)DescriptorSet::Domain;
-#if PLATFORM_ANDROID
+#endif
+#if PLATFORM_ANDROID || PLATFORM_IOS
         limits.HasGeometryShaders = false; // Don't even try GS on mobile
 #else
         limits.HasGeometryShaders = !!PhysicalDeviceFeatures.geometryShader;
@@ -1637,6 +1704,7 @@ bool GPUDeviceVulkan::Init()
         limits.HasDrawIndirect = PhysicalDeviceLimits.maxDrawIndirectCount >= 1;
         limits.HasAppendConsumeBuffers = false; // TODO: add Append Consume buffers support for Vulkan
         limits.HasSeparateRenderTargetBlendState = true;
+        limits.HasDepthClip = PhysicalDeviceFeatures.depthClamp;
         limits.HasDepthAsSRV = true;
         limits.HasReadOnlyDepth = true;
         limits.HasMultisampleDepthAsSRV = !!PhysicalDeviceFeatures.sampleRateShading;
@@ -1703,7 +1771,7 @@ bool GPUDeviceVulkan::Init()
                 //VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT
 
                 // Multi-sampling support
-                if (support & FormatSupport::Texture2D)
+                if (EnumHasAnyFlags(support, FormatSupport::Texture2D))
                     msaa = maxMsaa;
             }
 
@@ -1781,16 +1849,96 @@ bool GPUDeviceVulkan::Init()
         VALIDATE_VULKAN_RESULT(vmaCreateAllocator(&allocatorInfo, &Allocator));
     }
 
+#if defined(VK_KHR_display) && 0
+    // Enumerate displays and supported video resolutions
+    uint32_t displaysCount;
+    // TODO: for some reason vkGetPhysicalDeviceDisplayPropertiesKHR returns 0 displays (on NVIDIA 1070)
+    if (vkGetPhysicalDeviceDisplayPropertiesKHR && vkGetPhysicalDeviceDisplayPropertiesKHR(gpu, &displaysCount, nullptr) == VK_SUCCESS && displaysCount != 0)
+    {
+        Array<VkDisplayPropertiesKHR, InlinedAllocation<4>> displays;
+        displays.Resize(displaysCount);
+        vkGetPhysicalDeviceDisplayPropertiesKHR(gpu, &displaysCount, displays.Get());
+        ASSERT_LOW_LAYER(displaysCount == displays.Count());
+        Array<VkDisplayModePropertiesKHR, InlinedAllocation<32>> displayProperties;
+        for (auto& display : displays)
+        {
+            LOG(Info, "Video output '{0}' {1}x{2}", String(display.displayName), display.physicalResolution.width, display.physicalResolution.height);
+
+            uint32_t propertiesCount = 0;
+            vkGetDisplayModePropertiesKHR(gpu, display.display, &propertiesCount, nullptr);
+            displayProperties.Resize(propertiesCount);
+            vkGetDisplayModePropertiesKHR(gpu, display.display, &propertiesCount, displayProperties.Get());
+            for (auto& displayProperty : displayProperties)
+            {
+                //..
+            }
+        }
+    }
+#endif
+
     // Prepare stuff
     FenceManager.Init(this);
     UniformBufferUploader = New<UniformBufferUploaderVulkan>(this);
     DescriptorPoolsManager = New<DescriptorPoolsManagerVulkan>(this);
     MainContext = New<GPUContextVulkan>(this, GraphicsQueue);
-    // TODO: create and load PipelineCache
+    if (vkCreatePipelineCache)
+    {
+        Array<uint8> data;
+        String path;
+        GetPipelineCachePath(path);
+        if (FileSystem::FileExists(path))
+        {
+            LOG(Info, "Trying to load Vulkan pipeline cache file {0}", path);
+            File::ReadAllBytes(path, data);
+        }
+        VkPipelineCacheCreateInfo pipelineCacheCreateInfo;
+        RenderToolsVulkan::ZeroStruct(pipelineCacheCreateInfo, VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
+        pipelineCacheCreateInfo.initialDataSize = data.Count();
+        pipelineCacheCreateInfo.pInitialData = data.Count() > 0 ? data.Get() : nullptr;
+        const VkResult result = vkCreatePipelineCache(Device, &pipelineCacheCreateInfo, nullptr, &PipelineCache);
+        LOG_VULKAN_RESULT(result);
+    }
 #if VK_EXT_validation_cache
     if (OptionalDeviceExtensions.HasEXTValidationCache && vkCreateValidationCacheEXT && vkDestroyValidationCacheEXT)
     {
-        LoadValidationCache();
+        Array<uint8> data;
+        String path;
+        GetValidationCachePath(path);
+        if (FileSystem::FileExists(path))
+        {
+            LOG(Info, "Trying to load Vulkan validation cache file {0}", path);
+            File::ReadAllBytes(path, data);
+            if (data.HasItems())
+            {
+                int32* dataPtr = (int32*)data.Get();
+                if (*dataPtr > 0)
+                {
+                    dataPtr++;
+                    const int32 version = *dataPtr++;
+                    const int32 versionExpected = VK_PIPELINE_CACHE_HEADER_VERSION_ONE;
+                    if (version == versionExpected)
+                    {
+                        dataPtr += VK_UUID_SIZE / sizeof(int32);
+                    }
+                    else
+                    {
+                        LOG(Warning, "Bad validation cache file, version: {0}, expected: {1}", version, versionExpected);
+                        data.Clear();
+                    }
+                }
+                else
+                {
+                    LOG(Warning, "Bad validation cache file, header size: {0}", *dataPtr);
+                    data.Clear();
+                }
+            }
+        }
+        VkValidationCacheCreateInfoEXT validationCreateInfo;
+        RenderToolsVulkan::ZeroStruct(validationCreateInfo, VK_STRUCTURE_TYPE_VALIDATION_CACHE_CREATE_INFO_EXT);
+        validationCreateInfo.initialDataSize = data.Count();
+        validationCreateInfo.pInitialData = data.Count() > 0 ? data.Get() : nullptr;
+        const VkResult result = vkCreateValidationCacheEXT(Device, &validationCreateInfo, nullptr, &ValidationCache);
+        LOG_VULKAN_RESULT(result);
     }
 #endif
 
@@ -1848,6 +1996,8 @@ void GPUDeviceVulkan::Dispose()
     Allocator = VK_NULL_HANDLE;
     if (PipelineCache != VK_NULL_HANDLE)
     {
+        if (SavePipelineCache())
+            LOG(Warning, "Failed to save Vulkan pipeline cache");
         vkDestroyPipelineCache(Device, PipelineCache, nullptr);
         PipelineCache = VK_NULL_HANDLE;
     }
@@ -1855,9 +2005,7 @@ void GPUDeviceVulkan::Dispose()
     if (ValidationCache != VK_NULL_HANDLE)
     {
         if (SaveValidationCache())
-        {
             LOG(Warning, "Failed to save Vulkan validation cache");
-        }
         vkDestroyValidationCacheEXT(Device, ValidationCache, nullptr);
         ValidationCache = VK_NULL_HANDLE;
     }
@@ -1922,6 +2070,11 @@ GPUSampler* GPUDeviceVulkan::CreateSampler()
 GPUSwapChain* GPUDeviceVulkan::CreateSwapChain(Window* window)
 {
     return New<GPUSwapChainVulkan>(this, window);
+}
+
+GPUConstantBuffer* GPUDeviceVulkan::CreateConstantBuffer(uint32 size, const StringView& name)
+{
+    return New<GPUConstantBufferVulkan>(this, size);
 }
 
 SemaphoreVulkan::SemaphoreVulkan(GPUDeviceVulkan* device)

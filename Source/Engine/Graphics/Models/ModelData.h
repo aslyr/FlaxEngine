@@ -1,12 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
-#include "Engine/Core/Common.h"
-#include "Engine/Core/Math/BoundingSphere.h"
-#include "Engine/Core/Math/BoundingBox.h"
-#include "Engine/Core/Math/Int4.h"
-#include "Engine/Serialization/Stream.h"
+#include "Engine/Core/Types/Guid.h"
 #include "Engine/Graphics/Enums.h"
 #include "Types.h"
 #include "Config.h"
@@ -14,13 +10,14 @@
 #include "BlendShape.h"
 #include "Engine/Animations/AnimationData.h"
 
+class WriteStream;
+
 /// <summary>
 /// Data container for the common model meshes data. Supports holding all types of data related to the models pipeline.
 /// </summary>
 class FLAXENGINE_API MeshData
 {
 public:
-
     /// <summary>
     /// The slot index in the model materials to use during rendering.
     /// </summary>
@@ -39,22 +36,29 @@ public:
     /// <summary>
     /// Mesh positions buffer
     /// </summary>
-    Array<Vector3> Positions;
+    Array<Float3> Positions;
 
     /// <summary>
     /// Texture coordinates
     /// </summary>
-    Array<Vector2> UVs;
+    Array<Float2> UVs;
 
     /// <summary>
     /// Normals vector
     /// </summary>
-    Array<Vector3> Normals;
+    Array<Float3> Normals;
 
     /// <summary>
     /// Tangents vectors
     /// </summary>
-    Array<Vector3> Tangents;
+    Array<Float3> Tangents;
+
+    /// <summary>
+    /// Bitangents vectors signs (used for bitangent reconstruction). Can be +1 or -1.
+    /// bitangent = cross(normal, tangent) * sign
+    /// sign = dot(cross(bitangent, normal), tangent)
+    /// </summary>
+    Array<float> BitangentSigns;
 
     /// <summary>
     /// Mesh index buffer
@@ -64,7 +68,7 @@ public:
     /// <summary>
     /// Lightmap UVs
     /// </summary>
-    Array<Vector2> LightmapUVs;
+    Array<Float2> LightmapUVs;
 
     /// <summary>
     /// Vertex colors
@@ -79,15 +83,29 @@ public:
     /// <summary>
     /// Skinned mesh index buffer (max 4 per bone)
     /// </summary>
-    Array<Vector4> BlendWeights;
+    Array<Float4> BlendWeights;
 
     /// <summary>
     /// Blend shapes used by this mesh
     /// </summary>
     Array<BlendShape> BlendShapes;
 
-public:
+    /// <summary>
+    /// Global translation for this mesh to be at it's local origin.
+    /// </summary>
+    Vector3 OriginTranslation = Vector3::Zero;
 
+    /// <summary>
+    /// Orientation for this mesh at it's local origin.
+    /// </summary>
+    Quaternion OriginOrientation = Quaternion::Identity;
+
+    /// <summary>
+    /// Meshes scaling.
+    /// </summary>
+    Vector3 Scaling = Vector3::One;
+
+public:
     /// <summary>
     /// Determines whether this instance has any mesh data.
     /// </summary>
@@ -97,7 +115,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Clear arrays
     /// </summary>
@@ -125,7 +142,6 @@ public:
     void Release();
 
 public:
-
     /// <summary>
     /// Init from model vertices array
     /// </summary>
@@ -180,7 +196,6 @@ public:
     void SetIndexBuffer(void* data, uint32 indicesCount);
 
 public:
-
     /// <summary>
     /// Pack mesh data to the stream
     /// </summary>
@@ -199,24 +214,15 @@ public:
     /// Calculate bounding box for the mesh
     /// </summary>
     /// <param name="result">Output box</param>
-    void CalculateBox(BoundingBox& result) const
-    {
-        if (Positions.HasItems())
-            BoundingBox::FromPoints(Positions.Get(), Positions.Count(), result);
-    }
+    void CalculateBox(BoundingBox& result) const;
 
     /// <summary>
     /// Calculate bounding sphere for the mesh
     /// </summary>
     /// <param name="result">Output sphere</param>
-    void CalculateSphere(BoundingSphere& result) const
-    {
-        if (Positions.HasItems())
-            BoundingSphere::FromPoints(Positions.Get(), Positions.Count(), result);
-    }
+    void CalculateSphere(BoundingSphere& result) const;
 
 public:
-
 #if COMPILE_WITH_MODEL_TOOL
 
     /// <summary>
@@ -236,7 +242,7 @@ public:
     /// <param name="position">The target position to check.</param>
     /// <param name="epsilon">The position comparision epsilon.</param>
     /// <param name="result">The output vertices indices array.</param>
-    void FindPositions(const Vector3& position, float epsilon, Array<int32>& result);
+    void FindPositions(const Float3& position, float epsilon, Array<int32>& result);
 
     /// <summary>
     /// Generates the normal vectors for the mesh geometry.
@@ -274,16 +280,7 @@ public:
     /// <summary>
     /// Normalizes the blend weights. Requires to have vertices with positions and blend weights setup.
     /// </summary>
-    void NormalizeBlendWeights()
-    {
-        ASSERT(Positions.Count() == BlendWeights.Count());
-        for (int32 i = 0; i < Positions.Count(); i++)
-        {
-            const float sum = BlendWeights[i].SumValues();
-            const float invSum = sum > ZeroTolerance ? 1.0f / sum : 0.0f;
-            BlendWeights[i] *= invSum;
-        }
-    }
+    void NormalizeBlendWeights();
 
     /// <summary>
     /// Merges this mesh data with the specified other mesh.
@@ -366,25 +363,35 @@ struct FLAXENGINE_API MaterialSlotEntry
 
     bool TwoSided = false;
 
-    bool UsesProperties() const
-    {
-        return Diffuse.Color != Color::White ||
-                Diffuse.TextureIndex != -1 ||
-                Emissive.Color != Color::Transparent ||
-                Emissive.TextureIndex != -1 ||
-                !Math::IsOne(Opacity.Value) ||
-                Opacity.TextureIndex != -1 ||
-                Normals.TextureIndex != -1;
-    }
+    bool UsesProperties() const;
+};
+
+/// <summary>
+/// Data container for model hierarchy node.
+/// </summary>
+struct FLAXENGINE_API ModelDataNode
+{
+    /// <summary>
+    /// The parent node index. The root node uses value -1.
+    /// </summary>
+    int32 ParentIndex;
+
+    /// <summary>
+    /// The local transformation of the node, relative to the parent node.
+    /// </summary>
+    Transform LocalTransform;
+
+    /// <summary>
+    /// The name of this node.
+    /// </summary>
+    String Name;
 };
 
 /// <summary>
 /// Data container for LOD metadata and sub meshes.
 /// </summary>
-class FLAXENGINE_API ModelLodData
+struct FLAXENGINE_API ModelLodData
 {
-public:
-
     /// <summary>
     /// The screen size to switch LODs. Bottom limit of the model screen size to render this LOD.
     /// </summary>
@@ -395,22 +402,15 @@ public:
     /// </summary>
     Array<MeshData*> Meshes;
 
-public:
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ModelLodData"/> class.
-    /// </summary>
-    ModelLodData()
-    {
-    }
-
     /// <summary>
     /// Finalizes an instance of the <see cref="ModelLodData"/> class.
     /// </summary>
-    ~ModelLodData()
-    {
-        Meshes.ClearDelete();
-    }
+    ~ModelLodData();
+
+    /// <summary>
+    /// Gets the bounding box combined for all meshes in this model LOD.
+    /// </summary>
+    BoundingBox GetBox() const;
 };
 
 /// <summary>
@@ -419,7 +419,6 @@ public:
 class FLAXENGINE_API ModelData
 {
 public:
-
     /// <summary>
     /// The minimum screen size to draw model (the bottom limit).
     /// </summary>
@@ -436,7 +435,7 @@ public:
     Array<MaterialSlotEntry> Materials;
 
     /// <summary>
-    /// Array with all LODs. The first element is the top most LOD0 followed by the LOD1, LOD2, etc.
+    /// Array with all Level Of Details that contain meshes. The first element is the top most LOD0 followed by the LOD1, LOD2, etc.
     /// </summary>
     Array<ModelLodData> LODs;
 
@@ -446,25 +445,19 @@ public:
     SkeletonData Skeleton;
 
     /// <summary>
-    /// The node animations.
+    /// The scene nodes (in hierarchy).
     /// </summary>
-    AnimationData Animation;
-
-public:
+    Array<ModelDataNode> Nodes;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ModelData"/> class.
+    /// The node animations.
     /// </summary>
-    ModelData()
-    {
-    }
+    Array<AnimationData> Animations;
 
 public:
-
     /// <summary>
     /// Gets the valid level of details count.
     /// </summary>
-    /// <returns>The LOD count.</returns>
     FORCE_INLINE int32 GetLODsCount() const
     {
         return LODs.Count();
@@ -473,14 +466,12 @@ public:
     /// <summary>
     /// Determines whether this instance has valid skeleton structure.
     /// </summary>
-    /// <returns>True if has skeleton, otherwise false.</returns>
     FORCE_INLINE bool HasSkeleton() const
     {
         return Skeleton.Bones.HasItems();
     }
 
 public:
-
     /// <summary>
     /// Automatically calculates the screen size for every model LOD for a proper transitions.
     /// </summary>
@@ -492,8 +483,8 @@ public:
     /// <param name="matrix">The matrix to use for the transformation.</param>
     void TransformBuffer(const Matrix& matrix);
 
+#if USE_EDITOR
 public:
-
     /// <summary>
     /// Pack mesh data to the header stream
     /// </summary>
@@ -512,6 +503,8 @@ public:
     /// Pack animation data to the header stream
     /// </summary>
     /// <param name="stream">Output stream</param>
+    /// <param name="animIndex">Index of animation.</param>
     /// <returns>True if cannot save data, otherwise false</returns>
-    bool Pack2AnimationHeader(WriteStream* stream) const;
+    bool Pack2AnimationHeader(WriteStream* stream, int32 animIndex = 0) const;
+#endif
 };

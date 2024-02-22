@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using Flax.Build.NativeCpp;
@@ -16,6 +16,11 @@ namespace Flax.Build.Projects
         /// The project generator that created this project.
         /// </summary>
         public ProjectGenerator Generator;
+
+        /// <summary>
+        /// The project base name (might not be unique within solution - eg. Name = BaseName + '.CSharp' to prevent overlaps).
+        /// </summary>
+        public string BaseName;
 
         /// <summary>
         /// The project name.
@@ -248,9 +253,9 @@ namespace Flax.Build.Projects
         /// <summary>
         /// Generates the project.
         /// </summary>
-        public virtual void Generate()
+        public virtual void Generate(string solutionPath)
         {
-            Generator.GenerateProject(this);
+            Generator.GenerateProject(this, solutionPath);
         }
 
         /// <inheritdoc />

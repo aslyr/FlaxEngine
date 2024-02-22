@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -190,9 +190,9 @@ public:
 public:
 
     // [GPUResourceDX12]
-    ResourceType GetResourceType() const override
+    GPUResourceType GetResourceType() const override
     {
-        return ResourceType::Descriptor;
+        return GPUResourceType::Descriptor;
     }
 
 protected:

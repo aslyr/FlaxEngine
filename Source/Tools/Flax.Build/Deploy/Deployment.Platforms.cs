@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2020 Flax Engine. All rights reserved.
+// Copyright (c) 2012-2023 Flax Engine. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -10,8 +10,13 @@ namespace Flax.Deploy
     {
         public class Platforms
         {
+            internal static List<TargetPlatform> PackagedPlatforms;
+
             public static void Package(TargetPlatform platform)
             {
+                if (PackagedPlatforms == null)
+                    PackagedPlatforms = new List<TargetPlatform>();
+                PackagedPlatforms.Add(platform);
                 var platformsRoot = Path.Combine(Globals.EngineRoot, "Source", "Platforms");
 
                 Log.Info(string.Empty);
@@ -50,6 +55,20 @@ namespace Flax.Deploy
                         CodeSign(Path.Combine(binaries, "FlaxGame.exe"));
                         CodeSign(Path.Combine(binaries, "FlaxEngine.CSharp.dll"));
                     }
+                    else if (platform == TargetPlatform.Mac)
+                    {
+                        var binaries = Path.Combine(dst, "Binaries", "Game", "arm64", "Debug");
+                        CodeSign(Path.Combine(binaries, "FlaxGame"));
+                        CodeSign(Path.Combine(binaries, "FlaxGame.dylib"));
+
+                        binaries = Path.Combine(dst, "Binaries", "Game", "arm64", "Development");
+                        CodeSign(Path.Combine(binaries, "FlaxGame"));
+                        CodeSign(Path.Combine(binaries, "FlaxGame.dylib"));
+
+                        binaries = Path.Combine(dst, "Binaries", "Game", "arm64", "Release");
+                        CodeSign(Path.Combine(binaries, "FlaxGame"));
+                        CodeSign(Path.Combine(binaries, "FlaxGame.dylib"));
+                    }
 
                     // Don't distribute engine deps
                     Utilities.DirectoryDelete(Path.Combine(dst, "Binaries", "ThirdParty"));
@@ -63,12 +82,13 @@ namespace Flax.Deploy
                 }
 
                 // Compress
+                if (!Configuration.DontCompress)
                 {
                     Log.Info("Compressing platform files...");
 
                     var packageZipPath = Path.Combine(Deployer.PackageOutputPath, platformName + ".zip");
                     Utilities.FileDelete(packageZipPath);
-#if true
+#if false
                     using (var zip = new Ionic.Zip.ZipFile())
                     {
                         zip.AddDirectory(dst);
@@ -84,10 +104,10 @@ namespace Flax.Deploy
 #endif
 
                     Log.Info(string.Format("Compressed {0} package size: {1}", platformName, Utilities.GetFileSize(packageZipPath)));
-                }
 
-                // Remove files (only zip package is used)
-                Utilities.DirectoryDelete(dst);
+                    // Remove files (only zip package is used)
+                    Utilities.DirectoryDelete(dst);
+                }
 
                 Log.Info(string.Empty);
             }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Linq;
@@ -32,7 +32,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
                     if (_presets != value)
                     {
                         _presets = value;
-                        TooltipText = CustomEditorsUtil.GetPropertyNameUI(_presets.ToString());
+                        TooltipText = Utilities.Utils.GetPropertyNameUI(_presets.ToString());
                     }
                 }
             }
@@ -44,7 +44,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
             public override void Draw()
             {
                 // Cache data
-                var rect = new Rectangle(Vector2.Zero, Size);
+                var rect = new Rectangle(Float2.Zero, Size);
                 if (rect.Width >= rect.Height)
                 {
                     rect.X = (rect.Width - rect.Height) * 0.5f;
@@ -159,49 +159,49 @@ namespace FlaxEditor.CustomEditors.Dedicated
                 // Draw pivot point
                 if (SupportsShiftModulation && Input.GetKey(KeyboardKeys.Control))
                 {
-                    Vector2 pivotPoint;
+                    Float2 pivotPoint;
                     switch (_presets)
                     {
                     case AnchorPresets.Custom:
-                        pivotPoint = Vector2.Minimum;
+                        pivotPoint = Float2.Minimum;
                         break;
                     case AnchorPresets.TopLeft:
-                        pivotPoint = new Vector2(0, 0);
+                        pivotPoint = new Float2(0, 0);
                         break;
                     case AnchorPresets.TopCenter:
                     case AnchorPresets.HorizontalStretchTop:
-                        pivotPoint = new Vector2(rect.Width / 2, 0);
+                        pivotPoint = new Float2(rect.Width / 2, 0);
                         break;
                     case AnchorPresets.TopRight:
-                        pivotPoint = new Vector2(rect.Width, 0);
+                        pivotPoint = new Float2(rect.Width, 0);
                         break;
                     case AnchorPresets.MiddleLeft:
                     case AnchorPresets.VerticalStretchLeft:
-                        pivotPoint = new Vector2(0, rect.Height / 2);
+                        pivotPoint = new Float2(0, rect.Height / 2);
                         break;
                     case AnchorPresets.MiddleCenter:
                     case AnchorPresets.VerticalStretchCenter:
                     case AnchorPresets.HorizontalStretchMiddle:
                     case AnchorPresets.StretchAll:
-                        pivotPoint = new Vector2(rect.Width / 2, rect.Height / 2);
+                        pivotPoint = new Float2(rect.Width / 2, rect.Height / 2);
                         break;
                     case AnchorPresets.MiddleRight:
                     case AnchorPresets.VerticalStretchRight:
-                        pivotPoint = new Vector2(rect.Width, rect.Height / 2);
+                        pivotPoint = new Float2(rect.Width, rect.Height / 2);
                         break;
                     case AnchorPresets.BottomLeft:
-                        pivotPoint = new Vector2(0, rect.Height);
+                        pivotPoint = new Float2(0, rect.Height);
                         break;
                     case AnchorPresets.BottomCenter:
                     case AnchorPresets.HorizontalStretchBottom:
-                        pivotPoint = new Vector2(rect.Width / 2, rect.Height);
+                        pivotPoint = new Float2(rect.Width / 2, rect.Height);
                         break;
                     case AnchorPresets.BottomRight:
-                        pivotPoint = new Vector2(rect.Width, rect.Height);
+                        pivotPoint = new Float2(rect.Width, rect.Height);
                         break;
                     default: throw new ArgumentOutOfRangeException();
                     }
-                    var pivotPointSize = new Vector2(3.0f);
+                    var pivotPointSize = new Float2(3.0f);
                     Render2D.DrawRectangle(new Rectangle(pivotPoint - pivotPointSize * 0.5f, pivotPointSize), style.ProgressNormal, 1.1f);
                 }
             }
@@ -234,7 +234,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
 
                 var style = FlaxEngine.GUI.Style.Current;
                 Tag = presets;
-                Size = new Vector2(DialogWidth, DialogHeight);
+                Size = new Float2(DialogWidth, DialogHeight);
 
                 // Title
                 var title = new Label(2, 2, DialogWidth - 4, TitleHeight)
@@ -346,7 +346,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
 
         private void OnButtonClicked()
         {
-            var location = _button.Center + new Vector2(3.0f);
+            var location = _button.Center + new Float2(3.0f);
             var editor = new AnchorPresetsEditorPopup(_button.Presets, true);
             editor.VisibleChanged += OnEditorVisibleChanged;
             editor.Show(_button.Parent, location);
@@ -407,6 +407,8 @@ namespace FlaxEditor.CustomEditors.Dedicated
     public class UIControlControlEditor : GenericEditor
     {
         private Type _cachedType;
+        private bool _anchorDropDownClosed = true;
+        private Button _pivotRelativeButton;
 
         /// <inheritdoc />
         public override void Initialize(LayoutElementsContainer layout)
@@ -420,12 +422,14 @@ namespace FlaxEditor.CustomEditors.Dedicated
 
             // Set control type button
             var space = layout.Space(20);
-            float setTypeButtonWidth = 60.0f;
+            var buttonText = "Set Type";
+            var textSize = FlaxEngine.GUI.Style.Current.FontMedium.MeasureText(buttonText);
+            float setTypeButtonWidth = (textSize.X < 60.0f) ? 60.0f : textSize.X + 4;
             var setTypeButton = new Button
             {
                 TooltipText = "Sets the control to the given type",
                 AnchorPreset = AnchorPresets.MiddleCenter,
-                Text = "Set Type",
+                Text = buttonText,
                 Parent = space.Spacer,
                 Bounds = new Rectangle((space.Spacer.Width - setTypeButtonWidth) / 2, 1, setTypeButtonWidth, 18),
             };
@@ -483,11 +487,52 @@ namespace FlaxEditor.CustomEditors.Dedicated
             horDown.CustomControl.Height = TextBoxBase.DefaultHeight;
 
             GetAnchorEquality(out _cachedXEq, out _cachedYEq, valueTypes);
-
             BuildLocationSizeOffsets(horUp, horDown, _cachedXEq, _cachedYEq, valueTypes);
+            BuildExtraButtons(group);
 
             main.Space(10);
             BuildAnchorsDropper(main, valueTypes);
+        }
+
+        private void BuildExtraButtons(VerticalPanelElement group)
+        {
+            var control = (Control)Values[0];
+            var pivotRelative = Editor.Instance.Windows.PropertiesWin.UIPivotRelative;
+            control.PivotRelative = pivotRelative;
+
+            var panel = group.CustomContainer<Panel>();
+            panel.CustomControl.Height = TextBoxBase.DefaultHeight;
+            panel.CustomControl.ClipChildren = false;
+            panel.CustomControl.Parent = group.ContainerControl;
+
+            _pivotRelativeButton = new Button
+            {
+                TooltipText = "Toggles UI control resizing based on where the pivot is rather than just the top-left.",
+                Size = new Float2(18),
+                Parent = panel.ContainerControl,
+                BackgroundBrush = new SpriteBrush(Editor.Instance.Icons.Scale32),
+                AnchorPreset = AnchorPresets.TopRight,
+                X = 77,
+            };
+
+            SetStyle(pivotRelative);
+            _pivotRelativeButton.Clicked += PivotRelativeClicked;
+        }
+
+        private void PivotRelativeClicked()
+        {
+            var control = (Control)Values[0];
+            var pivotRelative = control.PivotRelative;
+            control.PivotRelative = !pivotRelative;
+            Editor.Instance.Windows.PropertiesWin.UIPivotRelative = !pivotRelative;
+            SetStyle(control.PivotRelative);
+        }
+
+        private void SetStyle(bool current)
+        {
+            var style = FlaxEngine.GUI.Style.Current;
+            var backgroundColor = current ? style.Foreground : style.ForegroundDisabled;
+            _pivotRelativeButton.SetColors(backgroundColor);
         }
 
         private void BuildAnchorsDropper(LayoutElementsContainer main, ScriptType[] valueTypes)
@@ -498,7 +543,8 @@ namespace FlaxEditor.CustomEditors.Dedicated
             ItemInfo maxItem = new ItemInfo(maxInfo);
 
             GroupElement ng = main.Group("Anchors", true);
-            ng.Panel.Close(false);
+            ng.Panel.IsClosed = _anchorDropDownClosed;
+            ng.Panel.IsClosedChanged += panel => _anchorDropDownClosed = panel.IsClosed;
             ng.Property("Min", minItem.GetValues(Values));
             ng.Property("Max", maxItem.GetValues(Values));
         }
@@ -563,17 +609,17 @@ namespace FlaxEditor.CustomEditors.Dedicated
                 yEl = UniformPanelCapsuleForObjectWithText(horUp, "Top: ", topItem.GetValues(Values));
                 hEl = UniformPanelCapsuleForObjectWithText(horDown, "Bottom: ", bottomItem.GetValues(Values));
             }
-            xEl.Control.AnchorMin = new Vector2(0, xEl.Control.AnchorMin.Y);
-            xEl.Control.AnchorMax = new Vector2(0.5f, xEl.Control.AnchorMax.Y);
+            xEl.Control.AnchorMin = new Float2(0, xEl.Control.AnchorMin.Y);
+            xEl.Control.AnchorMax = new Float2(0.5f, xEl.Control.AnchorMax.Y);
 
-            vEl.Control.AnchorMin = new Vector2(0, xEl.Control.AnchorMin.Y);
-            vEl.Control.AnchorMax = new Vector2(0.5f, xEl.Control.AnchorMax.Y);
+            vEl.Control.AnchorMin = new Float2(0, xEl.Control.AnchorMin.Y);
+            vEl.Control.AnchorMax = new Float2(0.5f, xEl.Control.AnchorMax.Y);
 
-            yEl.Control.AnchorMin = new Vector2(0.5f, xEl.Control.AnchorMin.Y);
-            yEl.Control.AnchorMax = new Vector2(1, xEl.Control.AnchorMax.Y);
+            yEl.Control.AnchorMin = new Float2(0.5f, xEl.Control.AnchorMin.Y);
+            yEl.Control.AnchorMax = new Float2(1, xEl.Control.AnchorMax.Y);
 
-            hEl.Control.AnchorMin = new Vector2(0.5f, xEl.Control.AnchorMin.Y);
-            hEl.Control.AnchorMax = new Vector2(1, xEl.Control.AnchorMax.Y);
+            hEl.Control.AnchorMin = new Float2(0.5f, xEl.Control.AnchorMin.Y);
+            hEl.Control.AnchorMax = new Float2(1, xEl.Control.AnchorMax.Y);
         }
 
         private VerticalPanelElement VerticalPanelWithoutMargin(LayoutElementsContainer cont)
@@ -642,18 +688,54 @@ namespace FlaxEditor.CustomEditors.Dedicated
                 cm.AddItem(new TypeSearchPopup.TypeItemView(controlTypes[i]));
             }
             cm.ItemClicked += controlType => SetType((ScriptType)controlType.Tag);
-            cm.SortChildren();
-            cm.Show(button.Parent, button.BottomLeft);
+            cm.SortItems();
+            cm.Show(button.Parent, button.BottomLeft - new Float2((cm.Width - button.Width) / 2, 0));
         }
 
         private void SetType(ref ScriptType controlType, UIControl uiControl)
         {
             string previousName = uiControl.Control?.GetType().Name ?? nameof(UIControl);
-            uiControl.Control = (Control)controlType.CreateInstance();
+
+            var oldControlType = (Control)uiControl.Control;
+            var newControlType = (Control)controlType.CreateInstance();
+
+            // copy old control data to new control
+            if (oldControlType != null)
+            {
+                newControlType.Visible = oldControlType.Visible;
+                newControlType.Enabled = oldControlType.Enabled;
+                newControlType.AutoFocus = oldControlType.AutoFocus;
+
+                newControlType.AnchorMin = oldControlType.AnchorMin;
+                newControlType.AnchorMax = oldControlType.AnchorMax;
+                newControlType.Offsets = oldControlType.Offsets;
+
+                newControlType.LocalLocation = oldControlType.LocalLocation;
+                newControlType.Scale = oldControlType.Scale;
+                newControlType.Bounds = oldControlType.Bounds;
+                newControlType.Width = oldControlType.Width;
+                newControlType.Height = oldControlType.Height;
+                newControlType.Center = oldControlType.Center;
+                newControlType.PivotRelative = oldControlType.PivotRelative;
+
+                newControlType.Pivot = oldControlType.Pivot;
+                newControlType.Shear = oldControlType.Shear;
+                newControlType.Rotation = oldControlType.Rotation;
+            }
+            if (oldControlType is ContainerControl oldContainer && newControlType is ContainerControl newContainer)
+            {
+                newContainer.CullChildren = oldContainer.CullChildren;
+                newContainer.ClipChildren = oldContainer.ClipChildren;
+            }
+
+            uiControl.Control = newControlType;
+
             if (uiControl.Name.StartsWith(previousName))
             {
                 string newName = controlType.Name + uiControl.Name.Substring(previousName.Length);
-                uiControl.Name = StringUtils.IncrementNameNumber(newName, x => uiControl.Parent.GetChild(x) == null);
+                if (uiControl.Parent != null)
+                    newName = Utilities.Utils.IncrementNameNumber(newName, x => uiControl.Parent.GetChild(x) == null);
+                uiControl.Name = newName;
             }
         }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_MATERIAL_GRAPH
 
@@ -8,7 +8,7 @@ void MaterialGenerator::ProcessGroupParameters(Box* box, Node* node, Value& valu
 {
     switch (node->TypeID)
     {
-        // Get
+    // Get
     case 1:
     {
         // Get parameter

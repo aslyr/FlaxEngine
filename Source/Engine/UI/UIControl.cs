@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -51,17 +51,18 @@ namespace FlaxEngine
                         containerControl.UnlockChildrenRecursive();
                     _control.Parent = GetParent();
                     _control.IndexInParent = OrderInParent;
-                    _control.Location = new Vector2(LocalPosition);
+                    _control.Location = new Float2(LocalPosition);
                     _control.LocationChanged += OnControlLocationChanged;
 
                     // Link children UI controls
                     if (containerControl != null && IsActiveInHierarchy)
                     {
                         var children = ChildrenCount;
+                        var parent = Parent;
                         for (int i = 0; i < children; i++)
                         {
                             var child = GetChild(i) as UIControl;
-                            if (child != null && child.IsActiveInHierarchy && child.HasControl)
+                            if (child != null && child.IsActiveInHierarchy && child.HasControl && child != parent)
                             {
                                 child.Control.Parent = containerControl;
                             }
@@ -96,10 +97,10 @@ namespace FlaxEngine
                     return new OrientedBoundingBox();
 
                 // Find control bounds limit points in canvas-space
-                Vector2 p1 = Vector2.Zero;
-                Vector2 p2 = new Vector2(0, Control.Height);
-                Vector2 p3 = new Vector2(Control.Width, 0);
-                Vector2 p4 = Control.Size;
+                var p1 = Float2.Zero;
+                var p2 = new Float2(0, Control.Height);
+                var p3 = new Float2(Control.Width, 0);
+                var p4 = Control.Size;
                 Control c = Control;
                 while (c != canvasRoot)
                 {
@@ -110,19 +111,20 @@ namespace FlaxEngine
 
                     c = c.Parent;
                 }
-                Vector2 min = Vector2.Min(Vector2.Min(p1, p2), Vector2.Min(p3, p4));
-                Vector2 max = Vector2.Max(Vector2.Max(p1, p2), Vector2.Max(p3, p4));
-                Vector2 size = max - min;
+                var min = Float2.Min(Float2.Min(p1, p2), Float2.Min(p3, p4));
+                var max = Float2.Max(Float2.Max(p1, p2), Float2.Max(p3, p4));
+                var size = max - min;
 
                 // Calculate bounds
-                OrientedBoundingBox bounds = new OrientedBoundingBox
+                var bounds = new OrientedBoundingBox
                 {
                     Extents = new Vector3(size * 0.5f, Mathf.Epsilon)
                 };
 
                 canvasRoot.Canvas.GetWorldMatrix(out Matrix world);
                 Matrix.Translation(min.X + size.X * 0.5f, min.Y + size.Y * 0.5f, 0, out Matrix offset);
-                Matrix.Multiply(ref offset, ref world, out bounds.Transformation);
+                Matrix.Multiply(ref offset, ref world, out var boxWorld);
+                boxWorld.Decompose(out bounds.Transformation);
                 return bounds;
             }
         }
@@ -180,6 +182,106 @@ namespace FlaxEngine
                 _control = null;
             }
         }
+
+        #region Navigation
+
+        /// <summary>
+        /// The explicitly specified target navigation control for <see cref="NavDirection.Up"/> direction.
+        /// </summary>
+        [Tooltip("The explicitly specified target navigation control for Up direction. Leave empty to use automatic navigation.")]
+        [EditorDisplay("Navigation"), EditorOrder(1010), VisibleIf(nameof(HasControl))]
+        public UIControl NavTargetUp
+        {
+            get
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out _, out _, out _);
+                return up;
+            }
+            set
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out UIControl down, out UIControl left, out UIControl right);
+                if (up == value)
+                    return;
+                up = value;
+                Internal_SetNavTargets(__unmanagedPtr, GetUnmanagedPtr(up), GetUnmanagedPtr(down), GetUnmanagedPtr(left), GetUnmanagedPtr(right));
+                if (_control != null)
+                    _control.NavTargetUp = value != null ? value.Control : null;
+            }
+        }
+
+        /// <summary>
+        /// The explicitly specified target navigation control for <see cref="NavDirection.Down"/> direction.
+        /// </summary>
+        [Tooltip("The explicitly specified target navigation control for Down direction. Leave empty to use automatic navigation.")]
+        [EditorDisplay("Navigation"), EditorOrder(1020), VisibleIf(nameof(HasControl))]
+        public UIControl NavTargetDown
+        {
+            get
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out _, out UIControl down, out _, out _);
+                return down;
+            }
+            set
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out UIControl down, out UIControl left, out UIControl right);
+                if (down == value)
+                    return;
+                down = value;
+                Internal_SetNavTargets(__unmanagedPtr, GetUnmanagedPtr(up), GetUnmanagedPtr(down), GetUnmanagedPtr(left), GetUnmanagedPtr(right));
+                if (_control != null)
+                    _control.NavTargetDown = value != null ? value.Control : null;
+            }
+        }
+
+        /// <summary>
+        /// The explicitly specified target navigation control for <see cref="NavDirection.Left"/> direction.
+        /// </summary>
+        [Tooltip("The explicitly specified target navigation control for Left direction. Leave empty to use automatic navigation.")]
+        [EditorDisplay("Navigation"), EditorOrder(1030), VisibleIf(nameof(HasControl))]
+        public UIControl NavTargetLeft
+        {
+            get
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out _, out _, out UIControl left, out _);
+                return left;
+            }
+            set
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out UIControl down, out UIControl left, out UIControl right);
+                if (left == value)
+                    return;
+                left = value;
+                Internal_SetNavTargets(__unmanagedPtr, GetUnmanagedPtr(up), GetUnmanagedPtr(down), GetUnmanagedPtr(left), GetUnmanagedPtr(right));
+                if (_control != null)
+                    _control.NavTargetLeft = value != null ? value.Control : null;
+            }
+        }
+
+        /// <summary>
+        /// The explicitly specified target navigation control for <see cref="NavDirection.Right"/> direction.
+        /// </summary>
+        [Tooltip("The explicitly specified target navigation control for Right direction. Leave empty to use automatic navigation.")]
+        [EditorDisplay("Navigation"), EditorOrder(1040), VisibleIf(nameof(HasControl))]
+        public UIControl NavTargetRight
+        {
+            get
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out _, out _, out _, out UIControl right);
+                return right;
+            }
+            set
+            {
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out UIControl down, out UIControl left, out UIControl right);
+                if (right == value)
+                    return;
+                right = value;
+                Internal_SetNavTargets(__unmanagedPtr, GetUnmanagedPtr(up), GetUnmanagedPtr(down), GetUnmanagedPtr(left), GetUnmanagedPtr(right));
+                if (_control != null)
+                    _control.NavTargetRight = value != null ? value.Control : null;
+            }
+        }
+
+        #endregion
 
         private void OnControlLocationChanged(Control control)
         {
@@ -319,7 +421,7 @@ namespace FlaxEngine
         {
             if (_control != null && !_blockEvents)
             {
-                _control.Location = new Vector2(LocalPosition);
+                _control.Location = new Float2(LocalPosition);
             }
         }
 
@@ -353,6 +455,11 @@ namespace FlaxEngine
             {
                 _control.Parent = GetParent();
                 _control.IndexInParent = OrderInParent;
+                Internal_GetNavTargets(__unmanagedPtr, out UIControl up, out UIControl down, out UIControl left, out UIControl right);
+                _control.NavTargetUp = up?.Control;
+                _control.NavTargetDown = down?.Control;
+                _control.NavTargetLeft = left?.Control;
+                _control.NavTargetRight = right?.Control;
             }
         }
 

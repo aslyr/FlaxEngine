@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using FlaxEditor.Actions;
 using FlaxEditor.Content;
@@ -12,10 +13,32 @@ using FlaxEditor.GUI.Drag;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 using Object = FlaxEngine.Object;
 
 namespace FlaxEditor.CustomEditors.Dedicated
 {
+    internal class NewScriptItem : ItemsListContextMenu.Item
+    {
+        private string _scriptName;
+
+        public string ScriptName
+        {
+            get => _scriptName;
+            set
+            {
+                _scriptName = value;
+                Name = $"Create script '{value}'";
+            }
+        }
+
+        public NewScriptItem(string scriptName)
+        {
+            ScriptName = scriptName;
+            TooltipText = "Create a new script";
+        }
+    }
+
     /// <summary>
     /// Drag and drop scripts area control.
     /// </summary>
@@ -25,6 +48,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
         private DragHandlers _dragHandlers;
         private DragScriptItems _dragScripts;
         private DragAssets _dragAssets;
+        private Button _addScriptsButton;
 
         /// <summary>
         /// The parent scripts editor.
@@ -40,19 +64,22 @@ namespace FlaxEditor.CustomEditors.Dedicated
             AutoFocus = false;
 
             // Add script button
-            float addScriptButtonWidth = 60.0f;
-            var addScriptButton = new Button
+            var buttonText = "Add script";
+            var textSize = Style.Current.FontMedium.MeasureText(buttonText);
+            float addScriptButtonWidth = (textSize.X < 60.0f) ? 60.0f : textSize.X + 4;
+            var buttonHeight = (textSize.Y < 18) ? 18 : textSize.Y + 4;
+            _addScriptsButton = new Button
             {
                 TooltipText = "Add new scripts to the actor",
                 AnchorPreset = AnchorPresets.MiddleCenter,
-                Text = "Add script",
+                Text = buttonText,
                 Parent = this,
-                Bounds = new Rectangle((Width - addScriptButtonWidth) / 2, 1, addScriptButtonWidth, 18),
+                Bounds = new Rectangle((Width - addScriptButtonWidth) / 2, 1, addScriptButtonWidth, buttonHeight),
             };
-            addScriptButton.ButtonClicked += AddScriptButtonOnClicked;
+            _addScriptsButton.ButtonClicked += OnAddScriptButtonClicked;
         }
 
-        private void AddScriptButtonOnClicked(Button button)
+        private void OnAddScriptButtonClicked(Button button)
         {
             var scripts = Editor.Instance.CodeEditing.Scripts.Get();
             if (scripts.Count == 0)
@@ -70,9 +97,45 @@ namespace FlaxEditor.CustomEditors.Dedicated
             {
                 cm.AddItem(new TypeSearchPopup.TypeItemView(scripts[i]));
             }
-            cm.ItemClicked += item => AddScript((ScriptType)item.Tag);
-            cm.SortChildren();
-            cm.Show(this, button.BottomLeft);
+            cm.TextChanged += text =>
+            {
+                if (!IsValidScriptName(text))
+                    return;
+                if (!cm.ItemsPanel.Children.Any(x => x.Visible && x is not NewScriptItem))
+                {
+                    // If there are no visible items, that means the search failed so we can find the create script button or create one if it's the first time
+                    var newScriptItem = (NewScriptItem)cm.ItemsPanel.Children.FirstOrDefault(x => x is NewScriptItem);
+                    if (newScriptItem != null)
+                    {
+                        newScriptItem.Visible = true;
+                        newScriptItem.ScriptName = text;
+                    }
+                    else
+                    {
+                        cm.AddItem(new NewScriptItem(text));
+                    }
+                }
+                else
+                {
+                    // Make sure to hide the create script button if there
+                    var newScriptItem = cm.ItemsPanel.Children.FirstOrDefault(x => x is NewScriptItem);
+                    if (newScriptItem != null)
+                        newScriptItem.Visible = false;
+                }
+            };
+            cm.ItemClicked += item =>
+            {
+                if (item.Tag is ScriptType script)
+                {
+                    AddScript(script);
+                }
+                else if (item is NewScriptItem newScriptItem)
+                {
+                    CreateScript(newScriptItem);
+                }
+            };
+            cm.SortItems();
+            cm.Show(this, button.BottomLeft - new Float2((cm.Width - button.Width) / 2, 0));
         }
 
         /// <inheritdoc />
@@ -82,12 +145,12 @@ namespace FlaxEditor.CustomEditors.Dedicated
             var size = Size;
 
             // Info
-            Render2D.DrawText(style.FontSmall, "Drag scripts here", new Rectangle(2, 22, size.X - 4, size.Y - 4 - 20), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
+            Render2D.DrawText(style.FontSmall, "Drag scripts here", new Rectangle(2, _addScriptsButton.Height + 4, size.X - 4, size.Y - 4 - 20), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
 
             // Check if drag is over
             if (IsDragOver && _dragHandlers != null && _dragHandlers.HasValidDrag)
             {
-                var area = new Rectangle(Vector2.Zero, size);
+                var area = new Rectangle(Float2.Zero, size);
                 Render2D.FillRectangle(area, Color.Orange * 0.5f);
                 Render2D.DrawRectangle(area, Color.Black);
             }
@@ -109,8 +172,21 @@ namespace FlaxEditor.CustomEditors.Dedicated
             return false;
         }
 
+        private static bool IsValidScriptName(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return false;
+            if (text.Contains(' '))
+                return false;
+            if (char.IsDigit(text[0]))
+                return false;
+            if (text.Any(c => !char.IsLetterOrDigit(c) && c != '_'))
+                return false;
+            return Editor.Instance.ContentDatabase.GetProxy("cs").IsFileNameValid(text);
+        }
+
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             var result = base.OnDragEnter(ref location, data);
             if (result != DragDropEffect.None)
@@ -130,7 +206,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             var result = base.OnDragMove(ref location, data);
             if (result != DragDropEffect.None)
@@ -148,7 +224,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
             if (result != DragDropEffect.None)
@@ -159,6 +235,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
                 if (_dragScripts.HasValidDrag)
                 {
                     result = _dragScripts.Effect;
+
                     AddScripts(_dragScripts.Objects);
                 }
                 else if (_dragAssets.HasValidDrag)
@@ -173,7 +250,43 @@ namespace FlaxEditor.CustomEditors.Dedicated
             return result;
         }
 
-        private void AddScript(ScriptType item)
+        private void CreateScript(NewScriptItem item)
+        {
+            ScriptsEditor.NewScriptName = item.ScriptName;
+            var paths = Directory.GetFiles(Globals.ProjectSourceFolder, "*.Build.cs");
+
+            string moduleName = null;
+            foreach (var p in paths)
+            {
+                var file = File.ReadAllText(p);
+                if (!file.Contains("GameProjectTarget"))
+                    continue; // Skip 
+
+                if (file.Contains("Modules.Add(\"Game\")"))
+                {
+                    // Assume Game represents the main game module
+                    moduleName = "Game";
+                    break;
+                }
+            }
+
+            // Ensure the path slashes are correct for the OS
+            var correctedPath = Path.GetFullPath(Globals.ProjectSourceFolder);
+            if (string.IsNullOrEmpty(moduleName))
+            {
+                var error = FileSystem.ShowBrowseFolderDialog(Editor.Instance.Windows.MainWindow, correctedPath, "Select a module folder to put the new script in", out moduleName);
+                if (error)
+                    return;
+            }
+            var path = Path.Combine(Globals.ProjectSourceFolder, moduleName, item.ScriptName + ".cs");
+            Editor.Instance.ContentDatabase.GetProxy("cs").Create(path, null);
+        }
+
+        /// <summary>
+        /// Attach a script to the actor.
+        /// </summary>
+        /// <param name="item">The script.</param>
+        public void AddScript(ScriptType item)
         {
             var list = new List<ScriptType>(1) { item };
             AddScripts(list);
@@ -220,16 +333,67 @@ namespace FlaxEditor.CustomEditors.Dedicated
 
         private void AddScripts(List<ScriptType> items)
         {
-            var actions = new List<IUndoAction>(4);
+            var actions = new List<IUndoAction>();
 
             for (int i = 0; i < items.Count; i++)
             {
                 var scriptType = items[i];
+                RequireScriptAttribute scriptAttribute = null;
+                if (scriptType.HasAttribute(typeof(RequireScriptAttribute), false))
+                {
+                    foreach (var e in scriptType.GetAttributes(false))
+                    {
+                        if (e is not RequireScriptAttribute requireScriptAttribute)
+                            continue;
+                        scriptAttribute = requireScriptAttribute;
+                        break;
+                    }
+                }
+
+                // See if script requires a specific actor type
+                RequireActorAttribute actorAttribute = null;
+                if (scriptType.HasAttribute(typeof(RequireActorAttribute), false))
+                {
+                    foreach (var e in scriptType.GetAttributes(false))
+                    {
+                        if (e is not RequireActorAttribute requireActorAttribute)
+                            continue;
+                        actorAttribute = requireActorAttribute;
+                        break;
+                    }
+                }
+
                 var actors = ScriptsEditor.ParentEditor.Values;
                 for (int j = 0; j < actors.Count; j++)
                 {
                     var actor = (Actor)actors[j];
+
+                    // If required actor exists but is not this actor type then skip adding to actor 
+                    if (actorAttribute != null)
+                    {
+                        if (actor.GetType() != actorAttribute.RequiredType && !actor.GetType().IsSubclassOf(actorAttribute.RequiredType))
+                        {
+                            Editor.LogWarning($"`{Utilities.Utils.GetPropertyNameUI(scriptType.Name)}` not added to `{actor}` due to script requiring an Actor type of `{actorAttribute.RequiredType}`.");
+                            continue;
+                        }
+                    }
+
                     actions.Add(AddRemoveScript.Add(actor, scriptType));
+                    // Check if actor has required scripts and add them if the actor does not.
+                    if (scriptAttribute != null)
+                    {
+                        foreach (var type in scriptAttribute.RequiredTypes)
+                        {
+                            if (!type.IsSubclassOf(typeof(Script)))
+                            {
+                                Editor.LogWarning($"`{Utilities.Utils.GetPropertyNameUI(type.Name)}` not added to `{actor}` due to the class not being a subclass of Script.");
+                                continue;
+                            }
+                            if (actor.GetScript(type) != null)
+                                continue;
+                            actions.Add(AddRemoveScript.Add(actor, new ScriptType(type)));
+                        }
+                    }
                 }
             }
 
@@ -241,7 +405,13 @@ namespace FlaxEditor.CustomEditors.Dedicated
 
             var multiAction = new MultiUndoAction(actions);
             multiAction.Do();
-            ScriptsEditor.Presenter?.Undo.AddAction(multiAction);
+            var presenter = ScriptsEditor.Presenter;
+            ScriptsEditor.ParentEditor?.RebuildLayout();
+            if (presenter != null)
+            {
+                presenter.Undo.AddAction(multiAction);
+                presenter.Control.Focus();
+            }
         }
     }
 
@@ -249,32 +419,20 @@ namespace FlaxEditor.CustomEditors.Dedicated
     /// Small image control added per script group that allows to drag and drop a reference to it. Also used to reorder the scripts.
     /// </summary>
     /// <seealso cref="FlaxEngine.GUI.Image" />
-    internal class ScriptDragIcon : Image
+    internal class DragImage : Image
     {
-        private ScriptsEditor _editor;
         private bool _isMouseDown;
-        private Vector2 _mouseDownPos;
+        private Float2 _mouseDownPos;
 
         /// <summary>
-        /// Gets the target script.
+        /// Action called when drag event should start.
         /// </summary>
-        public Script Script => (Script)Tag;
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ScriptDragIcon"/> class.
-        /// </summary>
-        /// <param name="editor">The script editor.</param>
-        /// <param name="script">The target script.</param>
-        public ScriptDragIcon(ScriptsEditor editor, Script script)
-        {
-            Tag = script;
-            _editor = editor;
-        }
+        public Action<DragImage> Drag;
 
         /// <inheritdoc />
-        public override void OnMouseEnter(Vector2 location)
+        public override void OnMouseEnter(Float2 location)
         {
-            _mouseDownPos = Vector2.Minimum;
+            _mouseDownPos = Float2.Minimum;
 
             base.OnMouseEnter(location);
         }
@@ -282,60 +440,50 @@ namespace FlaxEditor.CustomEditors.Dedicated
         /// <inheritdoc />
         public override void OnMouseLeave()
         {
-            // Check if start drag drop
             if (_isMouseDown)
             {
-                DoDrag();
                 _isMouseDown = false;
+                Drag(this);
             }
 
             base.OnMouseLeave();
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
-            // Check if start drag drop
-            if (_isMouseDown && Vector2.Distance(location, _mouseDownPos) > 10.0f)
+            if (_isMouseDown && Float2.Distance(location, _mouseDownPos) > 10.0f)
             {
-                DoDrag();
                 _isMouseDown = false;
+                Drag(this);
             }
 
             base.OnMouseMove(location);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left)
             {
-                // Clear flag
                 _isMouseDown = false;
+                return true;
             }
 
             return base.OnMouseUp(location, button);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left)
             {
-                // Set flag
                 _isMouseDown = true;
                 _mouseDownPos = location;
+                return true;
             }
 
             return base.OnMouseDown(location, button);
-        }
-
-        private void DoDrag()
-        {
-            var script = Script;
-            _editor.OnScriptDragChange(true, script);
-            DoDragDrop(DragScripts.GetDragData(script));
-            _editor.OnScriptDragChange(false, script);
         }
     }
 
@@ -373,11 +521,11 @@ namespace FlaxEditor.CustomEditors.Dedicated
             base.Draw();
 
             var color = FlaxEngine.GUI.Style.Current.BackgroundSelected * (IsDragOver ? 0.9f : 0.1f);
-            Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), color);
+            Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), color);
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             _dragEffect = DragDropEffect.None;
 
@@ -392,7 +540,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             return _dragEffect;
         }
@@ -406,7 +554,7 @@ namespace FlaxEditor.CustomEditors.Dedicated
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
             if (result != DragDropEffect.None)
@@ -452,25 +600,18 @@ namespace FlaxEditor.CustomEditors.Dedicated
         /// <inheritdoc />
         public override IEnumerable<object> UndoObjects => _scripts;
 
+        /// <summary>
+        /// Cached the newly created script name - used to add script after compilation.
+        /// </summary>
+        internal static string NewScriptName;
+
         private void AddMissingScript(int index, LayoutElementsContainer layout)
         {
             var group = layout.Group("Missing script");
 
             // Add settings button to the group
-            const float settingsButtonSize = 14;
-            var settingsButton = new Image
-            {
-                TooltipText = "Settings",
-                AutoFocus = true,
-                AnchorPreset = AnchorPresets.TopRight,
-                Parent = group.Panel,
-                Bounds = new Rectangle(group.Panel.Width - settingsButtonSize, 0, settingsButtonSize, settingsButtonSize),
-                IsScrollable = false,
-                Color = FlaxEngine.GUI.Style.Current.ForegroundGrey,
-                Margin = new Margin(1),
-                Brush = new SpriteBrush(FlaxEngine.GUI.Style.Current.Settings),
-                Tag = index,
-            };
+            var settingsButton = group.AddSettingsButton();
+            settingsButton.Tag = index;
             settingsButton.Clicked += MissingSettingsButtonOnClicked;
         }
 
@@ -572,6 +713,21 @@ namespace FlaxEditor.CustomEditors.Dedicated
             var dragArea = layout.CustomContainer<DragAreaControl>();
             dragArea.CustomControl.ScriptsEditor = this;
 
+            // If the initialization is triggered by an editor recompilation, check if it was due to script generation from DragAreaControl
+            if (NewScriptName != null)
+            {
+                var script = Editor.Instance.CodeEditing.Scripts.Get().FirstOrDefault(x => x.Name == NewScriptName);
+                NewScriptName = null;
+                if (script != null)
+                {
+                    dragArea.CustomControl.AddScript(script);
+                }
+                else
+                {
+                    Editor.LogWarning("Failed to find newly created script.");
+                }
+            }
+
             // No support for showing scripts from multiple actors that have different set of scripts
             var scripts = (Script[])Values[0];
             _scripts.Clear();
@@ -583,8 +739,8 @@ namespace FlaxEditor.CustomEditors.Dedicated
                     return;
                 for (int j = 0; j < e.Length; j++)
                 {
-                    var t1 = scripts[j]?.TypeName;
-                    var t2 = e[j]?.TypeName;
+                    var t1 = scripts[j] != null ? scripts[j].TypeName : null;
+                    var t2 = e[j] != null ? e[j].TypeName : null;
                     if (t1 != t2)
                         return;
                 }
@@ -610,77 +766,120 @@ namespace FlaxEditor.CustomEditors.Dedicated
                 var scriptType = TypeUtils.GetObjectType(script);
                 var editor = CustomEditorsUtil.CreateEditor(scriptType, false);
 
-                // Create group
-                var title = CustomEditorsUtil.GetPropertyNameUI(scriptType.Name);
-                var group = layout.Group(title, editor);
-                if (Presenter.CacheExpandedGroups)
+                // Check if actor has all the required scripts
+                bool hasAllRequirements = true;
+                if (scriptType.HasAttribute(typeof(RequireScriptAttribute), false))
                 {
-                    if (Editor.Instance.ProjectCache.IsCollapsedGroup(title))
-                        group.Panel.Close(false);
+                    RequireScriptAttribute scriptAttribute = null;
+                    foreach (var e in scriptType.GetAttributes(false))
+                    {
+                        if (e is not RequireScriptAttribute requireScriptAttribute)
+                            continue;
+                        scriptAttribute = requireScriptAttribute;
+                    }
+
+                    if (scriptAttribute != null)
+                    {
+                        foreach (var type in scriptAttribute.RequiredTypes)
+                        {
+                            if (!type.IsSubclassOf(typeof(Script)))
+                                continue;
+                            var requiredScript = script.Actor.GetScript(type);
+                            if (requiredScript == null)
+                            {
+                                Editor.LogWarning($"`{Utilities.Utils.GetPropertyNameUI(scriptType.Name)}` on `{script.Actor}` is missing a required Script of type `{type}`.");
+                                hasAllRequirements = false;
+                            }
+                        }
+                    }
+                }
+                if (scriptType.HasAttribute(typeof(RequireActorAttribute), false))
+                {
+                    RequireActorAttribute attribute = null;
+                    foreach (var e in scriptType.GetAttributes(false))
+                    {
+                        if (e is not RequireActorAttribute requireActorAttribute)
+                            continue;
+                        attribute = requireActorAttribute;
+                        break;
+                    }
+
+                    if (attribute != null)
+                    {
+                        var actor = script.Actor;
+                        if (actor.GetType() != attribute.RequiredType && !actor.GetType().IsSubclassOf(attribute.RequiredType))
+                        {
+                            Editor.LogWarning($"`{Utilities.Utils.GetPropertyNameUI(scriptType.Name)}` on `{script.Actor}` is missing a required Actor of type `{attribute.RequiredType}`.");
+                            hasAllRequirements = false;
+                            // Maybe call to remove script here?
+                        }
+                    }
+                }
+
+                // Create group
+                var title = Utilities.Utils.GetPropertyNameUI(scriptType.Name);
+                var group = layout.Group(title, editor);
+                if (!hasAllRequirements)
+                    group.Panel.HeaderTextColor = FlaxEngine.GUI.Style.Current.Statusbar.Failed;
+                if ((Presenter.Features & FeatureFlags.CacheExpandedGroups) != 0)
+                {
+                    if (Editor.Instance.ProjectCache.IsGroupToggled(title))
+                        group.Panel.Close();
                     else
-                        group.Panel.Open(false);
-                    group.Panel.IsClosedChanged += panel => Editor.Instance.ProjectCache.SetCollapsedGroup(panel.HeaderText, panel.IsClosed);
+                        group.Panel.Open();
+                    group.Panel.IsClosedChanged += panel => Editor.Instance.ProjectCache.SetGroupToggle(panel.HeaderText, panel.IsClosed);
                 }
                 else
-                    group.Panel.Open(false);
+                    group.Panel.Open();
 
                 // Customize
-                var typeAttributes = scriptType.GetAttributes(false);
-                group.Panel.TooltipText = scriptType.TypeName;
-                var tooltip = (TooltipAttribute)typeAttributes.FirstOrDefault(x => x is TooltipAttribute);
-                if (tooltip != null)
-                    group.Panel.TooltipText += '\n' + tooltip.Text;
+                group.Panel.TooltipText = Editor.Instance.CodeDocs.GetTooltip(scriptType);
                 if (script.HasPrefabLink)
                     group.Panel.HeaderTextColor = FlaxEngine.GUI.Style.Current.ProgressNormal;
 
                 // Add toggle button to the group
+                var headerHeight = group.Panel.HeaderHeight;
                 var scriptToggle = new CheckBox
                 {
                     TooltipText = "If checked, script will be enabled.",
                     IsScrollable = false,
                     Checked = script.Enabled,
                     Parent = group.Panel,
-                    Size = new Vector2(14, 14),
-                    Bounds = new Rectangle(2, 0, 14, 14),
-                    BoxSize = 12.0f,
+                    Size = new Float2(headerHeight),
+                    Bounds = new Rectangle(headerHeight, 0, headerHeight, headerHeight),
+                    BoxSize = headerHeight - 4.0f,
                     Tag = script,
                 };
                 scriptToggle.StateChanged += OnScriptToggleCheckChanged;
                 _scriptToggles[i] = scriptToggle;
 
                 // Add drag button to the group
-                const float dragIconSize = 14;
-                var scriptDrag = new ScriptDragIcon(this, script)
+                var scriptDrag = new DragImage
                 {
                     TooltipText = "Script reference",
                     AutoFocus = true,
                     IsScrollable = false,
                     Color = FlaxEngine.GUI.Style.Current.ForegroundGrey,
                     Parent = group.Panel,
-                    Bounds = new Rectangle(scriptToggle.Right, 0.5f, dragIconSize, dragIconSize),
+                    Bounds = new Rectangle(scriptToggle.Right, 0.5f, headerHeight, headerHeight),
                     Margin = new Margin(1),
                     Brush = new SpriteBrush(Editor.Instance.Icons.DragBar12),
                     Tag = script,
+                    Drag = img =>
+                    {
+                        var s = (Script)img.Tag;
+                        OnScriptDragChange(true, s);
+                        img.DoDragDrop(DragScripts.GetDragData(s));
+                        OnScriptDragChange(false, s);
+                    }
                 };
 
                 // Add settings button to the group
-                const float settingsButtonSize = 14;
-                var settingsButton = new Image
-                {
-                    TooltipText = "Settings",
-                    AutoFocus = true,
-                    AnchorPreset = AnchorPresets.TopRight,
-                    Parent = group.Panel,
-                    Bounds = new Rectangle(group.Panel.Width - settingsButtonSize, 0, settingsButtonSize, settingsButtonSize),
-                    IsScrollable = false,
-                    Color = FlaxEngine.GUI.Style.Current.ForegroundGrey,
-                    Margin = new Margin(1),
-                    Brush = new SpriteBrush(FlaxEngine.GUI.Style.Current.Settings),
-                    Tag = script,
-                };
+                var settingsButton = group.AddSettingsButton();
+                settingsButton.Tag = script;
                 settingsButton.Clicked += OnSettingsButtonClicked;
 
-                group.Panel.HeaderTextMargin = new Margin(scriptDrag.Right, 15, 2, 2);
+                group.Panel.HeaderTextMargin = new Margin(scriptDrag.Right - 12, 15, 2, 2);
                 group.Object(values, editor);
 
                 // Scripts arrange bar

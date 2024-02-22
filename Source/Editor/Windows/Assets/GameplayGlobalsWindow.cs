@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,7 @@ using FlaxEditor.GUI.ContextMenu;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Windows.Assets
 {
@@ -236,9 +237,12 @@ namespace FlaxEditor.Windows.Assets
                 typeof(float),
                 typeof(bool),
                 typeof(int),
-                typeof(Vector2),
-                typeof(Vector3),
-                typeof(Vector4),
+                typeof(Float2),
+                typeof(Float3),
+                typeof(Float4),
+                typeof(Double2),
+                typeof(Double3),
+                typeof(Double4),
                 typeof(Color),
                 typeof(Quaternion),
                 typeof(Transform),
@@ -328,7 +332,7 @@ namespace FlaxEditor.Windows.Assets
                 {
                     Proxy = _proxy,
                     IsAdd = true,
-                    Name = StringUtils.IncrementNameNumber("New parameter", x => OnParameterRenameValidate(null, x)),
+                    Name = Utilities.Utils.IncrementNameNumber("New parameter", x => OnParameterRenameValidate(null, x)),
                     DefaultValue = TypeUtils.GetDefaultValue(new ScriptType(type)),
                 };
                 _proxy.Window.Undo.AddAction(action);
@@ -391,6 +395,8 @@ namespace FlaxEditor.Windows.Assets
         public GameplayGlobalsWindow(Editor editor, AssetItem item)
         : base(editor, item)
         {
+            var inputOptions = Editor.Options.Options.Input;
+
             _undo = new Undo();
             _undo.ActionDone += OnUndo;
             _undo.UndoDone += OnUndo;
@@ -407,10 +413,10 @@ namespace FlaxEditor.Windows.Assets
             _proxy = new PropertiesProxy();
             _propertiesEditor.Select(_proxy);
 
-            _saveButton = (ToolStripButton)_toolstrip.AddButton(editor.Icons.Save64, Save).LinkTooltip("Save asset");
+            _saveButton = (ToolStripButton)_toolstrip.AddButton(editor.Icons.Save64, Save).LinkTooltip($"Save asset ({inputOptions.Save})");
             _toolstrip.AddSeparator();
-            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip("Undo (Ctrl+Z)");
-            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip("Redo (Ctrl+Y)");
+            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip($"Undo ({inputOptions.Undo})");
+            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip($"Redo ({inputOptions.Redo})");
             _toolstrip.AddSeparator();
             _resetButton = (ToolStripButton)_toolstrip.AddButton(editor.Icons.Rotate32, Reset).LinkTooltip("Resets the variables values to the default values");
 

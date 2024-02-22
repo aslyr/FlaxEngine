@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -21,15 +21,11 @@ namespace FlaxEditor.Content.Thumbnails
         /// </summary>
         public const float MinimumRequiredResourcesQuality = 0.8f;
 
-        // TODO: free atlas slots for deleted assets
-
         private readonly List<PreviewsCache> _cache = new List<PreviewsCache>(4);
         private readonly string _cacheFolder;
-
-        private DateTime _lastFlushTime;
-
         private readonly List<ThumbnailRequest> _requests = new List<ThumbnailRequest>(128);
         private readonly PreviewRoot _guiRoot = new PreviewRoot();
+        private DateTime _lastFlushTime;
         private RenderTask _task;
         private GPUTexture _output;
 
@@ -88,7 +84,6 @@ namespace FlaxEditor.Content.Thumbnails
                         }
                     }
 
-                    // Add request
                     AddRequest(assetItem, proxy);
                 }
             }
@@ -118,11 +113,79 @@ namespace FlaxEditor.Content.Thumbnails
                 for (int i = 0; i < _cache.Count; i++)
                 {
                     if (_cache[i].ReleaseSlot(assetItem.ID))
-                    {
                         break;
-                    }
                 }
             }
+        }
+
+        internal static bool HasMinimumQuality(TextureBase asset)
+        {
+            if (asset.HasStreamingError)
+                return true; // Don't block thumbnails queue when texture fails to stream in (eg. unsupported format)
+            var mipLevels = asset.MipLevels;
+            var minMipLevels = Mathf.Min(mipLevels, 7);
+            return asset.IsLoaded && asset.ResidentMipLevels >= Mathf.Max(minMipLevels, (int)(mipLevels * MinimumRequiredResourcesQuality));
+        }
+
+        internal static bool HasMinimumQuality(Model asset)
+        {
+            if (!asset.IsLoaded)
+                return false;
+            var lods = asset.LODs.Length;
+            var slots = asset.MaterialSlots;
+            foreach (var slot in slots)
+            {
+                if (slot.Material && !HasMinimumQuality(slot.Material))
+                    return false;
+            }
+            return asset.LoadedLODs >= Mathf.Max(1, (int)(lods * MinimumRequiredResourcesQuality));
+        }
+
+        internal static bool HasMinimumQuality(SkinnedModel asset)
+        {
+            var lods = asset.LODs.Length;
+            if (asset.IsLoaded && lods == 0)
+                return true; // Skeleton-only model
+            var slots = asset.MaterialSlots;
+            foreach (var slot in slots)
+            {
+                if (slot.Material && !HasMinimumQuality(slot.Material))
+                    return false;
+            }
+            return asset.LoadedLODs >= Mathf.Max(1, (int)(lods * MinimumRequiredResourcesQuality));
+        }
+
+        internal static bool HasMinimumQuality(MaterialBase asset)
+        {
+            if (asset is MaterialInstance asInstance)
+                return HasMinimumQuality(asInstance);
+            return HasMinimumQualityInternal(asset);
+        }
+
+        internal static bool HasMinimumQuality(Material asset)
+        {
+            return HasMinimumQualityInternal(asset);
+        }
+
+        internal static bool HasMinimumQuality(MaterialInstance asset)
+        {
+            if (!HasMinimumQualityInternal(asset))
+                return false;
+            var baseMaterial = asset.BaseMaterial;
+            return baseMaterial == null || HasMinimumQualityInternal(baseMaterial);
+        }
+
+        private static bool HasMinimumQualityInternal(MaterialBase asset)
+        {
+            if (!asset.IsLoaded)
+                return false;
+            var parameters = asset.Parameters;
+            foreach (var parameter in parameters)
+            {
+                if (parameter.Value is TextureBase asTexture && !HasMinimumQuality(asTexture))
+                    return false;
+            }
+            return true;
         }
 
         #region IContentItemOwner
@@ -130,13 +193,7 @@ namespace FlaxEditor.Content.Thumbnails
         /// <inheritdoc />
         void IContentItemOwner.OnItemDeleted(ContentItem item)
         {
-            if (item is AssetItem assetItem)
-            {
-                lock (_requests)
-                {
-                    RemoveRequest(assetItem);
-                }
-            }
+            DeletePreview(item);
         }
 
         /// <inheritdoc />
@@ -242,21 +299,36 @@ namespace FlaxEditor.Content.Thumbnails
                 if (!atlas.IsReady)
                     return;
 
-                // Setup
-                _guiRoot.RemoveChildren();
-                _guiRoot.AccentColor = request.Proxy.AccentColor;
+                try
+                {
+                    // Setup
+                    _guiRoot.RemoveChildren();
+                    _guiRoot.AccentColor = request.Proxy.AccentColor;
 
-                // Call proxy to prepare for thumbnail rendering
-                request.Proxy.OnThumbnailDrawBegin(request, _guiRoot, context);
-                _guiRoot.UnlockChildrenRecursive();
+                    // Call proxy to prepare for thumbnail rendering
+                    request.Proxy.OnThumbnailDrawBegin(request, _guiRoot, context);
+                    _guiRoot.UnlockChildrenRecursive();
 
-                // Draw preview
-                context.Clear(_output.View(), Color.Black);
-                Render2D.CallDrawing(_guiRoot, context, _output);
+                    // Draw preview
+                    context.Clear(_output.View(), Color.Black);
+                    Render2D.CallDrawing(_guiRoot, context, _output);
 
-                // Call proxy and cleanup UI (delete create controls, shared controls should be unlinked during OnThumbnailDrawEnd event)
-                request.Proxy.OnThumbnailDrawEnd(request, _guiRoot);
-                _guiRoot.DisposeChildren();
+                    // Call proxy and cleanup UI (delete create controls, shared controls should be unlinked during OnThumbnailDrawEnd event)
+                    request.Proxy.OnThumbnailDrawEnd(request, _guiRoot);
+                }
+                catch (Exception ex)
+                {
+                    // Handle internal errors gracefully (eg. when asset is corrupted and proxy fails)
+                    Editor.LogError("Failed to render thumbnail icon for asset: " + request.Item);
+                    Editor.LogWarning(ex);
+                    request.FinishRender(ref SpriteHandle.Invalid);
+                    RemoveRequest(request);
+                    return;
+                }
+                finally
+                {
+                    _guiRoot.DisposeChildren();
+                }
 
                 // Copy backbuffer with rendered preview into atlas
                 SpriteHandle icon = atlas.OccupySlot(_output, request.Item.ID);
@@ -323,18 +395,16 @@ namespace FlaxEditor.Content.Thumbnails
             for (int i = 0; i < maxChecks; i++)
             {
                 var request = _requests[i];
-
                 try
                 {
                     if (request.IsReady)
-                    {
                         return request;
-                    }
                 }
                 catch (Exception ex)
                 {
-                    Editor.LogWarning(ex);
                     Editor.LogWarning($"Failed to prepare thumbnail rendering for {request.Item.ShortName}.");
+                    Editor.LogWarning(ex);
+                    _requests.RemoveAt(i--);
                 }
             }
 
@@ -353,7 +423,6 @@ namespace FlaxEditor.Content.Thumbnails
             // Create atlas
             if (PreviewsCache.Create(path))
             {
-                // Error
                 Editor.LogError("Failed to create thumbnails atlas.");
                 return null;
             }
@@ -362,7 +431,6 @@ namespace FlaxEditor.Content.Thumbnails
             var atlas = FlaxEngine.Content.LoadAsync<PreviewsCache>(path);
             if (atlas == null)
             {
-                // Error
                 Editor.LogError("Failed to load thumbnails atlas.");
                 return null;
             }
@@ -415,10 +483,7 @@ namespace FlaxEditor.Content.Thumbnails
         {
             // Wait some frames before start generating previews (late init feature)
             if (Time.TimeSinceStartup < 1.0f || HasAllAtlasesLoaded() == false)
-            {
-                // Back
                 return;
-            }
 
             lock (_requests)
             {
@@ -434,9 +499,9 @@ namespace FlaxEditor.Content.Thumbnails
                     for (int i = 0; i < checks; i++)
                     {
                         var request = _requests[i];
-
                         try
                         {
+                            request.Update();
                             if (request.IsReady)
                             {
                                 isAnyReady = true;
@@ -445,11 +510,16 @@ namespace FlaxEditor.Content.Thumbnails
                             {
                                 request.Prepare();
                             }
+                            else if (request.State == ThumbnailRequest.States.Failed)
+                            {
+                                _requests.RemoveAt(i--);
+                            }
                         }
                         catch (Exception ex)
                         {
-                            Editor.LogWarning(ex);
                             Editor.LogWarning($"Failed to prepare thumbnail rendering for {request.Item.ShortName}.");
+                            Editor.LogWarning(ex);
+                            _requests.RemoveAt(i--);
                         }
                     }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,9 +11,8 @@
 /// </summary>
 API_STRUCT() struct FLAXENGINE_API BoundingBox
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(BoundingBox);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(BoundingBox);
 public:
-
     /// <summary>
     /// A <see cref="BoundingBox"/> which represents an empty space.
     /// </summary>
@@ -25,7 +24,6 @@ public:
     static const BoundingBox Zero;
 
 public:
-
     /// <summary>
     /// The minimum point of the box.
     /// </summary>
@@ -37,13 +35,10 @@ public:
     API_FIELD() Vector3 Maximum;
 
 public:
-
     /// <summary>
     /// Empty constructor.
     /// </summary>
-    BoundingBox()
-    {
-    }
+    BoundingBox() = default;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="BoundingBox"/> struct.
@@ -67,32 +62,26 @@ public:
     }
 
 public:
-
     String ToString() const;
 
 public:
+    /// <summary>
+    /// Gets the eight corners of the bounding box.
+    /// </summary>
+    /// <param name="corners">An array of points representing the eight corners of the bounding box.</param>
+    void GetCorners(Float3 corners[8]) const;
 
     /// <summary>
     /// Gets the eight corners of the bounding box.
     /// </summary>
     /// <param name="corners">An array of points representing the eight corners of the bounding box.</param>
-    void GetCorners(Vector3 corners[8]) const
-    {
-        corners[0] = Vector3(Minimum.X, Maximum.Y, Maximum.Z);
-        corners[1] = Vector3(Maximum.X, Maximum.Y, Maximum.Z);
-        corners[2] = Vector3(Maximum.X, Minimum.Y, Maximum.Z);
-        corners[3] = Vector3(Minimum.X, Minimum.Y, Maximum.Z);
-        corners[4] = Vector3(Minimum.X, Maximum.Y, Minimum.Z);
-        corners[5] = Vector3(Maximum.X, Maximum.Y, Minimum.Z);
-        corners[6] = Vector3(Maximum.X, Minimum.Y, Minimum.Z);
-        corners[7] = Vector3(Minimum.X, Minimum.Y, Minimum.Z);
-    }
+    void GetCorners(Double3 corners[8]) const;
 
     /// <summary>
     /// Calculates volume of the box.
     /// </summary>
     /// <returns>The box volume.</returns>
-    float GetVolume() const
+    Real GetVolume() const
     {
         Vector3 size;
         Vector3::Subtract(Maximum, Minimum, size);
@@ -127,8 +116,9 @@ public:
     {
         Vector3 center;
         GetCenter(center);
-        Minimum = center - value;
-        Maximum = center + value;
+        const Vector3 sizeHalf = value * 0.5f;
+        Minimum = center - sizeHalf;
+        Maximum = center + sizeHalf;
     }
 
     /// <summary>
@@ -161,19 +151,17 @@ public:
     }
 
 public:
-
     static bool NearEqual(const BoundingBox& a, const BoundingBox& b)
     {
         return Vector3::NearEqual(a.Minimum, b.Minimum) && Vector3::NearEqual(a.Maximum, b.Maximum);
     }
 
-    static bool NearEqual(const BoundingBox& a, const BoundingBox& b, float epsilon)
+    static bool NearEqual(const BoundingBox& a, const BoundingBox& b, Real epsilon)
     {
         return Vector3::NearEqual(a.Minimum, b.Minimum, epsilon) && Vector3::NearEqual(a.Maximum, b.Maximum, epsilon);
     }
 
 public:
-
     /// <summary>
     /// Merges the box with a point.
     /// </summary>
@@ -199,16 +187,9 @@ public:
     /// </summary>
     /// <param name="offset">The offset.</param>
     /// <returns>The result.</returns>
-    BoundingBox MakeOffsetted(const Vector3& offset) const
-    {
-        BoundingBox result;
-        result.Minimum = Minimum + offset;
-        result.Maximum = Maximum + offset;
-        return result;
-    }
+    BoundingBox MakeOffsetted(const Vector3& offset) const;
 
 public:
-
     FORCE_INLINE bool operator==(const BoundingBox& other) const
     {
         return Minimum == other.Minimum && Maximum == other.Maximum;
@@ -227,7 +208,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Constructs a Bounding Box that fully contains the given pair of points.
     /// </summary>
@@ -246,15 +226,15 @@ public:
     /// <param name="points">The points that will be contained by the box.</param>
     /// <param name="pointsCount">The amount of points to use.</param>
     /// <param name="result">The constructed bounding box.</param>
-    static void FromPoints(const Vector3* points, int32 pointsCount, BoundingBox& result);
+    static void FromPoints(const Float3* points, int32 pointsCount, BoundingBox& result);
 
     /// <summary>
     /// Constructs a Bounding Box that fully contains the given points.
     /// </summary>
     /// <param name="points">The points that will be contained by the box.</param>
     /// <param name="pointsCount">The amount of points to use.</param>
-    /// <returns>The constructed bounding box.</returns>
-    static BoundingBox FromPoints(const Vector3* points, int32 pointsCount);
+    /// <param name="result">The constructed bounding box.</param>
+    static void FromPoints(const Double3* points, int32 pointsCount, BoundingBox& result);
 
     /// <summary>
     /// Constructs a Bounding Box from a given sphere.
@@ -304,7 +284,7 @@ public:
     /// <param name="box">The box.</param>
     /// <param name="scale">The bounds scale.</param>
     /// <returns>The scaled bounds.</returns>
-    static BoundingBox MakeScaled(const BoundingBox& box, float scale);
+    static BoundingBox MakeScaled(const BoundingBox& box, Real scale);
 
     /// <summary>
     /// Transforms the bounding box using the specified matrix.
@@ -314,8 +294,15 @@ public:
     /// <param name="result">The result transformed box.</param>
     static void Transform(const BoundingBox& box, const Matrix& matrix, BoundingBox& result);
 
-public:
+    /// <summary>
+    /// Transforms the bounding box using the specified transformation.
+    /// </summary>
+    /// <param name="box">The box.</param>
+    /// <param name="transform">The transformation.</param>
+    /// <param name="result">The result transformed box.</param>
+    static void Transform(const BoundingBox& box, const ::Transform& transform, BoundingBox& result);
 
+public:
     /// <summary>
     /// Determines if there is an intersection between the current object and a Ray.
     /// </summary>
@@ -323,7 +310,7 @@ public:
     /// <returns>Whether the two objects intersected.</returns>
     FORCE_INLINE bool Intersects(const Ray& ray) const
     {
-        float distance;
+        Real distance;
         return CollisionsHelper::RayIntersectsBox(ray, *this, distance);
     }
 
@@ -333,7 +320,7 @@ public:
     /// <param name="ray">The ray to test.</param>
     /// <param name="distance">When the method completes, contains the distance of the intersection, or 0 if there was no intersection.</param>
     /// <returns> Whether the two objects intersected.</returns>
-    FORCE_INLINE bool Intersects(const Ray& ray, float& distance) const
+    FORCE_INLINE bool Intersects(const Ray& ray, Real& distance) const
     {
         return CollisionsHelper::RayIntersectsBox(ray, *this, distance);
     }
@@ -345,7 +332,7 @@ public:
     /// <param name="distance">When the method completes, contains the distance of the intersection, or 0 if there was no intersection.</param>
     /// <param name="normal">When the method completes, contains the intersection surface normal vector, or Vector3::Up if there was no intersection.</param>
     /// <returns>Whether the two objects intersected.</returns>
-    FORCE_INLINE bool Intersects(const Ray& ray, float& distance, Vector3& normal) const
+    FORCE_INLINE bool Intersects(const Ray& ray, Real& distance, Vector3& normal) const
     {
         return CollisionsHelper::RayIntersectsBox(ray, *this, distance, normal);
     }
@@ -419,6 +406,26 @@ public:
     FORCE_INLINE ContainmentType Contains(const BoundingSphere& sphere) const
     {
         return CollisionsHelper::BoxContainsSphere(*this, sphere);
+    }
+
+    /// <summary>
+    /// Determines the distance between a Bounding Box and a point.
+    /// </summary>
+    /// <param name="point">The point to test.</param>
+    /// <returns>The distance between bounding box and a point.</returns>
+    FORCE_INLINE Real Distance(const Vector3& point) const
+    {
+        return CollisionsHelper::DistanceBoxPoint(*this, point);
+    }
+
+    /// <summary>
+    /// Determines the distance between two Bounding Boxed.
+    /// </summary>
+    /// <param name="box">The bounding box to test.</param>
+    /// <returns>The distance between bounding boxes.</returns>
+    FORCE_INLINE Real Distance(const BoundingBox& box) const
+    {
+        return CollisionsHelper::DistanceBoxBox(*this, box);
     }
 };
 

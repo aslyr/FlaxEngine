@@ -1,12 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using FlaxEditor.GUI.ContextMenu;
-using FlaxEditor.Scripting;
+using FlaxEditor.GUI.Input;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Surface.ContextMenu
 {
@@ -27,9 +28,10 @@ namespace FlaxEditor.Surface.ContextMenu
         /// <summary>
         /// Visject Surface node archetype spawn ability checking delegate.
         /// </summary>
+        /// <param name="groupArch">The nodes group archetype to check.</param>
         /// <param name="arch">The node archetype to check.</param>
         /// <returns>True if can use this node to spawn it on a surface, otherwise false..</returns>
-        public delegate bool NodeSpawnCheckDelegate(NodeArchetype arch);
+        public delegate bool NodeSpawnCheckDelegate(GroupArchetype groupArch, NodeArchetype arch);
 
         /// <summary>
         /// Visject Surface parameters getter delegate.
@@ -38,6 +40,8 @@ namespace FlaxEditor.Surface.ContextMenu
         public delegate List<SurfaceParameter> ParameterGetterDelegate();
 
         private readonly List<VisjectCMGroup> _groups = new List<VisjectCMGroup>(16);
+        private CheckBox _contextSensitiveToggle;
+        private bool _contextSensitiveSearchEnabled = true;
         private readonly TextBox _searchBox;
         private bool _waitingForInput;
         private VisjectCMGroup _surfaceParametersGroup;
@@ -125,13 +129,57 @@ namespace FlaxEditor.Surface.ContextMenu
                 _parameterSetNodeArchetype = info.ParameterSetNodeArchetype ?? Archetypes.Parameters.Nodes[3];
 
             // Context menu dimensions
-            Size = new Vector2(320, 220);
+            Size = new Float2(300, 400);
+
+            var headerPanel = new Panel(ScrollBars.None)
+            {
+                Parent = this,
+                Height = 20,
+                Width = Width - 4,
+                X = 2,
+                Y = 1,
+            };
+
+            // Title bar
+            var titleFontReference = new FontReference(Style.Current.FontLarge.Asset, 10);
+            var titleLabel = new Label
+            {
+                Width = Width * 0.5f - 8f,
+                Height = 20,
+                X = 4,
+                Parent = headerPanel,
+                Text = "Select Node",
+                HorizontalAlignment = TextAlignment.Near,
+                Font = titleFontReference,
+            };
+
+            // Context sensitive toggle
+            var contextSensitiveLabel = new Label
+            {
+                Width = Width * 0.5f - 28,
+                Height = 20,
+                X = Width * 0.5f,
+                Parent = headerPanel,
+                Text = "Context Sensitive",
+                TooltipText = "Should the nodes be filtered to only show those that can be connected in the current context?",
+                HorizontalAlignment = TextAlignment.Far,
+                Font = titleFontReference,
+            };
+
+            _contextSensitiveToggle = new CheckBox
+            {
+                Width = 20,
+                Height = 20,
+                X = Width - 24,
+                Parent = headerPanel,
+                Checked = _contextSensitiveSearchEnabled,
+            };
+            _contextSensitiveToggle.StateChanged += OnContextSensitiveToggleStateChanged;
 
             // Search box
-            _searchBox = new TextBox(false, 1, 1)
+            _searchBox = new SearchBox(false, 2, 22)
             {
-                Width = Width - 3,
-                WatermarkText = "Search...",
+                Width = Width - 4,
                 Parent = this
             };
             _searchBox.TextChanged += OnSearchFilterChanged;
@@ -162,7 +210,7 @@ namespace FlaxEditor.Surface.ContextMenu
                 nodes.Clear();
                 foreach (var nodeArchetype in groupArchetype.Archetypes)
                 {
-                    if ((nodeArchetype.Flags & NodeFlags.NoSpawnViaGUI) == 0 && info.CanSpawnNode(nodeArchetype))
+                    if ((nodeArchetype.Flags & NodeFlags.NoSpawnViaGUI) == 0 && info.CanSpawnNode(groupArchetype, nodeArchetype))
                     {
                         nodes.Add(nodeArchetype);
                     }
@@ -171,11 +219,7 @@ namespace FlaxEditor.Surface.ContextMenu
                 // Check if can create group for them
                 if (nodes.Count > 0)
                 {
-                    var group = new VisjectCMGroup(this, groupArchetype)
-                    {
-                        HeaderText = groupArchetype.Name
-                    };
-
+                    var group = CreateGroup(groupArchetype);
                     group.Close(false);
                     for (int i = 0; i < nodes.Count; i++)
                     {
@@ -205,7 +249,7 @@ namespace FlaxEditor.Surface.ContextMenu
                     VisjectCMGroup group = null;
                     for (int j = 0; j < _groups.Count; j++)
                     {
-                        if (string.Equals(_groups[j].Archetype.Name, groupName, StringComparison.OrdinalIgnoreCase))
+                        if (string.Equals(_groups[j].Name, groupName, StringComparison.OrdinalIgnoreCase))
                         {
                             group = _groups[j];
                             break;
@@ -215,11 +259,7 @@ namespace FlaxEditor.Surface.ContextMenu
                     // Create new group if name is unique
                     if (group == null)
                     {
-                        group = new VisjectCMGroup(this, info.CustomNodesGroup)
-                        {
-                            HeaderText = groupName
-                        };
-
+                        group = CreateGroup(info.CustomNodesGroup, true, groupName);
                         group.Close(false);
                         group.Parent = _groupsPanel;
                         _groups.Add(group);
@@ -241,18 +281,15 @@ namespace FlaxEditor.Surface.ContextMenu
         /// Adds the group archetype to add to the menu.
         /// </summary>
         /// <param name="groupArchetype">The group.</param>
-        public void AddGroup(GroupArchetype groupArchetype)
+        /// <param name="withGroupMerge">True if merge group items into any existing group of the same name.</param>
+        public void AddGroup(GroupArchetype groupArchetype, bool withGroupMerge = true)
         {
             // Check if can create group for them to be spawned via GUI
             if (groupArchetype.Archetypes.Any(x => (x.Flags & NodeFlags.NoSpawnViaGUI) == 0))
             {
                 Profiler.BeginEvent("VisjectCM.AddGroup");
 
-                var group = new VisjectCMGroup(this, groupArchetype)
-                {
-                    HeaderText = groupArchetype.Name
-                };
-
+                var group = CreateGroup(groupArchetype, withGroupMerge);
                 group.Close(false);
 
                 foreach (var nodeArchetype in groupArchetype.Archetypes)
@@ -271,11 +308,17 @@ namespace FlaxEditor.Surface.ContextMenu
                 {
                     group.UnlockChildrenRecursive();
                     SortGroups();
+                    if (ShowExpanded)
+                        group.Open(false);
                     group.PerformLayout();
                     if (_searchBox.TextLength != 0)
                     {
                         OnSearchFilterChanged();
                     }
+                }
+                else if (_contextSensitiveSearchEnabled)
+                {
+                    group.EvaluateVisibilityWithBox(_selectedBox);
                 }
 
                 Profiler.EndEvent();
@@ -286,7 +329,8 @@ namespace FlaxEditor.Surface.ContextMenu
         /// Adds the group archetypes to add to the menu.
         /// </summary>
         /// <param name="groupArchetypes">The groups.</param>
-        public void AddGroups(IEnumerable<GroupArchetype> groupArchetypes)
+        /// <param name="withGroupMerge">True if merge group items into any existing group of the same name.</param>
+        public void AddGroups(IEnumerable<GroupArchetype> groupArchetypes, bool withGroupMerge = true)
         {
             // Check if can create group for them to be spawned via GUI
             if (groupArchetypes.Any(g => g.Archetypes.Any(x => (x.Flags & NodeFlags.NoSpawnViaGUI) == 0)))
@@ -299,11 +343,7 @@ namespace FlaxEditor.Surface.ContextMenu
                 var groups = new List<VisjectCMGroup>();
                 foreach (var groupArchetype in groupArchetypes)
                 {
-                    var group = new VisjectCMGroup(this, groupArchetype)
-                    {
-                        HeaderText = groupArchetype.Name
-                    };
-
+                    var group = CreateGroup(groupArchetype, withGroupMerge);
                     group.Close(false);
 
                     foreach (var nodeArchetype in groupArchetype.Archetypes)
@@ -313,7 +353,11 @@ namespace FlaxEditor.Surface.ContextMenu
                             Parent = group
                         };
                     }
+                    if (_contextSensitiveSearchEnabled)
+                        group.EvaluateVisibilityWithBox(_selectedBox);
                     group.SortChildren();
+                    if (ShowExpanded)
+                        group.Open(false);
                     group.Parent = _groupsPanel;
                     _groups.Add(group);
 
@@ -349,11 +393,24 @@ namespace FlaxEditor.Surface.ContextMenu
         {
             for (int i = 0; i < _groups.Count; i++)
             {
-                if (_groups[i].Archetype == groupArchetype)
+                var group = _groups[i];
+                if (group.Archetypes.Remove(groupArchetype))
                 {
                     Profiler.BeginEvent("VisjectCM.RemoveGroup");
-                    _groups[i].Dispose();
-                    _groups.RemoveAt(i);
+                    if (group.Archetypes.Count == 0)
+                    {
+                        _groups.RemoveAt(i);
+                        group.Dispose();
+                    }
+                    else
+                    {
+                        var children = group.Children.ToArray();
+                        foreach (var child in children)
+                        {
+                            if (child is VisjectCMItem item && item.GroupArchetype == groupArchetype)
+                                item.Dispose();
+                        }
+                    }
                     Profiler.EndEvent();
                     break;
                 }
@@ -372,6 +429,24 @@ namespace FlaxEditor.Surface.ContextMenu
             Profiler.EndEvent();
         }
 
+        private VisjectCMGroup CreateGroup(GroupArchetype groupArchetype, bool withGroupMerge = true, string name = null)
+        {
+            if (name == null)
+                name = groupArchetype.Name;
+            if (withGroupMerge)
+            {
+                for (int i = 0; i < _groups.Count; i++)
+                {
+                    if (string.Equals(_groups[i].HeaderText, name, StringComparison.Ordinal))
+                        return _groups[i];
+                }
+            }
+            return new VisjectCMGroup(this, groupArchetype)
+            {
+                HeaderText = name
+            };
+        }
+
         private void OnSearchFilterChanged()
         {
             // Skip events during setup or init stuff
@@ -379,12 +454,37 @@ namespace FlaxEditor.Surface.ContextMenu
                 return;
 
             Profiler.BeginEvent("VisjectCM.OnSearchFilterChanged");
+            UpdateFilters();
+            _searchBox.Focus();
+            Profiler.EndEvent();
+        }
+
+        private void OnContextSensitiveToggleStateChanged(CheckBox checkBox)
+        {
+            // Skip events during setup or init stuff
+            if (IsLayoutLocked)
+                return;
+
+            Profiler.BeginEvent("VisjectCM.OnContextSensitiveToggleStateChanged");
+            _contextSensitiveSearchEnabled = checkBox.Checked;
+            UpdateFilters();
+            Profiler.EndEvent();
+        }
+
+        private void UpdateFilters()
+        {
+            if (string.IsNullOrEmpty(_searchBox.Text) && _selectedBox == null)
+            {
+                ResetView();
+                Profiler.EndEvent();
+                return;
+            }
 
             // Update groups
             LockChildrenRecursive();
             for (int i = 0; i < _groups.Count; i++)
             {
-                _groups[i].UpdateFilter(_searchBox.Text);
+                _groups[i].UpdateFilter(_searchBox.Text, _contextSensitiveSearchEnabled ? _selectedBox : null);
                 _groups[i].UpdateItemSort(_selectedBox);
             }
             SortGroups();
@@ -392,14 +492,10 @@ namespace FlaxEditor.Surface.ContextMenu
 
             // If no item is selected (or it's not visible anymore), select the top one
             Profiler.BeginEvent("VisjectCM.Layout");
-            if (SelectedItem == null || !SelectedItem.VisibleInHierarchy)
-                SelectedItem = _groups.Find(g => g.Visible)?.Children.Find(c => c.Visible && c is VisjectCMItem) as VisjectCMItem;
+            SelectedItem = _groups.Find(g => g.Visible)?.Children.Find(c => c.Visible && c is VisjectCMItem) as VisjectCMItem;
+            PerformLayout();
             if (SelectedItem != null)
                 _panel1.ScrollViewTo(SelectedItem);
-            PerformLayout();
-            _searchBox.Focus();
-            Profiler.EndEvent();
-
             Profiler.EndEvent();
         }
 
@@ -457,7 +553,11 @@ namespace FlaxEditor.Surface.ContextMenu
             _searchBox.Clear();
             SelectedItem = null;
             for (int i = 0; i < _groups.Count; i++)
+            {
                 _groups[i].ResetView();
+                if (_contextSensitiveSearchEnabled)
+                    _groups[i].EvaluateVisibilityWithBox(_selectedBox);
+            }
             UnlockChildrenRecursive();
 
             SortGroups();
@@ -522,11 +622,9 @@ namespace FlaxEditor.Surface.ContextMenu
                     Archetypes = archetypes
                 };
 
-                var group = new VisjectCMGroup(this, groupArchetype)
-                {
-                    HeaderText = groupArchetype.Name
-                };
-
+                var group = CreateGroup(groupArchetype, false);
+                group.ArrowImageOpened = new SpriteBrush(Style.Current.ArrowDown);
+                group.ArrowImageClosed = new SpriteBrush(Style.Current.ArrowRight);
                 group.Close(false);
                 archetypeIndex = 0;
                 for (int i = 0; i < parameters.Count; i++)
@@ -559,7 +657,7 @@ namespace FlaxEditor.Surface.ContextMenu
         }
 
         /// <inheritdoc />
-        public override void Show(Control parent, Vector2 location)
+        public override void Show(Control parent, Float2 location)
         {
             Show(parent, location, null);
         }
@@ -570,7 +668,7 @@ namespace FlaxEditor.Surface.ContextMenu
         /// <param name="parent">Parent control to attach to it.</param>
         /// <param name="location">Popup menu origin location in parent control coordinates.</param>
         /// <param name="startBox">The currently selected box that the new node will get connected to. Can be null</param>
-        public void Show(Control parent, Vector2 location, Elements.Box startBox)
+        public void Show(Control parent, Float2 location, Elements.Box startBox)
         {
             _selectedBox = startBox;
             base.Show(parent, location);
@@ -605,7 +703,7 @@ namespace FlaxEditor.Surface.ContextMenu
                 Hide();
                 return true;
             }
-            else if (key == KeyboardKeys.Return)
+            else if (key == KeyboardKeys.Return || key == KeyboardKeys.Tab)
             {
                 if (SelectedItem != null)
                     OnClickItem(SelectedItem);
@@ -627,9 +725,7 @@ namespace FlaxEditor.Surface.ContextMenu
                     SelectedItem = previousSelectedItem;
 
                     // Scroll into view (without smoothing)
-                    _panel1.VScrollBar.SmoothingScale = 0;
-                    _panel1.ScrollViewTo(SelectedItem);
-                    _panel1.VScrollBar.SmoothingScale = 1;
+                    _panel1.ScrollViewTo(SelectedItem, true);
                 }
                 return true;
             }
@@ -714,6 +810,13 @@ namespace FlaxEditor.Surface.ContextMenu
         private IEnumerable<T> GetPreviousSiblings<T>(Control item) where T : Control
         {
             return GetPreviousSiblings(item).OfType<T>();
+        }
+
+        /// <inheritdoc />
+        public override void OnDestroy()
+        {
+            _contextSensitiveToggle.StateChanged -= OnContextSensitiveToggleStateChanged;
+            base.OnDestroy();
         }
     }
 }

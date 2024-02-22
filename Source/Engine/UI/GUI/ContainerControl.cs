@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -24,11 +24,20 @@ namespace FlaxEngine.GUI
         protected bool _containsFocus;
 
         /// <summary>
+        /// The layout locking flag.
+        /// </summary>
+        [NoSerialize]
+        protected bool _isLayoutLocked;
+
+        private bool _clipChildren = true;
+        private bool _cullChildren = true;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="ContainerControl"/> class.
         /// </summary>
         public ContainerControl()
         {
-            IsLayoutLocked = true;
+            _isLayoutLocked = true;
         }
 
         /// <summary>
@@ -37,23 +46,23 @@ namespace FlaxEngine.GUI
         public ContainerControl(float x, float y, float width, float height)
         : base(x, y, width, height)
         {
-            IsLayoutLocked = true;
+            _isLayoutLocked = true;
         }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ContainerControl"/> class.
         /// </summary>
-        public ContainerControl(Vector2 location, Vector2 size)
+        public ContainerControl(Float2 location, Float2 size)
         : base(location, size)
         {
-            IsLayoutLocked = true;
+            _isLayoutLocked = true;
         }
 
         /// <inheritdoc />
         public ContainerControl(Rectangle bounds)
         : base(bounds)
         {
-            IsLayoutLocked = true;
+            _isLayoutLocked = true;
         }
 
         /// <summary>
@@ -79,31 +88,40 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// True if automatic updates for control layout are locked (useful when creating a lot of GUI control to prevent lags).
         /// </summary>
-        [HideInEditor, NoSerialize]
-        public bool IsLayoutLocked { get; set; }
+        [HideInEditor, NoSerialize, NoAnimate]
+        public bool IsLayoutLocked
+        {
+            get => _isLayoutLocked;
+            set => _isLayoutLocked = value;
+        }
 
         /// <summary>
         /// Gets or sets a value indicating whether apply clipping mask on children during rendering.
         /// </summary>
         [EditorOrder(530), Tooltip("If checked, control will apply clipping mask on children during rendering.")]
-        public bool ClipChildren { get; set; } = true;
+        public bool ClipChildren
+        {
+            get => _clipChildren;
+            set => _clipChildren = value;
+        }
 
         /// <summary>
         /// Gets or sets a value indicating whether perform view culling on children during rendering.
         /// </summary>
         [EditorOrder(540), Tooltip("If checked, control will perform view culling on children during rendering.")]
-        public bool CullChildren { get; set; } = true;
+        public bool CullChildren
+        {
+            get => _cullChildren;
+            set => _cullChildren = value;
+        }
 
         /// <summary>
         /// Locks all child controls layout and itself.
         /// </summary>
         [NoAnimate]
-        public virtual void LockChildrenRecursive()
+        public void LockChildrenRecursive()
         {
-            // Itself
-            IsLayoutLocked = true;
-
-            // Every child container control
+            _isLayoutLocked = true;
             for (int i = 0; i < _children.Count; i++)
             {
                 if (_children[i] is ContainerControl child)
@@ -115,12 +133,9 @@ namespace FlaxEngine.GUI
         /// Unlocks all the child controls layout and itself.
         /// </summary>
         [NoAnimate]
-        public virtual void UnlockChildrenRecursive()
+        public void UnlockChildrenRecursive()
         {
-            // Itself
-            IsLayoutLocked = false;
-
-            // Every child container control
+            _isLayoutLocked = false;
             for (int i = 0; i < _children.Count; i++)
             {
                 if (_children[i] is ContainerControl child)
@@ -134,8 +149,8 @@ namespace FlaxEngine.GUI
         [NoAnimate]
         public virtual void RemoveChildren()
         {
-            bool wasLayoutLocked = IsLayoutLocked;
-            IsLayoutLocked = true;
+            bool wasLayoutLocked = _isLayoutLocked;
+            _isLayoutLocked = true;
 
             // Delete children
             while (_children.Count > 0)
@@ -143,7 +158,7 @@ namespace FlaxEngine.GUI
                 _children[0].Parent = null;
             }
 
-            IsLayoutLocked = wasLayoutLocked;
+            _isLayoutLocked = wasLayoutLocked;
             PerformLayout();
         }
 
@@ -152,8 +167,8 @@ namespace FlaxEngine.GUI
         /// </summary>
         public virtual void DisposeChildren()
         {
-            bool wasLayoutLocked = IsLayoutLocked;
-            IsLayoutLocked = true;
+            bool wasLayoutLocked = _isLayoutLocked;
+            _isLayoutLocked = true;
 
             // Delete children
             while (_children.Count > 0)
@@ -161,7 +176,7 @@ namespace FlaxEngine.GUI
                 _children[0].Dispose();
             }
 
-            IsLayoutLocked = wasLayoutLocked;
+            _isLayoutLocked = wasLayoutLocked;
             PerformLayout();
         }
 
@@ -249,11 +264,10 @@ namespace FlaxEngine.GUI
         internal void ChangeChildIndex(Control child, int newIndex)
         {
             int oldIndex = _children.IndexOf(child);
-            if (oldIndex == newIndex)
+            if (oldIndex == newIndex || oldIndex == -1)
                 return;
             _children.RemoveAt(oldIndex);
 
-            // Check if index is invalid
             if (newIndex < 0 || newIndex >= _children.Count)
             {
                 // Append at the end
@@ -273,14 +287,12 @@ namespace FlaxEngine.GUI
         /// </summary>
         /// <param name="point">The local point to check.</param>
         /// <returns>The found control index or -1 if failed.</returns>
-        public int GetChildIndexAt(Vector2 point)
+        public int GetChildIndexAt(Float2 point)
         {
             int result = -1;
             for (int i = _children.Count - 1; i >= 0; i--)
             {
                 var child = _children[i];
-
-                // Check collision
                 if (IntersectsChildContent(child, point, out var childLocation))
                 {
                     result = i;
@@ -295,7 +307,7 @@ namespace FlaxEngine.GUI
         /// </summary>
         /// <param name="point">The local point to check.</param>
         /// <returns>The found control or null.</returns>
-        public Control GetChildAt(Vector2 point)
+        public Control GetChildAt(Float2 point)
         {
             Control result = null;
             for (int i = _children.Count - 1; i >= 0; i--)
@@ -316,7 +328,7 @@ namespace FlaxEngine.GUI
         /// <param name="point">The local point to check.</param>
         /// <param name="isValid">The control validation callback.</param>
         /// <returns>The found control or null.</returns>
-        public Control GetChildAt(Vector2 point, Func<Control, bool> isValid)
+        public Control GetChildAt(Float2 point, Func<Control, bool> isValid)
         {
             if (isValid == null)
                 throw new ArgumentNullException(nameof(isValid));
@@ -338,7 +350,7 @@ namespace FlaxEngine.GUI
         /// </summary>
         /// <param name="point">The local point to check.</param>
         /// <returns>The found control or null.</returns>
-        public Control GetChildAtRecursive(Vector2 point)
+        public Control GetChildAtRecursive(Float2 point)
         {
             Control result = null;
             for (int i = _children.Count - 1; i >= 0; i--)
@@ -348,7 +360,7 @@ namespace FlaxEngine.GUI
                 {
                     var containerControl = child as ContainerControl;
                     var childAtRecursive = containerControl?.GetChildAtRecursive(childLocation);
-                    if (childAtRecursive != null)
+                    if (childAtRecursive != null && childAtRecursive.Visible)
                     {
                         child = childAtRecursive;
                     }
@@ -436,6 +448,8 @@ namespace FlaxEngine.GUI
         internal virtual void AddChildInternal(Control child)
         {
             Assert.IsNotNull(child, "Invalid control.");
+            if (Parent == child)
+                throw new InvalidOperationException();
 
             // Add child
             _children.Add(child);
@@ -463,7 +477,7 @@ namespace FlaxEngine.GUI
         /// <param name="rect">The client area rectangle for child controls.</param>
         public virtual void GetDesireClientArea(out Rectangle rect)
         {
-            rect = new Rectangle(Vector2.Zero, Size);
+            rect = new Rectangle(Float2.Zero, Size);
         }
 
         /// <summary>
@@ -474,10 +488,173 @@ namespace FlaxEngine.GUI
         /// <param name="location">The location in this container control space.</param>
         /// <param name="childSpaceLocation">The output location in child control space.</param>
         /// <returns>True if point is over the control content, otherwise false.</returns>
-        public virtual bool IntersectsChildContent(Control child, Vector2 location, out Vector2 childSpaceLocation)
+        public virtual bool IntersectsChildContent(Control child, Float2 location, out Float2 childSpaceLocation)
         {
             return child.IntersectsContent(ref location, out childSpaceLocation);
         }
+
+        #region Navigation
+
+        /// <inheritdoc />
+        public override Control OnNavigate(NavDirection direction, Float2 location, Control caller, List<Control> visited)
+        {
+            // Try to focus itself first (only if navigation focus can enter this container)
+            if (AutoFocus && !ContainsFocus)
+                return this;
+
+            // Try to focus children
+            if (_children.Count != 0 && !visited.Contains(this))
+            {
+                visited.Add(this);
+
+                // Perform automatic navigation based on the layout
+                var result = NavigationRaycast(direction, location, visited);
+                var rightMostLocation = location;
+                if (result == null && (direction == NavDirection.Next || direction == NavDirection.Previous))
+                {
+                    // Try wrap the navigation over the layout based on the direction
+                    var visitedWrap = new List<Control>(visited);
+                    result = NavigationWrap(direction, location, visitedWrap, out rightMostLocation);
+                }
+                if (result != null)
+                {
+                    // HACK: only the 'previous' direction needs the rightMostLocation so i used a ternary conditional operator.
+                    // The rightMostLocation can probably become a 'desired raycast origin' that gets calculated correctly in the NavigationWrap method.
+                    var useLocation = direction == NavDirection.Previous ? rightMostLocation : location;
+                    result = result.OnNavigate(direction, result.PointFromParent(useLocation), this, visited);
+                    if (result != null)
+                        return result;
+                }
+            }
+
+            // Try to focus itself
+            if (AutoFocus && !IsFocused || caller == this)
+                return this;
+
+            // Route navigation to parent
+            var parent = Parent;
+            if (AutoFocus && Visible)
+            {
+                // Focusable container controls use own nav origin instead of the provided one
+                location = GetNavOrigin(direction);
+            }
+            return parent?.OnNavigate(direction, PointToParent(location), caller, visited);
+        }
+
+        /// <summary>
+        /// Checks if this container control can more with focus navigation into the given child control.
+        /// </summary>
+        /// <param name="child">The child.</param>
+        /// <returns>True if can navigate to it, otherwise false.</returns>
+        protected virtual bool CanNavigateChild(Control child)
+        {
+            return !child.IsFocused && child.Enabled && child.Visible && CanGetAutoFocus(child);
+        }
+
+        /// <summary>
+        /// Wraps the navigation over the layout.
+        /// </summary>
+        /// <param name="direction">The navigation direction.</param>
+        /// <param name="location">The navigation start location (in the control-space).</param>
+        /// <param name="visited">The list with visited controls. Used to skip recursive navigation calls when doing traversal across the UI hierarchy.</param>
+        /// <param name="rightMostLocation">Returns the rightmost location of the parent container for the raycast used by the child container</param>
+        /// <returns>The target navigation control or null if didn't performed any navigation.</returns>
+        protected virtual Control NavigationWrap(NavDirection direction, Float2 location, List<Control> visited, out Float2 rightMostLocation)
+        {
+            // This searches form a child that calls this navigation event (see Control.OnNavigate) to determinate the layout wrapping size based on that child size
+            var currentChild = RootWindow?.FocusedControl;
+            visited.Add(this);
+            if (currentChild != null)
+            {
+                var layoutSize = currentChild.Size;
+                var predictedLocation = Float2.Minimum;
+                switch (direction)
+                {
+                case NavDirection.Next:
+                    predictedLocation = new Float2(0, location.Y + layoutSize.Y);
+                    break;
+                case NavDirection.Previous:
+                    predictedLocation = new Float2(Size.X, location.Y - layoutSize.Y);
+                    break;
+                }
+                if (new Rectangle(Float2.Zero, Size).Contains(ref predictedLocation))
+                {
+                    var result = NavigationRaycast(direction, predictedLocation, visited);
+                    if (result != null)
+                    {
+                        rightMostLocation = predictedLocation;
+                        return result;   
+                    }
+                }
+            }
+            rightMostLocation = location;
+            return Parent?.NavigationWrap(direction, PointToParent(ref location), visited, out rightMostLocation);
+        }
+
+        private static bool CanGetAutoFocus(Control c)
+        {
+            if (c.AutoFocus)
+                return true;
+            if (c is ContainerControl cc)
+            {
+                for (int i = 0; i < cc.Children.Count; i++)
+                {
+                    if (cc.CanNavigateChild(cc.Children[i]))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private Control NavigationRaycast(NavDirection direction, Float2 location, List<Control> visited)
+        {
+            Float2 uiDir1 = Float2.Zero, uiDir2 = Float2.Zero;
+            switch (direction)
+            {
+            case NavDirection.Up:
+                uiDir1 = uiDir2 = new Float2(0, -1);
+                break;
+            case NavDirection.Down:
+                uiDir1 = uiDir2 = new Float2(0, 1);
+                break;
+            case NavDirection.Left:
+                uiDir1 = uiDir2 = new Float2(-1, 0);
+                break;
+            case NavDirection.Right:
+                uiDir1 = uiDir2 = new Float2(1, 0);
+                break;
+            case NavDirection.Next:
+                uiDir1 = new Float2(1, 0);
+                uiDir2 = new Float2(0, 1);
+                break;
+            case NavDirection.Previous:
+                uiDir1 = new Float2(-1, 0);
+                uiDir2 = new Float2(0, -1);
+                break;
+            }
+            Control result = null;
+            var minDistance = float.MaxValue;
+            for (var i = 0; i < _children.Count; i++)
+            {
+                var child = _children[i];
+                if (!CanNavigateChild(child) || visited.Contains(child))
+                    continue;
+                var childNavLocation = child.Center;
+                var childBounds = child.Bounds;
+                var childNavDirection = Float2.Normalize(childNavLocation - location);
+                var childNavCoherence1 = Float2.Dot(ref uiDir1, ref childNavDirection);
+                var childNavCoherence2 = Float2.Dot(ref uiDir2, ref childNavDirection);
+                var distance = Rectangle.Distance(childBounds, location);
+                if (childNavCoherence1 > Mathf.Epsilon && childNavCoherence2 > Mathf.Epsilon && distance < minDistance)
+                {
+                    minDistance = distance;
+                    result = child;
+                }
+            }
+            return result;
+        }
+
+        #endregion
 
         /// <summary>
         /// Update contain focus state and all it's children
@@ -489,20 +666,17 @@ namespace FlaxEngine.GUI
 
             for (int i = 0; i < _children.Count; i++)
             {
-                if (_children[i] is ContainerControl child)
+                var control = _children[i];
+                if (control is ContainerControl child)
                     child.UpdateContainsFocus();
-
-                if (_children[i].ContainsFocus)
+                if (control.ContainsFocus)
                     result = true;
             }
 
             // Check if state has been changed
             if (result != _containsFocus)
             {
-                // Cache flag
                 _containsFocus = result;
-
-                // Fire event
                 if (result)
                 {
                     OnStartContainsFocus();
@@ -553,6 +727,12 @@ namespace FlaxEngine.GUI
                 Focus();
             }
 
+            // Disable layout
+            if (!_isLayoutLocked)
+            {
+                LockChildrenRecursive();
+            }
+
             base.OnDestroy();
 
             // Pass event further
@@ -561,24 +741,6 @@ namespace FlaxEngine.GUI
                 _children[i].OnDestroy();
             }
             _children.Clear();
-        }
-
-        /// <inheritdoc />
-        public override bool IsMouseOver
-        {
-            get
-            {
-                if (base.IsMouseOver)
-                    return true;
-
-                for (int i = 0; i < _children.Count && _children.Count > 0; i++)
-                {
-                    if (_children[i].IsMouseOver)
-                        return true;
-                }
-
-                return false;
-            }
         }
 
         /// <inheritdoc />
@@ -612,6 +774,20 @@ namespace FlaxEngine.GUI
             }
         }
 
+        /// <inheritdoc />
+        public override void ClearState()
+        {
+            base.ClearState();
+
+            // Clear state for any nested controls
+            for (int i = 0; i < _children.Count; i++)
+            {
+                var child = _children[i];
+                //if (child.Enabled && child.Enabled)
+                    child.ClearState();
+            }
+        }
+
         /// <summary>
         /// Draw the control and the children.
         /// </summary>
@@ -619,7 +795,7 @@ namespace FlaxEngine.GUI
         {
             DrawSelf();
 
-            if (ClipChildren)
+            if (_clipChildren)
             {
                 GetDesireClientArea(out var clientArea);
                 Render2D.PushClip(ref clientArea);
@@ -646,13 +822,14 @@ namespace FlaxEngine.GUI
         protected virtual void DrawChildren()
         {
             // Draw all visible child controls
-            if (CullChildren)
+            var children = _children;
+            if (_cullChildren)
             {
                 Render2D.PeekClip(out var globalClipping);
                 Render2D.PeekTransform(out var globalTransform);
-                for (int i = 0; i < _children.Count; i++)
+                for (int i = 0; i < children.Count; i++)
                 {
-                    var child = _children[i];
+                    var child = children[i];
                     if (child.Visible)
                     {
                         Matrix3x3.Multiply(ref child._cachedTransform, ref globalTransform, out var globalChildTransform);
@@ -668,9 +845,9 @@ namespace FlaxEngine.GUI
             }
             else
             {
-                for (int i = 0; i < _children.Count; i++)
+                for (int i = 0; i < children.Count; i++)
                 {
-                    var child = _children[i];
+                    var child = children[i];
                     if (child.Visible)
                     {
                         Render2D.PushTransform(ref child._cachedTransform);
@@ -684,10 +861,10 @@ namespace FlaxEngine.GUI
         /// <inheritdoc />
         public override void PerformLayout(bool force = false)
         {
-            if (IsLayoutLocked && !force)
+            if (_isLayoutLocked && !force)
                 return;
 
-            bool wasLocked = IsLayoutLocked;
+            bool wasLocked = _isLayoutLocked;
             if (!wasLocked)
                 LockChildrenRecursive();
 
@@ -703,7 +880,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseEnter(Vector2 location)
+        public override void OnMouseEnter(Float2 location)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -711,7 +888,6 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
                         // Enter
@@ -724,7 +900,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -732,7 +908,6 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire events
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
                         if (child.IsMouseOver)
@@ -775,7 +950,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseWheel(Vector2 location, float delta)
+        public override bool OnMouseWheel(Float2 location, float delta)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -783,10 +958,8 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire events
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
-                        // Wheel
                         if (child.OnMouseWheel(childLocation, delta))
                         {
                             return true;
@@ -794,12 +967,11 @@ namespace FlaxEngine.GUI
                     }
                 }
             }
-
-            return base.OnMouseWheel(location, delta);
+            return false;
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -807,10 +979,8 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
-                        // Send event further
                         if (child.OnMouseDown(childLocation, button))
                         {
                             return true;
@@ -818,12 +988,11 @@ namespace FlaxEngine.GUI
                     }
                 }
             }
-
-            return base.OnMouseDown(location, button);
+            return false;
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -831,10 +1000,8 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
-                        // Send event further
                         if (child.OnMouseUp(childLocation, button))
                         {
                             return true;
@@ -842,12 +1009,11 @@ namespace FlaxEngine.GUI
                     }
                 }
             }
-
-            return base.OnMouseUp(location, button);
+            return false;
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             // Check all children collisions with mouse and fire events for them
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
@@ -855,10 +1021,8 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
-                        // Send event further
                         if (child.OnMouseDoubleClick(childLocation, button))
                         {
                             return true;
@@ -866,8 +1030,7 @@ namespace FlaxEngine.GUI
                     }
                 }
             }
-
-            return base.OnMouseDoubleClick(location, button);
+            return false;
         }
 
         /// <inheritdoc />
@@ -886,7 +1049,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnTouchEnter(Vector2 location, int pointerId)
+        public override void OnTouchEnter(Float2 location, int pointerId)
         {
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
             {
@@ -904,7 +1067,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnTouchDown(Vector2 location, int pointerId)
+        public override bool OnTouchDown(Float2 location, int pointerId)
         {
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
             {
@@ -929,7 +1092,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnTouchMove(Vector2 location, int pointerId)
+        public override void OnTouchMove(Float2 location, int pointerId)
         {
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
             {
@@ -958,7 +1121,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnTouchUp(Vector2 location, int pointerId)
+        public override bool OnTouchUp(Float2 location, int pointerId)
         {
             for (int i = _children.Count - 1; i >= 0 && _children.Count > 0; i--)
             {
@@ -1036,7 +1199,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             // Base
             var result = base.OnDragEnter(ref location, data);
@@ -1047,7 +1210,6 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
                         // Enter
@@ -1062,7 +1224,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             // Base
             var result = base.OnDragMove(ref location, data);
@@ -1073,7 +1235,6 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire events
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
                         if (child.IsDragOver)
@@ -1121,7 +1282,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             // Base
             var result = base.OnDragDrop(ref location, data);
@@ -1132,7 +1293,6 @@ namespace FlaxEngine.GUI
                 var child = _children[i];
                 if (child.Visible && child.Enabled)
                 {
-                    // Fire event
                     if (IntersectsChildContent(child, location, out var childLocation))
                     {
                         // Enter
@@ -1150,10 +1310,9 @@ namespace FlaxEngine.GUI
         protected override void OnSizeChanged()
         {
             // Lock updates to prevent additional layout calculations
-            bool wasLayoutLocked = IsLayoutLocked;
-            IsLayoutLocked = true;
+            bool wasLayoutLocked = _isLayoutLocked;
+            _isLayoutLocked = true;
 
-            // Base
             base.OnSizeChanged();
 
             // Fire event
@@ -1163,7 +1322,7 @@ namespace FlaxEngine.GUI
             }
 
             // Restore state
-            IsLayoutLocked = wasLayoutLocked;
+            _isLayoutLocked = wasLayoutLocked;
 
             // Arrange child controls
             PerformLayout();

@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using FlaxEngine;
 using FlaxEditor.Surface.Elements;
 using FlaxEditor.Surface.Undo;
@@ -36,9 +34,10 @@ namespace FlaxEditor.Surface
         /// Uses the Sugiyama method
         /// </summary>
         /// <param name="nodes">List of nodes</param>
-        protected void FormatGraph(List<SurfaceNode> nodes)
+        public void FormatGraph(List<SurfaceNode> nodes)
         {
-            if (nodes.Count <= 1 || !CanEdit) return;
+            if (nodes.Count <= 1)
+                return;
 
             var nodesToVisit = new HashSet<SurfaceNode>(nodes);
 
@@ -70,7 +69,6 @@ namespace FlaxEditor.Surface
                                     queue.Enqueue(box.Connections[j].ParentNode);
                                 }
                             }
-
                         }
                     }
                 }
@@ -85,7 +83,8 @@ namespace FlaxEditor.Surface
         /// <param name="nodes">List of connected nodes</param>
         protected void FormatConnectedGraph(List<SurfaceNode> nodes)
         {
-            if (nodes.Count <= 1 || !CanEdit) return;
+            if (nodes.Count <= 1)
+                return;
 
             var boundingBox = GetNodesBounds(nodes);
 
@@ -93,9 +92,9 @@ namespace FlaxEditor.Surface
 
             // Rightmost nodes with none of our nodes to the right of them
             var endNodes = nodes
-                    .Where(n => !n.GetBoxes().Any(b => b.IsOutput && b.Connections.Any(c => nodeData.ContainsKey(c.ParentNode))))
-                    .OrderBy(n => n.Top) // Keep their relative order
-                    .ToList();
+                           .Where(n => !n.GetBoxes().Any(b => b.IsOutput && b.Connections.Any(c => nodeData.ContainsKey(c.ParentNode))))
+                           .OrderBy(n => n.Top) // Keep their relative order
+                           .ToList();
 
             // Longest path layering
             int maxLayer = SetLayers(nodeData, endNodes);
@@ -123,7 +122,7 @@ namespace FlaxEditor.Surface
                 }
             }
 
-            Vector2 minDistanceBetweenNodes = new Vector2(30, 30);
+            var minDistanceBetweenNodes = new Float2(30, 30);
 
             // Figure out the node positions (aligned to a grid)
             float[] nodeXPositions = new float[widths.Length];
@@ -147,8 +146,8 @@ namespace FlaxEditor.Surface
             {
                 if (nodeData.TryGetValue(nodes[i], out var data))
                 {
-                    Vector2 newLocation = new Vector2(-nodeXPositions[data.Layer], nodeYPositions[data.Offset]) + topRightPosition;
-                    Vector2 locationDelta = newLocation - nodes[i].Location;
+                    var newLocation = new Float2(-nodeXPositions[data.Layer], nodeYPositions[data.Offset]) + topRightPosition;
+                    var locationDelta = newLocation - nodes[i].Location;
                     nodes[i].Location = newLocation;
 
                     if (Undo != null)
@@ -219,7 +218,8 @@ namespace FlaxEditor.Surface
 
             void SetOffsets(SurfaceNode node, NodeFormattingData straightParentData)
             {
-                if (!nodeData.TryGetValue(node, out var data)) return;
+                if (!nodeData.TryGetValue(node, out var data))
+                    return;
 
                 // If we realize that the current node would collide with an already existing node in this layer
                 if (data.Layer >= 0 && offsets[data.Layer] > data.Offset)
@@ -282,6 +282,5 @@ namespace FlaxEditor.Surface
 
             return maxOffset;
         }
-
     }
 }

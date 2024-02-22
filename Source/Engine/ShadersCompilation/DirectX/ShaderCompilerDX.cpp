@@ -1,15 +1,18 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_DX_SHADER_COMPILER
 
 #include "ShaderCompilerDX.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Threading/Threading.h"
+#include "Engine/Engine/Globals.h"
 #include "Engine/Graphics/Config.h"
 #include "Engine/GraphicsDevice/DirectX/DX12/Types.h"
 #include "Engine/Utilities/StringConverter.h"
 #include "Engine/Platform/Win32/IncludeWindowsHeaders.h"
 #include "Engine/Platform/Windows/ComPtr.h"
+#include "Engine/Platform/FileSystem.h"
+#include "Engine/Platform/File.h"
 #include <d3d12shader.h>
 #include <ThirdParty/DirectXShaderCompiler/dxcapi.h>
 
@@ -173,6 +176,13 @@ bool ShaderCompilerDX::CompileShader(ShaderFunctionMeta& meta, WritePermutationD
     args.Add(entryPoint.Get());
     args.Add(options->TargetName.Get());
     Array<const Char*, InlinedAllocation<250>> argsFull;
+    String debugOutputFolder;
+    if (_context->Options->GenerateDebugData)
+    {
+        debugOutputFolder = Globals::ProjectCacheFolder / TEXT("Shaders") / TEXT("DXC");
+        if (!FileSystem::DirectoryExists(debugOutputFolder))
+            FileSystem::CreateDirectory(debugOutputFolder);
+    }
 
     // Compile all shader function permutations
     for (int32 permutationIndex = 0; permutationIndex < meta.Permutations.Count(); permutationIndex++)
@@ -274,6 +284,15 @@ bool ShaderCompilerDX::CompileShader(ShaderFunctionMeta& meta, WritePermutationD
             _context->OnCollectDebugInfo(meta, permutationIndex, (const char*)disassemblyUtf8->GetBufferPointer(), (int32)disassemblyUtf8->GetBufferSize());
         }
 #endif
+        if (_context->Options->GenerateDebugData)
+        {
+            ComPtr<IDxcBlob> pdbBlob;
+            ComPtr<IDxcBlobUtf16> pdbName;
+            if (results->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(pdbBlob.GetAddressOf()), pdbName.GetAddressOf()) == S_OK)
+            {
+                File::WriteAllBytes(debugOutputFolder / String(pdbName->GetStringPointer(), (int32)pdbName->GetStringLength()), (byte*)pdbBlob->GetBufferPointer(), (int32)pdbBlob->GetBufferSize());
+            }
+        }
 
         // Perform shader reflection
         if (FAILED(containerReflection->Load(shaderBuffer)))
@@ -362,13 +381,19 @@ bool ShaderCompilerDX::CompileShader(ShaderFunctionMeta& meta, WritePermutationD
 
                 // Shader Resource
             case D3D_SIT_TEXTURE:
-                bindings.UsedSRsMask |= 1 << resDesc.BindPoint;
-                header.SrDimensions[resDesc.BindPoint] = resDesc.Dimension;
+                for (UINT shift = 0; shift < resDesc.BindCount; shift++)
+                {
+                    bindings.UsedSRsMask |= 1 << (resDesc.BindPoint + shift);
+                    header.SrDimensions[resDesc.BindPoint + shift] = resDesc.Dimension;
+                }
                 break;
             case D3D_SIT_STRUCTURED:
             case D3D_SIT_BYTEADDRESS:
-                bindings.UsedSRsMask |= 1 << resDesc.BindPoint;
-                header.SrDimensions[resDesc.BindPoint] = D3D_SRV_DIMENSION_BUFFER;
+                for (UINT shift = 0; shift < resDesc.BindCount; shift++)
+                {
+                    bindings.UsedSRsMask |= 1 << (resDesc.BindPoint + shift);
+                    header.SrDimensions[resDesc.BindPoint + shift] = D3D_SRV_DIMENSION_BUFFER;
+                }
                 break;
 
                 // Unordered Access
@@ -378,30 +403,10 @@ bool ShaderCompilerDX::CompileShader(ShaderFunctionMeta& meta, WritePermutationD
             case D3D_SIT_UAV_APPEND_STRUCTURED:
             case D3D_SIT_UAV_CONSUME_STRUCTURED:
             case D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER:
-                bindings.UsedUAsMask |= 1 << resDesc.BindPoint;
-                switch (resDesc.Dimension)
+                for (UINT shift = 0; shift < resDesc.BindCount; shift++)
                 {
-                case D3D_SRV_DIMENSION_BUFFER:
-                    header.UaDimensions[resDesc.BindPoint] = 1; // D3D12_UAV_DIMENSION_BUFFER;
-                    break;
-                case D3D_SRV_DIMENSION_TEXTURE1D:
-                    header.UaDimensions[resDesc.BindPoint] = 2; // D3D12_UAV_DIMENSION_TEXTURE1D;
-                    break;
-                case D3D_SRV_DIMENSION_TEXTURE1DARRAY:
-                    header.UaDimensions[resDesc.BindPoint] = 3; // D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-                    break;
-                case D3D_SRV_DIMENSION_TEXTURE2D:
-                    header.UaDimensions[resDesc.BindPoint] = 4; // D3D12_UAV_DIMENSION_TEXTURE2D;
-                    break;
-                case D3D_SRV_DIMENSION_TEXTURE2DARRAY:
-                    header.UaDimensions[resDesc.BindPoint] = 5; // D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-                    break;
-                case D3D_SRV_DIMENSION_TEXTURE3D:
-                    header.UaDimensions[resDesc.BindPoint] = 8; // D3D12_UAV_DIMENSION_TEXTURE3D;
-                    break;
-                default:
-                    LOG(Error, "Unknown UAV resource {2} of type {0} at slot {1}", resDesc.Dimension, resDesc.BindPoint, String(resDesc.Name));
-                    return true;
+                    bindings.UsedUAsMask |= 1 << (resDesc.BindPoint + shift);
+                    header.UaDimensions[resDesc.BindPoint + shift] = (byte)resDesc.Dimension; // D3D_SRV_DIMENSION matches D3D12_UAV_DIMENSION
                 }
                 break;
             }

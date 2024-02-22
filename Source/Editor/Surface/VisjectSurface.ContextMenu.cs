@@ -1,8 +1,12 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+
+//#define DEBUG_SEARCH_TIME
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using FlaxEditor.GUI.ContextMenu;
+using FlaxEditor.Scripting;
 using FlaxEditor.Surface.ContextMenu;
 using FlaxEditor.Surface.Elements;
 using FlaxEditor.Surface.Undo;
@@ -13,12 +17,184 @@ namespace FlaxEditor.Surface
 {
     public partial class VisjectSurface
     {
+        /// <summary>
+        /// Utility for easy nodes archetypes generation for Visject Surface based on scripting types.
+        /// </summary>
+        [HideInEditor]
+        public class NodesCache
+        {
+            /// <summary>
+            /// Delegate for scripting types filtering into cache.
+            /// </summary>
+            /// <param name="scriptType">The input type to process.</param>
+            /// <param name="cache">Node groups cache that can be used for reusing groups for different nodes.</param>
+            /// <param name="version">The cache version number. Can be used to reject any cached data after <see cref="NodesCache"/> rebuilt.</param>
+            public delegate void IterateType(ScriptType scriptType, Dictionary<KeyValuePair<string, ushort>, GroupArchetype> cache, int version);
+
+            internal static readonly List<NodesCache> Caches = new List<NodesCache>(8);
+
+            private readonly object _locker = new object();
+            private readonly IterateType _iterator;
+            private int _version;
+            private Task _task;
+            private VisjectCM _taskContextMenu;
+            private Dictionary<KeyValuePair<string, ushort>, GroupArchetype> _cache;
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="NodesCache"/> class.
+            /// </summary>
+            /// <param name="iterator">The iterator callback to build node types from Scripting.</param>
+            public NodesCache(IterateType iterator)
+            {
+                _iterator = iterator;
+            }
+
+            /// <summary>
+            /// Waits for the async caching job to finish.
+            /// </summary>
+            public void Wait()
+            {
+                if (_task != null)
+                {
+                    Profiler.BeginEvent("Setup Context Menu");
+                    _task.Wait();
+                    Profiler.EndEvent();
+                }
+            }
+
+            /// <summary>
+            /// Clears cache.
+            /// </summary>
+            public void Clear()
+            {
+                Wait();
+
+                if (_cache != null && _cache.Count != 0)
+                {
+                    OnCodeEditingTypesCleared();
+                }
+                lock (_locker)
+                {
+                    Caches.Remove(this);
+                }
+            }
+
+            /// <summary>
+            /// Updates the Visject Context Menu to contain current nodes.
+            /// </summary>
+            /// <param name="contextMenu">The output context menu to setup.</param>
+            public void Get(VisjectCM contextMenu)
+            {
+                Profiler.BeginEvent("Setup Context Menu");
+
+                Wait();
+
+                lock (_locker)
+                {
+                    if (_cache == null)
+                    {
+                        if (!Caches.Contains(this))
+                            Caches.Add(this);
+                        _cache = new Dictionary<KeyValuePair<string, ushort>, GroupArchetype>();
+                    }
+                    contextMenu.LockChildrenRecursive();
+
+                    // Check if has cached groups
+                    if (_cache.Count != 0)
+                    {
+                        // Check if context menu doesn't have the recent cached groups
+                        if (!contextMenu.Groups.Any(g => g.Archetypes[0].Tag is int asInt && asInt == _version))
+                        {
+                            var groups = contextMenu.Groups.Where(g => g.Archetypes.Count != 0 && g.Archetypes[0].Tag is int).ToArray();
+                            foreach (var g in groups)
+                                contextMenu.RemoveGroup(g);
+                            foreach (var g in _cache.Values)
+                                contextMenu.AddGroup(g);
+                        }
+                    }
+                    else
+                    {
+                        // Remove any old groups from context menu
+                        var groups = contextMenu.Groups.Where(g => g.Archetypes.Count != 0 && g.Archetypes[0].Tag is int).ToArray();
+                        foreach (var g in groups)
+                            contextMenu.RemoveGroup(g);
+
+                        // Register for scripting types reload
+                        Editor.Instance.CodeEditing.TypesCleared += OnCodeEditingTypesCleared;
+
+                        // Run caching on an async
+                        _task = Task.Run(OnActiveContextMenuShowAsync);
+                        _taskContextMenu = contextMenu;
+                    }
+
+                    contextMenu.UnlockChildrenRecursive();
+                }
+
+                Profiler.EndEvent();
+            }
+
+            private void OnActiveContextMenuShowAsync()
+            {
+                Profiler.BeginEvent("Setup Context Menu (async)");
+#if DEBUG_SEARCH_TIME
+                var searchStartTime = DateTime.Now;
+#endif
+
+                foreach (var scriptType in Editor.Instance.CodeEditing.All.Get())
+                {
+                    if (!SurfaceUtils.IsValidVisualScriptType(scriptType))
+                        continue;
+
+                    _iterator(scriptType, _cache, _version);
+                }
+
+                // Add group to context menu (on a main thread)
+                FlaxEngine.Scripting.InvokeOnUpdate(() =>
+                {
+#if DEBUG_SEARCH_TIME
+                    var addStartTime = DateTime.Now;
+#endif
+                    lock (_locker)
+                    {
+                        _taskContextMenu.AddGroups(_cache.Values);
+                        _taskContextMenu = null;
+                    }
+#if DEBUG_SEARCH_TIME
+                    Editor.LogError($"Added items to VisjectCM in: {(DateTime.Now - addStartTime).TotalMilliseconds} ms");
+#endif
+                });
+
+#if DEBUG_SEARCH_TIME
+                Editor.LogError($"Collected items in: {(DateTime.Now - searchStartTime).TotalMilliseconds} ms");
+#endif
+                Profiler.EndEvent();
+
+                lock (_locker)
+                {
+                    _task = null;
+                }
+            }
+
+            private void OnCodeEditingTypesCleared()
+            {
+                Wait();
+
+                lock (_locker)
+                {
+                    _cache.Clear();
+                    _version++;
+                }
+
+                Editor.Instance.CodeEditing.TypesCleared -= OnCodeEditingTypesCleared;
+            }
+        }
+
         private ContextMenuButton _cmCopyButton;
         private ContextMenuButton _cmDuplicateButton;
         private ContextMenuButton _cmFormatNodesConnectionButton;
         private ContextMenuButton _cmRemoveNodeConnectionsButton;
         private ContextMenuButton _cmRemoveBoxConnectionsButton;
-        private readonly Vector2 ContextMenuOffset = new Vector2(5);
+        private readonly Float2 ContextMenuOffset = new Float2(5);
 
         /// <summary>
         /// Gets a value indicating whether the primary surface context menu is being opened (eg. user is adding nodes).
@@ -75,7 +251,7 @@ namespace FlaxEditor.Surface
         /// <param name="activeCM">The active context menu to show.</param>
         /// <param name="location">The display location on the surface control.</param>
         /// <param name="startBox">The start box.</param>
-        protected virtual void OnShowPrimaryMenu(VisjectCM activeCM, Vector2 location, Box startBox)
+        protected virtual void OnShowPrimaryMenu(VisjectCM activeCM, Float2 location, Box startBox)
         {
             activeCM.Show(this, location, startBox);
         }
@@ -86,7 +262,7 @@ namespace FlaxEditor.Surface
         /// <param name="location">The location in the Surface Space.</param>
         /// <param name="moveSurface">If the surface should be moved to accommodate for the menu.</param>
         /// <param name="input">The user text input for nodes search.</param>
-        public virtual void ShowPrimaryMenu(Vector2 location, bool moveSurface = false, string input = null)
+        public virtual void ShowPrimaryMenu(Float2 location, bool moveSurface = false, string input = null)
         {
             if (!CanEdit)
                 return;
@@ -103,8 +279,7 @@ namespace FlaxEditor.Surface
             if (moveSurface)
             {
                 const float leftPadding = 20;
-                Vector2 delta = Vector2.Min(location - leftPadding, Vector2.Zero) +
-                                Vector2.Max((location + _activeVisjectCM.Size) - Size, Vector2.Zero);
+                var delta = Float2.Min(location - leftPadding, Float2.Zero) + Float2.Max((location + _activeVisjectCM.Size) - Size, Float2.Zero);
 
                 location -= delta;
                 _rootControl.Location -= delta;
@@ -132,7 +307,7 @@ namespace FlaxEditor.Surface
         /// </summary>
         /// <param name="location">The location in the Surface Space.</param>
         /// <param name="controlUnderMouse">The Surface Control that is under the cursor. Used to customize the menu.</param>
-        public virtual void ShowSecondaryCM(Vector2 location, SurfaceControl controlUnderMouse)
+        public virtual void ShowSecondaryCM(Float2 location, SurfaceControl controlUnderMouse)
         {
             var selection = SelectedNodes;
             if (selection.Count == 0)
@@ -141,8 +316,11 @@ namespace FlaxEditor.Surface
             // Create secondary context menu
             var menu = new FlaxEditor.GUI.ContextMenu.ContextMenu();
 
-            menu.AddButton("Save", _onSave).Enabled = CanEdit;
-            menu.AddSeparator();
+            if (_onSave != null)
+            {
+                menu.AddButton("Save", _onSave).Enabled = CanEdit;
+                menu.AddSeparator();
+            }
             _cmCopyButton = menu.AddButton("Copy", Copy);
             menu.AddButton("Paste", Paste).Enabled = CanEdit && CanPaste();
             _cmDuplicateButton = menu.AddButton("Duplicate", Duplicate);
@@ -219,13 +397,9 @@ namespace FlaxEditor.Surface
             }
             menu.AddSeparator();
 
-            _cmFormatNodesConnectionButton = menu.AddButton("Format node(s)", () =>
-            {
-                FormatGraph(SelectedNodes);
-            });
-            _cmFormatNodesConnectionButton.Enabled = HasNodesSelection;
+            _cmFormatNodesConnectionButton = menu.AddButton("Format node(s)", () => { FormatGraph(SelectedNodes); });
+            _cmFormatNodesConnectionButton.Enabled = CanEdit && HasNodesSelection;
 
-            menu.AddSeparator();
             _cmRemoveNodeConnectionsButton = menu.AddButton("Remove all connections to that node(s)", () =>
             {
                 var nodes = ((List<SurfaceNode>)menu.Tag);
@@ -422,9 +596,8 @@ namespace FlaxEditor.Surface
                 Select(nextBox.ParentNode);
                 nextBox.ParentNode.SelectBox(nextBox);
 
-                Vector2 padding = new Vector2(20);
-                Vector2 delta = Vector2.Min(_rootControl.PointToParent(nextBox.ParentNode.Location) - padding, Vector2.Zero) +
-                                Vector2.Max((_rootControl.PointToParent(nextBox.ParentNode.BottomRight) + padding) - Size, Vector2.Zero);
+                var padding = new Float2(20);
+                var delta = Float2.Min(_rootControl.PointToParent(nextBox.ParentNode.Location) - padding, Float2.Zero) + Float2.Max((_rootControl.PointToParent(nextBox.ParentNode.BottomRight) + padding) - Size, Float2.Zero);
 
                 _rootControl.Location -= delta;
             }

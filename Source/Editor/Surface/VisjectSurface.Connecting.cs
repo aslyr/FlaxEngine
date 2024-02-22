@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.Scripting;
 using FlaxEngine;
@@ -14,7 +14,7 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// Gets the connection origin point (in surface node space).
         /// </summary>
-        Vector2 ConnectionOrigin { get; }
+        Float2 ConnectionOrigin { get; }
 
         /// <summary>
         /// Determines whether this surface object is connected with the specified other object.
@@ -36,7 +36,7 @@ namespace FlaxEditor.Surface
         /// <param name="startPos">The start position.</param>
         /// <param name="endPos">The end position.</param>
         /// <param name="color">The color.</param>
-        void DrawConnectingLine(ref Vector2 startPos, ref Vector2 endPos, ref Color color);
+        void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color);
 
         /// <summary>
         /// Created the new connection with the specified other object.
@@ -47,13 +47,7 @@ namespace FlaxEditor.Surface
 
     public partial class VisjectSurface
     {
-        /// <summary>
-        /// Checks if can use direct conversion from one type to another.
-        /// </summary>
-        /// <param name="from">Source type.</param>
-        /// <param name="to">Target type.</param>
-        /// <returns>True if can use direct conversion, otherwise false.</returns>
-        public bool CanUseDirectCast(ScriptType from, ScriptType to)
+        internal static bool CanUseDirectCastStatic(ScriptType from, ScriptType to, bool supportsImplicitCastFromObjectToBoolean = true)
         {
             if (from == ScriptType.Null || to == ScriptType.Null)
                 return false;
@@ -76,7 +70,7 @@ namespace FlaxEditor.Surface
 
                 // Implicit casting is supported for object reference to test whenever it is valid
                 var toType = to.Type;
-                if (_supportsImplicitCastFromObjectToBoolean && toType == typeof(bool) && new ScriptType(typeof(FlaxEngine.Object)).IsAssignableFrom(from))
+                if (supportsImplicitCastFromObjectToBoolean && toType == typeof(bool) && ScriptType.FlaxObject.IsAssignableFrom(from))
                 {
                     return true;
                 }
@@ -97,6 +91,15 @@ namespace FlaxEditor.Surface
                     fromType == typeof(Vector2) ||
                     fromType == typeof(Vector3) ||
                     fromType == typeof(Vector4) ||
+                    fromType == typeof(Float2) ||
+                    fromType == typeof(Float3) ||
+                    fromType == typeof(Float4) ||
+                    fromType == typeof(Double2) ||
+                    fromType == typeof(Double3) ||
+                    fromType == typeof(Double4) ||
+                    fromType == typeof(Int2) ||
+                    fromType == typeof(Int3) ||
+                    fromType == typeof(Int4) ||
                     fromType == typeof(Color) ||
                     fromType == typeof(Quaternion))
                 {
@@ -114,6 +117,15 @@ namespace FlaxEditor.Surface
                         toType == typeof(Vector2) ||
                         toType == typeof(Vector3) ||
                         toType == typeof(Vector4) ||
+                        toType == typeof(Float2) ||
+                        toType == typeof(Float3) ||
+                        toType == typeof(Float4) ||
+                        toType == typeof(Double2) ||
+                        toType == typeof(Double3) ||
+                        toType == typeof(Double4) ||
+                        toType == typeof(Int2) ||
+                        toType == typeof(Int3) ||
+                        toType == typeof(Int4) ||
                         toType == typeof(Color) ||
                         toType == typeof(Quaternion))
                     {
@@ -122,6 +134,99 @@ namespace FlaxEditor.Surface
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// Checks if a type is compatible with another type and can be casted by using a connection hint
+        /// </summary>
+        /// <param name="from">Source type</param>
+        /// <param name="to">Type to check compatibility with</param>
+        /// <param name="hint">Hint to check if casting is possible</param>
+        /// <returns>True if the source type is compatible with the target type</returns>
+        public static bool IsTypeCompatible(ScriptType from, ScriptType to, ConnectionsHint hint)
+        {
+            if (from == ScriptType.Null && hint != ConnectionsHint.None)
+            {
+                if ((hint & ConnectionsHint.Anything) == ConnectionsHint.Anything)
+                    return true;
+                if ((hint & ConnectionsHint.Value) == ConnectionsHint.Value && to.Type != typeof(void))
+                    return true;
+                if ((hint & ConnectionsHint.Enum) == ConnectionsHint.Enum && to.IsEnum)
+                    return true;
+                if ((hint & ConnectionsHint.Array) == ConnectionsHint.Array && to.IsArray)
+                    return true;
+                if ((hint & ConnectionsHint.Dictionary) == ConnectionsHint.Dictionary && to.IsDictionary)
+                    return true;
+                if ((hint & ConnectionsHint.Vector) == ConnectionsHint.Vector)
+                {
+                    var t = to.Type;
+                    if (t == typeof(Vector2) ||
+                        t == typeof(Vector3) ||
+                        t == typeof(Vector4) ||
+                        t == typeof(Float2) ||
+                        t == typeof(Float3) ||
+                        t == typeof(Float4) ||
+                        t == typeof(Double2) ||
+                        t == typeof(Double3) ||
+                        t == typeof(Double4) ||
+                        t == typeof(Int2) ||
+                        t == typeof(Int3) ||
+                        t == typeof(Int4) ||
+                        t == typeof(Color))
+                    {
+                        return true;
+                    }
+                }
+                if ((hint & ConnectionsHint.Scalar) == ConnectionsHint.Scalar)
+                {
+                    var t = to.Type;
+                    if (t == typeof(bool) ||
+                        t == typeof(char) ||
+                        t == typeof(byte) ||
+                        t == typeof(short) ||
+                        t == typeof(ushort) ||
+                        t == typeof(int) ||
+                        t == typeof(uint) ||
+                        t == typeof(long) ||
+                        t == typeof(ulong) ||
+                        t == typeof(float) ||
+                        t == typeof(double))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if a type is compatible with another type and can be casted by using a connection hint
+        /// </summary>
+        /// <param name="from">Source type</param>
+        /// <param name="to">Target type</param>
+        /// <param name="hint">Connection hint</param>
+        /// <returns>True if any method of casting or compatibility check succeeds</returns>
+        public static bool FullCastCheck(ScriptType from, ScriptType to, ConnectionsHint hint)
+        {
+            // Yes, from and to are switched on purpose
+            if (CanUseDirectCastStatic(to, from, false))
+                return true;
+            if (IsTypeCompatible(from, to, hint))
+                return true;
+            // Same here
+            return to.CanCastTo(from);
+        }
+
+        /// <summary>
+        /// Checks if can use direct conversion from one type to another.
+        /// </summary>
+        /// <param name="from">Source type.</param>
+        /// <param name="to">Target type.</param>
+        /// <returns>True if can use direct conversion, otherwise false.</returns>
+        public bool CanUseDirectCast(ScriptType from, ScriptType to)
+        {
+            return CanUseDirectCastStatic(from, to, _supportsImplicitCastFromObjectToBoolean);
         }
 
         /// <summary>

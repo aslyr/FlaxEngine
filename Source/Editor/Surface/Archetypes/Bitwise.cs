@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 
@@ -19,7 +19,7 @@ namespace FlaxEditor.Surface.Archetypes
                 Description = desc,
                 AlternativeTitles = altTitles,
                 Flags = NodeFlags.AllGraphs,
-                Size = new Vector2(140, 20),
+                Size = new Float2(140, 20),
                 Elements = new[]
                 {
                     NodeElementArchetype.Factory.Input(0, "A", true, typeof(int), 0),
@@ -37,7 +37,7 @@ namespace FlaxEditor.Surface.Archetypes
                 Description = desc,
                 AlternativeTitles = altTitles,
                 Flags = NodeFlags.AllGraphs,
-                Size = new Vector2(140, 40),
+                Size = new Float2(140, 40),
                 DefaultValues = new object[]
                 {
                     0,
@@ -60,7 +60,7 @@ namespace FlaxEditor.Surface.Archetypes
             Op1(1, "Bitwise NOT", "Negates the value using bitwise operation", new[] { "!", "~" }),
             Op2(2, "Bitwise AND", "Performs a bitwise conjunction on two values", new[] { "&" }),
             Op2(3, "Bitwise OR", "", new[] { "|" }),
-            Op2(4, "Bitwise XOR", ""),
+            Op2(4, "Bitwise XOR", "", new[] { "^" }),
         };
     }
 }

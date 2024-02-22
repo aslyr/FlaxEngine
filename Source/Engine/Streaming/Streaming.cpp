@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Streaming.h"
 #include "StreamableResource.h"
@@ -79,6 +79,18 @@ StreamableResource::~StreamableResource()
     StopStreaming();
 }
 
+void StreamableResource::RequestStreamingUpdate()
+{
+    Streaming.LastUpdate = 0;
+}
+
+void StreamableResource::ResetStreaming(bool error)
+{
+    Streaming.Error = error;
+    Streaming.TargetResidency = 0;
+    Streaming.LastUpdate = DateTime::MaxValue().Ticks;
+}
+
 void StreamableResource::StartStreaming(bool isDynamic)
 {
     _isDynamic = isDynamic;
@@ -153,6 +165,12 @@ void UpdateResource(StreamableResource* resource, DateTime now, double currentTi
                 // When resource wants to perform reallocation on a task then skip further updating until it's done
                 allocateTask->Start();
                 resource->RequestStreamingUpdate();
+                return;
+            }
+            else if (resource->GetAllocatedResidency() < targetResidency)
+            {
+                // Allocation failed (eg. texture format is not supported or run out of memory)
+                resource->ResetStreaming();
                 return;
             }
         }
@@ -287,6 +305,9 @@ GPUSampler* Streaming::GetTextureGroupSampler(int32 index)
         if (!sampler)
         {
             sampler = GPUSampler::New();
+#if GPU_ENABLE_RESOURCE_NAMING
+            sampler->SetName(group.Name);
+#endif
             sampler->Init(desc);
             TextureGroupSamplers[index] = sampler;
         }
@@ -299,6 +320,9 @@ GPUSampler* Streaming::GetTextureGroupSampler(int32 index)
         if (!FallbackSampler)
         {
             FallbackSampler = GPUSampler::New();
+#if GPU_ENABLE_RESOURCE_NAMING
+            FallbackSampler->SetName(TEXT("FallbackSampler"));
+#endif
             FallbackSampler->Init(GPUSamplerDescription::New(GPUSamplerFilter::Trilinear));
         }
         sampler = FallbackSampler;

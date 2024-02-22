@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticleEffect.h"
 #include "Particles.h"
+#include "Engine/Core/Types/CommonValue.h"
 #include "Engine/Serialization/JsonTools.h"
 #include "Engine/Serialization/Serialization.h"
 #include "Engine/Level/Scene/SceneRendering.h"
@@ -12,10 +13,10 @@
 ParticleEffect::ParticleEffect(const SpawnParams& params)
     : Actor(params)
     , _lastUpdateFrame(0)
-    , _lastMinDstSqr(MAX_float)
+    , _lastMinDstSqr(MAX_Real)
 {
-    _world = Matrix::Identity;
-    UpdateBounds();
+    _box = BoundingBox(_transform.Translation);
+    BoundingSphere::FromBox(_box, _sphere);
 
     ParticleSystem.Changed.Bind<ParticleEffect, &ParticleEffect::OnParticleSystemModified>(this);
     ParticleSystem.Loaded.Bind<ParticleEffect, &ParticleEffect::OnParticleSystemLoaded>(this);
@@ -253,12 +254,17 @@ int32 ParticleEffect::GetParticlesCount() const
     return Instance.GetParticlesCount();
 }
 
+bool ParticleEffect::GetIsPlaying() const
+{
+    return _isPlaying;
+}
+
 void ParticleEffect::ResetSimulation()
 {
     Instance.ClearState();
 }
 
-void ParticleEffect::UpdateSimulation()
+void ParticleEffect::UpdateSimulation(bool singleFrame)
 {
     // Skip if need to
     if (!IsActiveInHierarchy()
@@ -269,24 +275,46 @@ void ParticleEffect::UpdateSimulation()
 
     // Request update
     _lastUpdateFrame = Engine::FrameCount;
-    _lastMinDstSqr = MAX_float;
+    _lastMinDstSqr = MAX_Real;
+    if (singleFrame)
+        Instance.LastUpdateTime = (UseTimeScale ? Time::Update.Time : Time::Update.UnscaledTime).GetTotalSeconds();
     Particles::UpdateEffect(this);
+}
+
+void ParticleEffect::Play()
+{
+    _isPlaying = true;
+    _isStopped = false;
+}
+
+void ParticleEffect::Pause()
+{
+    _isPlaying = false;
+}
+
+void ParticleEffect::Stop()
+{
+    _isStopped = true;
+    _isPlaying = false;
+    ResetSimulation();
 }
 
 void ParticleEffect::UpdateBounds()
 {
     BoundingBox bounds = BoundingBox::Empty;
-    if (ParticleSystem && Instance.LastUpdateTime >= 0)
+    const auto particleSystem = ParticleSystem.Get();
+    if (particleSystem && Instance.LastUpdateTime >= 0)
     {
-        for (int32 j = 0; j < ParticleSystem->Tracks.Count(); j++)
+        for (int32 j = 0; j < particleSystem->Tracks.Count(); j++)
         {
-            const auto& track = ParticleSystem->Tracks[j];
+            const auto& track = particleSystem->Tracks[j];
             if (track.Type != ParticleSystem::Track::Types::Emitter || track.Disabled)
                 continue;
-            auto& emitter = ParticleSystem->Emitters[track.AsEmitter.Index];
-            auto& data = Instance.Emitters[track.AsEmitter.Index];
-            if (!emitter || emitter->Capacity == 0 || emitter->Graph.Layout.Size == 0)
+            const int32 emitterIndex = track.AsEmitter.Index;
+            ParticleEmitter* emitter = particleSystem->Emitters[emitterIndex].Get();
+            if (!emitter || emitter->Capacity == 0 || emitter->Graph.Layout.Size == 0 || Instance.Emitters.Count() <= emitterIndex)
                 continue;
+            auto& data = Instance.Emitters[emitterIndex];
 
             BoundingBox emitterBounds;
             if (emitter->GraphExecutorCPU.ComputeBounds(emitter, this, data, emitterBounds))
@@ -295,7 +323,7 @@ void ParticleEffect::UpdateBounds()
 
                 if (emitter->SimulationSpace == ParticlesSimulationSpace::Local)
                 {
-                    BoundingBox::Transform(emitterBounds, _world, emitterBounds);
+                    BoundingBox::Transform(emitterBounds, _transform, emitterBounds);
                 }
 
                 BoundingBox::Merge(emitterBounds, bounds, bounds);
@@ -312,7 +340,7 @@ void ParticleEffect::UpdateBounds()
     _box = bounds;
     BoundingSphere::FromBox(bounds, _sphere);
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
 void ParticleEffect::Sync()
@@ -376,7 +404,7 @@ SceneRenderTask* ParticleEffect::GetRenderTask() const
 
 #if USE_EDITOR
 
-Array<ParticleEffect::ParameterOverride> ParticleEffect::GetParametersOverrides()
+Array<ParticleEffect::ParameterOverride>& ParticleEffect::GetParametersOverrides()
 {
     CacheModifiedParameters();
     return _parametersOverrides;
@@ -393,8 +421,15 @@ void ParticleEffect::SetParametersOverrides(const Array<ParameterOverride>& valu
 
 void ParticleEffect::Update()
 {
+    if (!_isPlaying)
+    {
+        // Move update timer forward while paused for correct delta time after unpause
+        Instance.LastUpdateTime = (UseTimeScale ? Time::Update.Time : Time::Update.UnscaledTime).GetTotalSeconds();
+        return;
+    }
+
     // Skip if off-screen
-    if (!UpdateWhenOffscreen && _lastMinDstSqr >= MAX_float)
+    if (!UpdateWhenOffscreen && _lastMinDstSqr >= MAX_Real)
         return;
 
     if (UpdateMode == SimulationUpdateMode::FixedTimestep)
@@ -414,8 +449,12 @@ void ParticleEffect::Update()
 
 void ParticleEffect::UpdateExecuteInEditor()
 {
-    if (!Editor::IsPlayMode)
+    // Auto-play in Editor
+    if (!Editor::IsPlayMode && !_isStopped)
+    {
+        _isPlaying = true;
         Update();
+    }
 }
 
 #endif
@@ -424,7 +463,6 @@ void ParticleEffect::CacheModifiedParameters()
 {
     if (_parameters.IsEmpty())
         return;
-
     _parametersOverrides.Clear();
     auto& parameters = GetParameters();
     for (auto& param : parameters)
@@ -494,13 +532,10 @@ bool ParticleEffect::HasContentLoaded() const
 
 void ParticleEffect::Draw(RenderContext& renderContext)
 {
+    if (renderContext.View.Pass == DrawPass::GlobalSDF || renderContext.View.Pass == DrawPass::GlobalSurfaceAtlas)
+        return;
     _lastMinDstSqr = Math::Min(_lastMinDstSqr, Vector3::DistanceSquared(GetPosition(), renderContext.View.Position));
     Particles::DrawParticles(renderContext, this);
-}
-
-void ParticleEffect::DrawGeneric(RenderContext& renderContext)
-{
-    Draw(renderContext);
 }
 
 #if USE_EDITOR
@@ -520,7 +555,7 @@ void ParticleEffect::OnDebugDrawSelected()
 void ParticleEffect::OnLayerChanged()
 {
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
 void ParticleEffect::Serialize(SerializeStream& stream, const void* otherObj)
@@ -577,8 +612,10 @@ void ParticleEffect::Serialize(SerializeStream& stream, const void* otherObj)
     SERIALIZE(SimulationSpeed);
     SERIALIZE(UseTimeScale);
     SERIALIZE(IsLooping);
+    SERIALIZE(PlayOnStart);
     SERIALIZE(UpdateWhenOffscreen);
     SERIALIZE(DrawModes);
+    SERIALIZE(SortOrder);
 }
 
 void ParticleEffect::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
@@ -589,6 +626,7 @@ void ParticleEffect::Deserialize(DeserializeStream& stream, ISerializeModifier* 
     const auto overridesMember = stream.FindMember("Overrides");
     if (overridesMember != stream.MemberEnd())
     {
+        // [Deprecated on 25.11.2018, expires on 25.11.2022]
         if (modifier->EngineBuild < 6197)
         {
             const auto& overrides = overridesMember->value;
@@ -675,8 +713,10 @@ void ParticleEffect::Deserialize(DeserializeStream& stream, ISerializeModifier* 
     DESERIALIZE(SimulationSpeed);
     DESERIALIZE(UseTimeScale);
     DESERIALIZE(IsLooping);
+    DESERIALIZE(PlayOnStart);
     DESERIALIZE(UpdateWhenOffscreen);
     DESERIALIZE(DrawModes);
+    DESERIALIZE(SortOrder);
 
     if (_parameters.HasItems())
     {
@@ -699,11 +739,14 @@ void ParticleEffect::EndPlay()
 void ParticleEffect::OnEnable()
 {
     GetScene()->Ticking.Update.AddTick<ParticleEffect, &ParticleEffect::Update>(this);
-    _sceneRenderingKey = GetSceneRendering()->AddGeometry(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 #if USE_EDITOR
     GetSceneRendering()->AddViewportIcon(this);
     GetScene()->Ticking.Update.AddTickExecuteInEditor<ParticleEffect, &ParticleEffect::UpdateExecuteInEditor>(this);
 #endif
+
+    if (PlayOnStart)
+        Play();
 
     // Base
     Actor::OnEnable();
@@ -715,7 +758,7 @@ void ParticleEffect::OnDisable()
     GetScene()->Ticking.Update.RemoveTickExecuteInEditor(this);
     GetSceneRendering()->RemoveViewportIcon(this);
 #endif
-    GetSceneRendering()->RemoveGeometry(this, _sceneRenderingKey);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
     GetScene()->Ticking.Update.RemoveTick(this);
 
     // Base
@@ -740,6 +783,5 @@ void ParticleEffect::OnTransformChanged()
     // Base
     Actor::OnTransformChanged();
 
-    _transform.GetWorld(_world);
     UpdateBounds();
 }

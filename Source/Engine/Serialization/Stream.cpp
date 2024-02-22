@@ -1,56 +1,60 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ReadStream.h"
 #include "WriteStream.h"
 #include "JsonWriters.h"
+#include "JsonSerializer.h"
+#include "MemoryReadStream.h"
 #include "Engine/Core/Types/CommonValue.h"
 #include "Engine/Core/Types/Variant.h"
 #include "Engine/Core/Collections/Dictionary.h"
 #include "Engine/Content/Asset.h"
-#include "Engine/Debug/DebugLog.h"
-#include "Engine/Scripting/ManagedSerialization.h"
+#include "Engine/Core/Cache.h"
+#include "Engine/Debug/Exceptions/JsonParseException.h"
+#include "Engine/Profiler/ProfilerCPU.h"
+#include "Engine/Scripting/Internal/ManagedSerialization.h"
 #include "Engine/Scripting/Scripting.h"
 #include "Engine/Scripting/ScriptingObject.h"
-#include "Engine/Scripting/ScriptingObjectReference.h"
+#include "Engine/Scripting/ManagedCLR/MClass.h"
 #include "Engine/Scripting/ManagedCLR/MCore.h"
 #include "Engine/Scripting/ManagedCLR/MUtils.h"
 
-void ReadStream::ReadStringAnsi(StringAnsi* data)
+void ReadStream::Read(StringAnsi& data)
 {
     int32 length;
     ReadInt32(&length);
     if (length < 0 || length > STREAM_MAX_STRING_LENGTH)
     {
         _hasError = true;
-        *data = "";
+        data = "";
         return;
     }
 
-    data->ReserveSpace(length);
+    data.ReserveSpace(length);
     if (length == 0)
         return;
-    char* ptr = data->Get();
+    char* ptr = data.Get();
     ASSERT(ptr != nullptr);
-    Read(ptr, length);
+    ReadBytes(ptr, length);
 }
 
-void ReadStream::ReadStringAnsi(StringAnsi* data, int8 lock)
+void ReadStream::Read(StringAnsi& data, int8 lock)
 {
     int32 length;
     ReadInt32(&length);
     if (length < 0 || length > STREAM_MAX_STRING_LENGTH)
     {
         _hasError = true;
-        *data = "";
+        data = "";
         return;
     }
 
-    data->ReserveSpace(length);
+    data.ReserveSpace(length);
     if (length == 0)
         return;
-    char* ptr = data->Get();
+    char* ptr = data.Get();
     ASSERT(ptr != nullptr);
-    Read(ptr, length);
+    ReadBytes(ptr, length);
 
     for (int32 i = 0; i < length; i++)
     {
@@ -59,7 +63,7 @@ void ReadStream::ReadStringAnsi(StringAnsi* data, int8 lock)
     }
 }
 
-void ReadStream::ReadString(String* data)
+void ReadStream::Read(String& data)
 {
     int32 length;
     ReadInt32(&length);
@@ -67,17 +71,17 @@ void ReadStream::ReadString(String* data)
     {
         if (length != 0)
             _hasError = true;
-        data->Clear();
+        data.Clear();
         return;
     }
 
-    data->ReserveSpace(length);
-    Char* ptr = data->Get();
+    data.ReserveSpace(length);
+    Char* ptr = data.Get();
     ASSERT(ptr != nullptr);
-    Read(ptr, length);
+    ReadBytes(ptr, length * sizeof(Char));
 }
 
-void ReadStream::ReadString(String* data, int16 lock)
+void ReadStream::Read(String& data, int16 lock)
 {
     int32 length;
     ReadInt32(&length);
@@ -85,14 +89,14 @@ void ReadStream::ReadString(String* data, int16 lock)
     {
         if (length != 0)
             _hasError = true;
-        data->Clear();
+        data.Clear();
         return;
     }
 
-    data->ReserveSpace(length);
-    Char* ptr = data->Get();
+    data.ReserveSpace(length);
+    Char* ptr = data.Get();
     ASSERT(ptr != nullptr);
-    Read(ptr, length);
+    ReadBytes(ptr, length * sizeof(Char));
 
     for (int32 i = 0; i < length; i++)
     {
@@ -101,127 +105,127 @@ void ReadStream::ReadString(String* data, int16 lock)
     }
 }
 
-void ReadStream::ReadCommonValue(CommonValue* data)
+void ReadStream::Read(CommonValue& data)
 {
     byte type;
     ReadByte(&type);
     switch (static_cast<CommonType>(type))
     {
     case CommonType::Bool:
-        data->Set(ReadBool());
+        data.Set(ReadBool());
         break;
     case CommonType::Integer:
     {
         int32 v;
         ReadInt32(&v);
-        data->Set(v);
+        data.Set(v);
     }
     break;
     case CommonType::Float:
     {
         float v;
         ReadFloat(&v);
-        data->Set(v);
+        data.Set(v);
     }
     break;
     case CommonType::Vector2:
     {
-        Vector2 v;
-        Read(&v);
-        data->Set(v);
+        Float2 v;
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Vector3:
     {
-        Vector3 v;
-        Read(&v);
-        data->Set(v);
+        Float3 v;
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Vector4:
     {
-        Vector4 v;
-        Read(&v);
-        data->Set(v);
+        Float4 v;
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Color:
     {
         Color v;
-        Read(&v);
-        data->Set(v);
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Guid:
     {
         Guid v;
-        Read(&v);
-        data->Set(v);
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::String:
     {
         String v;
         ReadString(&v, 953);
-        data->Set(v);
+        data.Set(v);
     }
     break;
     case CommonType::Box:
     {
         BoundingBox v;
-        Read(&v);
-        data->Set(v);
+        ReadBoundingBox(&v);
+        data.Set(v);
     }
     break;
     case CommonType::Rotation:
     {
         Quaternion v;
-        Read(&v);
-        data->Set(v);
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Transform:
     {
         Transform v;
-        Read(&v);
-        data->Set(v);
+        ReadTransform(&v);
+        data.Set(v);
     }
     break;
     case CommonType::Sphere:
     {
         BoundingSphere v;
-        Read(&v);
-        data->Set(v);
+        ReadBoundingSphere(&v);
+        data.Set(v);
     }
     break;
     case CommonType::Rectangle:
     {
         Rectangle v;
-        Read(&v);
-        data->Set(v);
+        Read(v);
+        data.Set(v);
     }
     case CommonType::Ray:
     {
         Ray v;
-        Read(&v);
-        data->Set(v);
+        ReadRay(&v);
+        data.Set(v);
     }
     break;
     case CommonType::Matrix:
     {
         Matrix v;
-        Read(&v);
-        data->Set(v);
+        Read(v);
+        data.Set(v);
     }
     break;
     case CommonType::Blob:
     {
         int32 length;
-        Read(&length);
-        data->SetBlob(length);
+        Read(length);
+        data.SetBlob(length);
         if (length > 0)
         {
-            ReadBytes(data->AsBlob.Data, length);
+            ReadBytes(data.AsBlob.Data, length);
         }
     }
     break;
@@ -229,9 +233,9 @@ void ReadStream::ReadCommonValue(CommonValue* data)
     }
 }
 
-void ReadStream::ReadVariantType(VariantType* data)
+void ReadStream::Read(VariantType& data)
 {
-    *data = VariantType((VariantType::Types)ReadByte());
+    data = VariantType((VariantType::Types)ReadByte());
     int32 typeNameLength;
     ReadInt32(&typeNameLength);
     if (typeNameLength == MAX_int32)
@@ -239,9 +243,9 @@ void ReadStream::ReadVariantType(VariantType* data)
         ReadInt32(&typeNameLength);
         if (typeNameLength == 0)
             return;
-        data->TypeName = static_cast<char*>(Allocator::Allocate(typeNameLength + 1));
-        char* ptr = data->TypeName;
-        Read(ptr, typeNameLength);
+        data.TypeName = static_cast<char*>(Allocator::Allocate(typeNameLength + 1));
+        char* ptr = data.TypeName;
+        ReadBytes(ptr, typeNameLength);
         for (int32 i = 0; i < typeNameLength; i++)
         {
             *ptr = *ptr ^ 77;
@@ -256,62 +260,62 @@ void ReadStream::ReadVariantType(VariantType* data)
         Array<Char> chars;
         chars.Resize(typeNameLength + 1);
         Char* ptr = chars.Get();
-        Read(ptr, typeNameLength);
+        ReadBytes(ptr, typeNameLength * sizeof(Char));
         for (int32 i = 0; i < typeNameLength; i++)
         {
             *ptr = *ptr ^ 77;
             ptr++;
         }
         *ptr = 0;
-        data->TypeName = static_cast<char*>(Allocator::Allocate(typeNameLength + 1));
-        StringUtils::ConvertUTF162ANSI(chars.Get(), data->TypeName, typeNameLength);
-        data->TypeName[typeNameLength] = 0;
+        data.TypeName = static_cast<char*>(Allocator::Allocate(typeNameLength + 1));
+        StringUtils::ConvertUTF162ANSI(chars.Get(), data.TypeName, typeNameLength);
+        data.TypeName[typeNameLength] = 0;
     }
 }
 
-void ReadStream::ReadVariant(Variant* data)
+void ReadStream::Read(Variant& data)
 {
     VariantType type;
     ReadVariantType(&type);
-    data->SetType(MoveTemp(type));
-    switch (data->Type.Type)
+    data.SetType(MoveTemp(type));
+    switch (data.Type.Type)
     {
     case VariantType::Null:
     case VariantType::Void:
         break;
     case VariantType::Bool:
-        data->AsBool = ReadBool();
+        data.AsBool = ReadBool();
         break;
     case VariantType::Int16:
-        ReadInt16(&data->AsInt16);
+        ReadInt16(&data.AsInt16);
         break;
     case VariantType::Uint16:
-        ReadUint16(&data->AsUint16);
+        ReadUint16(&data.AsUint16);
         break;
     case VariantType::Int:
-        ReadInt32(&data->AsInt);
+        ReadInt32(&data.AsInt);
         break;
     case VariantType::Uint:
-        ReadUint32(&data->AsUint);
+        ReadUint32(&data.AsUint);
         break;
     case VariantType::Int64:
-        ReadInt64(&data->AsInt64);
+        ReadInt64(&data.AsInt64);
         break;
     case VariantType::Uint64:
     case VariantType::Enum:
-        ReadUint64(&data->AsUint64);
+        ReadUint64(&data.AsUint64);
         break;
     case VariantType::Float:
-        ReadFloat(&data->AsFloat);
+        ReadFloat(&data.AsFloat);
         break;
     case VariantType::Double:
-        ReadDouble(&data->AsDouble);
+        ReadDouble(&data.AsDouble);
         break;
     case VariantType::Pointer:
     {
         uint64 asUint64;
         ReadUint64(&asUint64);
-        data->AsPointer = (void*)(uintptr)asUint64;
+        data.AsPointer = (void*)(uintptr)asUint64;
         break;
     }
     case VariantType::String:
@@ -320,14 +324,14 @@ void ReadStream::ReadVariant(Variant* data)
         ReadInt32(&length);
         ASSERT(length < STREAM_MAX_STRING_LENGTH);
         const int32 dataLength = length * sizeof(Char) + 2;
-        if (data->AsBlob.Length != dataLength)
+        if (data.AsBlob.Length != dataLength)
         {
-            Allocator::Free(data->AsBlob.Data);
-            data->AsBlob.Data = dataLength > 0 ? Allocator::Allocate(dataLength) : nullptr;
-            data->AsBlob.Length = dataLength;
+            Allocator::Free(data.AsBlob.Data);
+            data.AsBlob.Data = dataLength > 0 ? Allocator::Allocate(dataLength) : nullptr;
+            data.AsBlob.Length = dataLength;
         }
-        Char* ptr = (Char*)data->AsBlob.Data;
-        Read(ptr, length);
+        Char* ptr = (Char*)data.AsBlob.Data;
+        ReadBytes(ptr, length * sizeof(Char));
         for (int32 i = 0; i < length; i++)
         {
             *ptr = *ptr ^ -14;
@@ -339,8 +343,8 @@ void ReadStream::ReadVariant(Variant* data)
     case VariantType::Object:
     {
         Guid id;
-        Read(&id);
-        data->SetObject(FindObject(id, ScriptingObject::GetStaticClass()));
+        Read(id);
+        data.SetObject(FindObject(id, ScriptingObject::GetStaticClass()));
         break;
     }
     case VariantType::ManagedObject:
@@ -356,30 +360,32 @@ void ReadStream::ReadVariant(Variant* data)
             // Json
             StringAnsi json;
             ReadStringAnsi(&json, -71);
-            MCore::AttachThread();
-            MonoClass* klass = MUtils::GetClass(data->Type);
+#if USE_CSHARP
+            MCore::Thread::Attach();
+            MClass* klass = MUtils::GetClass(data.Type);
             if (!klass)
             {
-                LOG(Error, "Invalid variant type {0}", data->Type);
+                LOG(Error, "Invalid variant type {0}", data.Type);
                 return;
             }
-            MonoObject* obj = mono_object_new(mono_domain_get(), klass);
+            MObject* obj = MCore::Object::New(klass);
             if (!obj)
             {
-                LOG(Error, "Failed to managed instance of the variant type {0}", data->Type);
+                LOG(Error, "Failed to managed instance of the variant type {0}", data.Type);
                 return;
             }
-            if (!mono_class_is_valuetype(klass))
-                mono_runtime_object_init(obj);
+            if (!klass->IsValueType())
+                MCore::Object::Init(obj);
             ManagedSerialization::Deserialize(json, obj);
-            if (data->Type.Type == VariantType::ManagedObject)
-                data->SetManagedObject(obj);
+            if (data.Type.Type == VariantType::ManagedObject)
+                data.SetManagedObject(obj);
             else
-                *data = MUtils::UnboxVariant(obj);
+                data = MUtils::UnboxVariant(obj);
+#endif
         }
         else
         {
-            LOG(Error, "Invalid Variant {0) format {1}", data->Type.ToString(), format);
+            LOG(Error, "Invalid Variant {0) format {1}", data.Type.ToString(), format);
         }
         break;
     }
@@ -387,58 +393,67 @@ void ReadStream::ReadVariant(Variant* data)
     {
         int32 length;
         ReadInt32(&length);
-        data->SetBlob(length);
-        ReadBytes(data->AsBlob.Data, length);
+        data.SetBlob(length);
+        ReadBytes(data.AsBlob.Data, length);
         break;
     }
     case VariantType::Asset:
     {
         Guid id;
-        Read(&id);
-        data->SetAsset(LoadAsset(id, Asset::TypeInitializer));
+        Read(id);
+        data.SetAsset(LoadAsset(id, Asset::TypeInitializer));
         break;
     }
-    case VariantType::Vector2:
-        ReadBytes(&data->AsData, sizeof(Vector2));
+    case VariantType::Float2:
+        ReadBytes(&data.AsData, sizeof(Float2));
         break;
-    case VariantType::Vector3:
-        ReadBytes(&data->AsData, sizeof(Vector3));
+    case VariantType::Float3:
+        ReadBytes(&data.AsData, sizeof(Float3));
         break;
-    case VariantType::Vector4:
-        ReadBytes(&data->AsData, sizeof(Vector4));
+    case VariantType::Float4:
+        ReadBytes(&data.AsData, sizeof(Float4));
+        break;
+    case VariantType::Double2:
+        ReadBytes(&data.AsData, sizeof(Double2));
+        break;
+    case VariantType::Double3:
+        ReadBytes(&data.AsData, sizeof(Double3));
+        break;
+    case VariantType::Double4:
+        ReadBytes(data.AsBlob.Data, sizeof(Double4));
         break;
     case VariantType::Color:
-        ReadBytes(&data->AsData, sizeof(Color));
+        ReadBytes(&data.AsData, sizeof(Color));
         break;
     case VariantType::Guid:
-        ReadBytes(&data->AsData, sizeof(Guid));
+        ReadBytes(&data.AsData, sizeof(Guid));
         break;
     case VariantType::BoundingBox:
-        ReadBytes(data->AsBlob.Data, sizeof(BoundingBox));
+        ReadBoundingBox(&data.AsBoundingBox());
         break;
     case VariantType::BoundingSphere:
-        ReadBytes(&data->AsData, sizeof(BoundingSphere));
+        ReadBoundingSphere(&data.AsBoundingSphere());
         break;
     case VariantType::Quaternion:
-        ReadBytes(&data->AsData, sizeof(Quaternion));
+        ReadBytes(&data.AsData, sizeof(Quaternion));
         break;
     case VariantType::Transform:
-        ReadBytes(data->AsBlob.Data, sizeof(Transform));
+        ReadTransform(&data.AsTransform());
         break;
     case VariantType::Rectangle:
-        ReadBytes(&data->AsData, sizeof(Rectangle));
+        ReadBytes(&data.AsData, sizeof(Rectangle));
         break;
     case VariantType::Ray:
-        ReadBytes(data->AsBlob.Data, sizeof(Ray));
+        ReadRay(&data.AsRay());
         break;
     case VariantType::Matrix:
-        ReadBytes(data->AsBlob.Data, sizeof(Matrix));
+        ReadBytes(data.AsBlob.Data, sizeof(Matrix));
         break;
     case VariantType::Array:
     {
         int32 count;
         ReadInt32(&count);
-        auto& array = *(Array<Variant>*)data->AsData;
+        auto& array = *(Array<Variant>*)data.AsData;
         array.Resize(count);
         for (int32 i = 0; i < count; i++)
             ReadVariant(&array[i]);
@@ -448,15 +463,14 @@ void ReadStream::ReadVariant(Variant* data)
     {
         int32 count;
         ReadInt32(&count);
-        auto& dictionary = *data->AsDictionary;
+        auto& dictionary = *data.AsDictionary;
         dictionary.Clear();
         dictionary.EnsureCapacity(count);
-        Variant key, value;
         for (int32 i = 0; i < count; i++)
         {
+            Variant key;
             ReadVariant(&key);
-            ReadVariant(&value);
-            dictionary.Add(key, value);
+            ReadVariant(&dictionary[MoveTemp(key)]);
         }
         break;
     }
@@ -466,14 +480,14 @@ void ReadStream::ReadVariant(Variant* data)
         ReadInt32(&length);
         ASSERT(length < STREAM_MAX_STRING_LENGTH);
         const int32 dataLength = length + 1;
-        if (data->AsBlob.Length != dataLength)
+        if (data.AsBlob.Length != dataLength)
         {
-            Allocator::Free(data->AsBlob.Data);
-            data->AsBlob.Data = dataLength > 0 ? Allocator::Allocate(dataLength) : nullptr;
-            data->AsBlob.Length = dataLength;
+            Allocator::Free(data.AsBlob.Data);
+            data.AsBlob.Data = dataLength > 0 ? Allocator::Allocate(dataLength) : nullptr;
+            data.AsBlob.Length = dataLength;
         }
-        char* ptr = (char*)data->AsBlob.Data;
-        Read(ptr, length);
+        char* ptr = (char*)data.AsBlob.Data;
+        ReadBytes(ptr, length);
         for (int32 i = 0; i < length; i++)
         {
             *ptr = *ptr ^ -14;
@@ -483,25 +497,197 @@ void ReadStream::ReadVariant(Variant* data)
         break;
     }
     default:
-    CRASH;
+        CRASH;
     }
+}
+
+void ReadStream::ReadJson(ISerializable* obj)
+{
+    int32 engineBuild, size;
+    ReadInt32(&engineBuild);
+    ReadInt32(&size);
+    if (obj)
+    {
+        if (const auto memoryStream = dynamic_cast<MemoryReadStream*>(this))
+        {
+            JsonSerializer::LoadFromBytes(obj, Span<byte>((byte*)memoryStream->Move(size), size), engineBuild);
+        }
+        else
+        {
+            void* data = Allocator::Allocate(size);
+            ReadBytes(data, size);
+            JsonSerializer::LoadFromBytes(obj, Span<byte>((byte*)data, size), engineBuild);
+            Allocator::Free(data);
+        }
+    }
+    else
+        SetPosition(GetPosition() + size);
+}
+
+void ReadStream::ReadStringAnsi(StringAnsi* data)
+{
+    Read(*data);
+}
+
+void ReadStream::ReadStringAnsi(StringAnsi* data, int8 lock)
+{
+    Read(*data, lock);
+}
+
+void ReadStream::ReadString(String* data)
+{
+    Read(*data);
+}
+
+void ReadStream::ReadString(String* data, int16 lock)
+{
+    Read(*data, lock);
+}
+
+void ReadStream::ReadCommonValue(CommonValue* data)
+{
+    Read(*data);
+}
+
+void ReadStream::ReadVariantType(VariantType* data)
+{
+    Read(*data);
+}
+
+void ReadStream::ReadVariant(Variant* data)
+{
+    Read(*data);
+}
+
+void ReadStream::ReadBoundingBox(BoundingBox* box, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Read(box);
+    else
+    {
+        Float3 min, max;
+        Read(min);
+        Read(max);
+        box->Minimum = min;
+        box->Maximum = max;
+    }
+#else
+    if (useDouble)
+    {
+        Double3 min, max;
+        Read(min);
+        Read(max);
+        box->Minimum = min;
+        box->Maximum = max;
+    }
+    else
+        Read(*box);
+#endif
+}
+
+void ReadStream::ReadBoundingSphere(BoundingSphere* sphere, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Read(*sphere);
+    else
+    {
+        Float3 center;
+        float radius;
+        Read(center);
+        Read(radius);
+        sphere->Center = center;
+        sphere->Radius = radius;
+    }
+#else
+    if (useDouble)
+    {
+        Double3 center;
+        double radius;
+        Read(center);
+        Read(radius);
+        sphere->Center = center;
+        sphere->Radius = (float)radius;
+    }
+    else
+        Read(*sphere);
+#endif
+}
+
+void ReadStream::ReadTransform(Transform* transform, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Read(*transform);
+    else
+    {
+        Float3 translation;
+        Read(translation);
+        Read(transform->Orientation);
+        Read(transform->Scale);
+        transform->Translation = translation;
+    }
+#else
+    if (useDouble)
+    {
+        Double3 translation;
+        Read(translation);
+        Read(transform->Orientation);
+        Read(transform->Scale);
+        transform->Translation = translation;
+    }
+    else
+        Read(*transform);
+#endif
+}
+
+void ReadStream::ReadRay(Ray* ray, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Read(*ray);
+    else
+    {
+        Float3 position, direction;
+        Read(position);
+        Read(direction);
+        ray->Position = position;
+        ray->Direction = direction;
+    }
+#else
+    if (useDouble)
+    {
+        Double3 position, direction;
+        Read(position);
+        Read(direction);
+        ray->Position = position;
+        ray->Direction = direction;
+    }
+    else
+        Read(*ray);
+#endif
 }
 
 void WriteStream::WriteText(const StringView& text)
 {
-    for (int32 i = 0; i < text.Length(); i++)
-        WriteChar(text[i]);
+    WriteBytes(text.Get(), sizeof(Char) * text.Length());
 }
 
-void WriteStream::WriteString(const StringView& data)
+void WriteStream::WriteText(const StringAnsiView& text)
+{
+    WriteBytes(text.Get(), sizeof(char) * text.Length());
+}
+
+void WriteStream::Write(const StringView& data)
 {
     const int32 length = data.Length();
     ASSERT(length < STREAM_MAX_STRING_LENGTH);
     WriteInt32(length);
-    Write(*data, length);
+    WriteBytes(*data, length * sizeof(Char));
 }
 
-void WriteStream::WriteString(const StringView& data, int16 lock)
+void WriteStream::Write(const StringView& data, int16 lock)
 {
     ASSERT(data.Length() < STREAM_MAX_STRING_LENGTH);
     WriteInt32(data.Length());
@@ -509,15 +695,15 @@ void WriteStream::WriteString(const StringView& data, int16 lock)
         WriteUint16((uint16)((uint16)data[i] ^ lock));
 }
 
-void WriteStream::WriteStringAnsi(const StringAnsiView& data)
+void WriteStream::Write(const StringAnsiView& data)
 {
     const int32 length = data.Length();
     ASSERT(length < STREAM_MAX_STRING_LENGTH);
     WriteInt32(length);
-    Write(data.Get(), length);
+    WriteBytes(data.Get(), length);
 }
 
-void WriteStream::WriteStringAnsi(const StringAnsiView& data, int16 lock)
+void WriteStream::Write(const StringAnsiView& data, int8 lock)
 {
     const int32 length = data.Length();
     ASSERT(length < STREAM_MAX_STRING_LENGTH);
@@ -526,7 +712,7 @@ void WriteStream::WriteStringAnsi(const StringAnsiView& data, int16 lock)
         WriteUint8((uint8)((uint8)data[i] ^ lock));
 }
 
-void WriteStream::WriteCommonValue(const CommonValue& data)
+void WriteStream::Write(const CommonValue& data)
 {
     WriteByte(static_cast<byte>(data.Type));
     switch (data.Type)
@@ -541,43 +727,43 @@ void WriteStream::WriteCommonValue(const CommonValue& data)
         WriteFloat(data.AsFloat);
         break;
     case CommonType::Vector2:
-        Write(&data.AsVector2);
+        Write(data.AsVector2);
         break;
     case CommonType::Vector3:
-        Write(&data.AsVector3);
+        Write(data.AsVector3);
         break;
     case CommonType::Vector4:
-        Write(&data.AsVector4);
+        Write(data.AsVector4);
         break;
     case CommonType::Color:
-        Write(&data.AsColor);
+        Write(data.AsColor);
         break;
     case CommonType::Guid:
-        Write(&data.AsGuid);
+        Write(data.AsGuid);
         break;
     case CommonType::String:
         WriteString(data.AsString, 953);
         break;
     case CommonType::Box:
-        Write(&data.AsBox);
+        WriteBoundingBox(data.AsBox);
         break;
     case CommonType::Rotation:
-        Write(&data.AsRotation);
+        Write(data.AsRotation);
         break;
     case CommonType::Transform:
-        Write(&data.AsTransform);
+        WriteTransform(data.AsTransform);
         break;
     case CommonType::Sphere:
-        Write(&data.AsSphere);
+        WriteBoundingSphere(data.AsSphere);
         break;
     case CommonType::Rectangle:
-        Write(&data.AsRectangle);
+        Write(data.AsRectangle);
         break;
     case CommonType::Ray:
-        Write(&data.AsRay);
+        WriteRay(data.AsRay);
         break;
     case CommonType::Matrix:
-        Write(&data.AsMatrix);
+        Write(data.AsMatrix);
         break;
     case CommonType::Blob:
         WriteInt32(data.AsBlob.Length);
@@ -588,14 +774,14 @@ void WriteStream::WriteCommonValue(const CommonValue& data)
     }
 }
 
-void WriteStream::WriteVariantType(const VariantType& data)
+void WriteStream::Write(const VariantType& data)
 {
     WriteByte((byte)data.Type);
     WriteInt32(MAX_int32);
     WriteStringAnsi(StringAnsiView(data.TypeName), 77);
 }
 
-void WriteStream::WriteVariant(const Variant& data)
+void WriteStream::Write(const Variant& data)
 {
     WriteVariantType(data.Type);
     Guid id;
@@ -640,51 +826,60 @@ void WriteStream::WriteVariant(const Variant& data)
         break;
     case VariantType::Object:
         id = data.AsObject ? data.AsObject->GetID() : Guid::Empty;
-        Write(&id);
+        Write(id);
         break;
     case VariantType::Blob:
         WriteInt32(data.AsBlob.Length);
         WriteBytes(data.AsBlob.Data, data.AsBlob.Length);
         break;
     case VariantType::BoundingBox:
-        WriteBytes(data.AsBlob.Data, sizeof(BoundingBox));
+        WriteBoundingBox(data.AsBoundingBox());
         break;
     case VariantType::Transform:
-        WriteBytes(data.AsBlob.Data, sizeof(Transform));
+        WriteTransform(data.AsTransform());
         break;
     case VariantType::Ray:
-        WriteBytes(data.AsBlob.Data, sizeof(Ray));
+        WriteRay(data.AsRay());
         break;
     case VariantType::Matrix:
         WriteBytes(data.AsBlob.Data, sizeof(Matrix));
         break;
     case VariantType::Asset:
         id = data.AsAsset ? data.AsAsset->GetID() : Guid::Empty;
-        Write(&id);
+        Write(id);
         break;
-    case VariantType::Vector2:
-        Write(data.AsData, sizeof(Vector2));
+    case VariantType::Float2:
+        WriteBytes(data.AsData, sizeof(Float2));
         break;
-    case VariantType::Vector3:
-        Write(data.AsData, sizeof(Vector3));
+    case VariantType::Float3:
+        WriteBytes(data.AsData, sizeof(Float3));
         break;
-    case VariantType::Vector4:
-        Write(data.AsData, sizeof(Vector4));
+    case VariantType::Float4:
+        WriteBytes(data.AsData, sizeof(Float4));
+        break;
+    case VariantType::Double2:
+        WriteBytes(data.AsData, sizeof(Double2));
+        break;
+    case VariantType::Double3:
+        WriteBytes(data.AsData, sizeof(Double3));
+        break;
+    case VariantType::Double4:
+        WriteBytes(data.AsBlob.Data, sizeof(Double4));
         break;
     case VariantType::Color:
-        Write(data.AsData, sizeof(Color));
+        WriteBytes(data.AsData, sizeof(Color));
         break;
     case VariantType::Guid:
-        Write(data.AsData, sizeof(Guid));
+        WriteBytes(data.AsData, sizeof(Guid));
         break;
     case VariantType::Quaternion:
-        Write(data.AsData, sizeof(Quaternion));
+        WriteBytes(data.AsData, sizeof(Quaternion));
         break;
     case VariantType::Rectangle:
-        Write(data.AsData, sizeof(Rectangle));
+        WriteBytes(data.AsData, sizeof(Rectangle));
         break;
     case VariantType::BoundingSphere:
-        Write(data.AsData, sizeof(BoundingSphere));
+        WriteBoundingSphere(data.AsBoundingSphere());
         break;
     case VariantType::Array:
         id.A = ((Array<Variant>*)data.AsData)->Count();
@@ -706,27 +901,214 @@ void WriteStream::WriteVariant(const Variant& data)
     case VariantType::ManagedObject:
     case VariantType::Structure:
     {
-        MonoObject* obj;
+#if USE_CSHARP
+        MObject* obj;
         if (data.Type.Type == VariantType::Structure)
             obj = MUtils::BoxVariant(data);
         else
-            obj = (MonoObject*)data;
+            obj = (MObject*)data;
         if (obj)
         {
             WriteByte(1);
             rapidjson_flax::StringBuffer json;
             CompactJsonWriter writerObj(json);
-            MCore::AttachThread();
+            MCore::Thread::Attach();
             ManagedSerialization::Serialize(writerObj, obj);
             WriteStringAnsi(StringAnsiView(json.GetString(), (int32)json.GetSize()), -71);
         }
         else
+#endif
         {
             WriteByte(0);
         }
         break;
     }
     default:
-    CRASH;
+        CRASH;
     }
+}
+
+void WriteStream::WriteJson(ISerializable* obj, const void* otherObj)
+{
+    WriteInt32(FLAXENGINE_VERSION_BUILD);
+    if (obj)
+    {
+        rapidjson_flax::StringBuffer buffer;
+        CompactJsonWriter writer(buffer);
+        writer.StartObject();
+        obj->Serialize(writer, otherObj);
+        writer.EndObject();
+
+        WriteInt32((int32)buffer.GetSize());
+        WriteBytes((byte*)buffer.GetString(), (int32)buffer.GetSize());
+    }
+    else
+        WriteInt32(0);
+}
+
+void WriteStream::WriteString(const StringView& data)
+{
+    Write(data);
+}
+
+void WriteStream::WriteString(const StringView& data, int16 lock)
+{
+    Write(data, lock);
+}
+
+void WriteStream::WriteStringAnsi(const StringAnsiView& data)
+{
+    Write(data);
+}
+
+void WriteStream::WriteStringAnsi(const StringAnsiView& data, int8 lock)
+{
+    Write(data, lock);
+}
+
+void WriteStream::WriteCommonValue(const CommonValue& data)
+{
+    Write(data);
+}
+
+void WriteStream::WriteVariantType(const VariantType& data)
+{
+    Write(data);
+}
+
+void WriteStream::WriteVariant(const Variant& data)
+{
+    Write(data);
+}
+
+void WriteStream::WriteBoundingBox(const BoundingBox& box, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Write(box);
+    else
+    {
+        Float3 min = box.Minimum, max = box.Maximum;
+        Write(min);
+        Write(max);
+    }
+#else
+    if (useDouble)
+    {
+        Double3 min = box.Minimum, max = box.Maximum;
+        Write(min);
+        Write(max);
+    }
+    else
+        Write(box);
+#endif
+}
+
+void WriteStream::WriteBoundingSphere(const BoundingSphere& sphere, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Write(sphere);
+    else
+    {
+        Float3 center = sphere.Center;
+        float radius = (float)sphere.Radius;
+        Write(center);
+        Write(radius);
+    }
+#else
+    if (useDouble)
+    {
+        Double3 center = sphere.Center;
+        float radius = (float)sphere.Radius;
+        Write(center);
+        Write(radius);
+    }
+    else
+        Write(sphere);
+#endif
+}
+
+void WriteStream::WriteTransform(const Transform& transform, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Write(transform);
+    else
+    {
+        Float3 translation = transform.Translation;
+        Write(translation);
+        Write(transform.Orientation);
+        Write(transform.Scale);
+    }
+#else
+    if (useDouble)
+    {
+        Double3 translation = transform.Translation;
+        Write(translation);
+        Write(transform.Orientation);
+        Write(transform.Scale);
+    }
+    else
+        Write(transform);
+#endif
+}
+
+void WriteStream::WriteRay(const Ray& ray, bool useDouble)
+{
+#if USE_LARGE_WORLDS
+    if (useDouble)
+        Write(ray);
+    else
+    {
+        Float3 position = ray.Position, direction = ray.Direction;
+        Write(position);
+        Write(direction);
+    }
+#else
+    if (useDouble)
+    {
+        Double3 position = ray.Position, direction = ray.Direction;
+        Write(position);
+        Write(direction);
+    }
+    else
+        Write(ray);
+#endif
+}
+
+Array<byte> JsonSerializer::SaveToBytes(ISerializable* obj)
+{
+    Array<byte> result;
+    if (obj)
+    {
+        rapidjson_flax::StringBuffer buffer;
+        CompactJsonWriter writer(buffer);
+        writer.StartObject();
+        obj->Serialize(writer, nullptr);
+        writer.EndObject();
+        result.Set((byte*)buffer.GetString(), (int32)buffer.GetSize());
+    }
+    return result;
+}
+
+void JsonSerializer::LoadFromBytes(ISerializable* obj, const Span<byte>& data, int32 engineBuild)
+{
+    if (!obj || data.Length() == 0)
+        return;
+
+    ISerializable::SerializeDocument document;
+    {
+        PROFILE_CPU_NAMED("Json.Parse");
+        document.Parse((const char*)data.Get(), data.Length());
+    }
+    if (document.HasParseError())
+    {
+        Log::JsonParseException(document.GetParseError(), document.GetErrorOffset());
+        return;
+    }
+
+    auto modifier = Cache::ISerializeModifier.Get();
+    modifier->EngineBuild = engineBuild;
+    obj->Deserialize(document, modifier.Value);
 }

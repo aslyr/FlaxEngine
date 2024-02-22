@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -17,7 +17,7 @@ private:
 
     PACK_STRUCT(struct Data
         {
-        Vector4 RtSize;
+        Float4 RtSize;
         });
 
     AssetReference<Shader> _shader;

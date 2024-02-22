@@ -1,13 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "PostProcessingPass.h"
 #include "RenderList.h"
 #include "Engine/Content/Assets/Shader.h"
 #include "Engine/Content/Content.h"
-#include "Engine/Graphics/PostProcessBase.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/RenderTask.h"
-#include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Engine/Time.h"
 
@@ -148,8 +146,8 @@ void PostProcessingPass::GB_ComputeKernel(float sigma, float width, float height
         // Calculate total weights sum
         total += weight;
 
-        GaussianBlurCacheH[index] = Vector4(weight, i * xOffset, 0, 0);
-        GaussianBlurCacheV[index] = Vector4(weight, i * yOffset, 0, 0);
+        GaussianBlurCacheH[index] = Float4(weight, i * xOffset, 0, 0);
+        GaussianBlurCacheV[index] = Float4(weight, i * yOffset, 0, 0);
     }
 
     // Normalize weights
@@ -160,7 +158,7 @@ void PostProcessingPass::GB_ComputeKernel(float sigma, float width, float height
     }
 
     // Assign size
-    _gbData.Size = Vector2(width, height);
+    _gbData.Size = Float2(width, height);
 }
 
 void PostProcessingPass::Dispose()
@@ -183,44 +181,18 @@ void PostProcessingPass::Dispose()
 
 void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input, GPUTexture* output, GPUTexture* colorGradingLUT)
 {
-    ASSERT(output->Format() == PixelFormat::R11G11B10_Float);
+    PROFILE_GPU_CPU("Post Processing");
     auto device = GPUDevice::Instance;
     auto context = device->GetMainContext();
     auto& view = renderContext.View;
-
-    PROFILE_GPU_CPU("Post Processing");
-
+    
     context->ResetRenderTarget();
 
-    // Ensure to have valid data
-    if (checkIfSkipPass())
-    {
-        // Resources are missing. Do not perform rendering. Just copy raw frame
-        context->SetRenderTarget(*output);
-        context->Draw(input);
-        return;
-    }
-
-    // Cache data
     PostProcessSettings& settings = renderContext.List->Settings;
-    bool useBloom = (view.Flags & ViewFlags::Bloom) != 0 && settings.Bloom.Enabled && settings.Bloom.Intensity > 0.0f;
-    bool useToneMapping = (view.Flags & ViewFlags::ToneMapping) != 0;
-    bool useCameraArtifacts = (view.Flags & ViewFlags::CameraArtifacts) != 0;
-    bool useLensFlares = (view.Flags & ViewFlags::LensFlares) != 0 && settings.LensFlares.Intensity > 0.0f && useBloom;
-
-    // Ensure to have valid data and if at least one effect should be applied
-    if (!(useBloom || useToneMapping || useCameraArtifacts))
-    {
-        // Resources are missing. Do not perform rendering. Just copy raw frame
-        context->SetRenderTarget(*output);
-        context->Draw(input);
-        return;
-    }
-
-    // Cache data
-    auto shader = _shader->GetShader();
-    auto cb0 = shader->GetCB(0);
-    auto cb1 = shader->GetCB(1);
+    bool useBloom = EnumHasAnyFlags(view.Flags, ViewFlags::Bloom) && settings.Bloom.Enabled && settings.Bloom.Intensity > 0.0f;
+    bool useToneMapping = EnumHasAnyFlags(view.Flags, ViewFlags::ToneMapping) && settings.ToneMapping.Mode != ToneMappingMode::None;
+    bool useCameraArtifacts = EnumHasAnyFlags(view.Flags, ViewFlags::CameraArtifacts) && (settings.CameraArtifacts.VignetteIntensity > 0.0f || settings.CameraArtifacts.GrainAmount > 0.0f || settings.CameraArtifacts.ChromaticDistortion > 0.0f || settings.CameraArtifacts.ScreenFadeColor.A > 0.0f);
+    bool useLensFlares = EnumHasAnyFlags(view.Flags, ViewFlags::LensFlares) && settings.LensFlares.Intensity > 0.0f && useBloom;
 
     // Cache viewport sizes
     int32 w1 = input->Width();
@@ -231,6 +203,21 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     int32 h2 = h1 >> 1;
     int32 h4 = h2 >> 1;
     int32 h8 = h4 >> 1;
+
+    // Ensure to have valid data and if at least one effect should be applied
+    if (!(useBloom || useToneMapping || useCameraArtifacts) || checkIfSkipPass() || w8 == 0 || h8 ==0)
+    {
+        // Resources are missing. Do not perform rendering. Just copy raw frame
+        context->SetViewportAndScissors((float)output->Width(), (float)output->Height());
+        context->SetRenderTarget(*output);
+        context->Draw(input);
+        return;
+    }
+
+    // Cache data
+    auto shader = _shader->GetShader();
+    auto cb0 = shader->GetCB(0);
+    auto cb1 = shader->GetCB(1);
 
     ////////////////////////////////////////////////////////////////////////////////////
     // Setup shader
@@ -280,12 +267,12 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
 
         data.LensBias = settings.LensFlares.ThresholdBias;
         data.LensScale = settings.LensFlares.ThresholdScale;
-        data.LensInputDistortion = Vector2(-(1.0f / w4) * settings.LensFlares.Distortion, (1.0f / w4) * settings.LensFlares.Distortion);
+        data.LensInputDistortion = Float2(-(1.0f / w4) * settings.LensFlares.Distortion, (1.0f / w4) * settings.LensFlares.Distortion);
 
         // Calculate star texture rotation matrix
-        Vector3 camX = renderContext.View.View.GetRight();
-        Vector3 camZ = renderContext.View.View.GetForward();
-        float camRot = Vector3::Dot(camX, Vector3::Forward) + Vector3::Dot(camZ, Vector3::Up);
+        Float3 camX = renderContext.View.View.GetRight();
+        Float3 camZ = renderContext.View.View.GetForward();
+        float camRot = Float3::Dot(camX, Float3::Forward) + Float3::Dot(camZ, Float3::Up);
         float camRotCos = Math::Cos(camRot) * 0.8f;
         float camRotSin = Math::Sin(camRot) * 0.8f;
         Matrix rotation(
@@ -302,8 +289,8 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         data.LensDirtIntensity = 0;
     }
     data.PostExposure = Math::Exp2(settings.EyeAdaptation.PostExposure);
-    data.InputSize = Vector2(static_cast<float>(w1), static_cast<float>(h1));
-    data.InvInputSize = Vector2(1.0f / static_cast<float>(w1), 1.0f / static_cast<float>(h1));
+    data.InputSize = Float2(static_cast<float>(w1), static_cast<float>(h1));
+    data.InvInputSize = Float2(1.0f / static_cast<float>(w1), 1.0f / static_cast<float>(h1));
     data.InputAspect = static_cast<float>(w1) / h1;
     context->UpdateCB(cb0, &data);
     context->BindCB(0, cb0);
@@ -311,10 +298,12 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     ////////////////////////////////////////////////////////////////////////////////////
     // Bloom
 
-    auto tempDesc = GPUTextureDescription::New2D(w2, h2, 0, PixelFormat::R11G11B10_Float, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
+    auto tempDesc = GPUTextureDescription::New2D(w2, h2, 0, output->Format(), GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
     auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(bloomTmp1, "PostProcessing.Bloom");
     // TODO: bloomTmp2 could be quarter res because we don't use it's first mip
     auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom");
 
     // Check if use bloom
     if (useBloom)
@@ -445,6 +434,10 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         // Set lens flares output
         context->BindSR(3, bloomTmp2->View(0, 1));
     }
+    else
+    {
+        context->BindSR(3, (GPUResourceView*)nullptr);
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////
     // Final composite
@@ -483,8 +476,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     context->BindSR(7, colorGradingLutView);
 
     // Composite final frame during single pass (done in full resolution)
-    auto viewport = renderContext.Task->GetViewport();
-    context->SetViewportAndScissors(viewport);
+    context->SetViewportAndScissors((float)output->Width(), (float)output->Height());
     context->SetRenderTarget(*output);
     context->SetState(_psComposite.Get(compositePermutationIndex));
     context->DrawFullscreenTriangle();

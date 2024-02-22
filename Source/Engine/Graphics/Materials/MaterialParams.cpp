@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MaterialParams.h"
 #include "MaterialInfo.h"
@@ -10,7 +10,9 @@
 #include "Engine/Serialization/MemoryWriteStream.h"
 #include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/GPUDevice.h"
-#include "Engine/Graphics/GPULimits.h"
+#include "Engine/Graphics/RenderTask.h"
+#include "Engine/Renderer/GlobalSignDistanceFieldPass.h"
+#include "Engine/Scripting/Enums.h"
 #include "Engine/Streaming/Streaming.h"
 
 bool MaterialInfo8::operator==(const MaterialInfo8& other) const
@@ -28,55 +30,55 @@ bool MaterialInfo8::operator==(const MaterialInfo8& other) const
             && MaxTessellationFactor == other.MaxTessellationFactor;
 }
 
-MaterialInfo::MaterialInfo(const MaterialInfo8& other)
+MaterialInfo9::MaterialInfo9(const MaterialInfo8& other)
 {
     Domain = other.Domain;
     BlendMode = other.BlendMode;
     ShadingModel = other.ShadingModel;
     UsageFlags = MaterialUsageFlags::None;
-    if (other.Flags & MaterialFlags_Deprecated::UseMask)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseMask))
         UsageFlags |= MaterialUsageFlags::UseMask;
-    if (other.Flags & MaterialFlags_Deprecated::UseEmissive)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseEmissive))
         UsageFlags |= MaterialUsageFlags::UseEmissive;
-    if (other.Flags & MaterialFlags_Deprecated::UsePositionOffset)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UsePositionOffset))
         UsageFlags |= MaterialUsageFlags::UsePositionOffset;
-    if (other.Flags & MaterialFlags_Deprecated::UseVertexColor)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseVertexColor))
         UsageFlags |= MaterialUsageFlags::UseVertexColor;
-    if (other.Flags & MaterialFlags_Deprecated::UseNormal)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseNormal))
         UsageFlags |= MaterialUsageFlags::UseNormal;
-    if (other.Flags & MaterialFlags_Deprecated::UseDisplacement)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseDisplacement))
         UsageFlags |= MaterialUsageFlags::UseDisplacement;
-    if (other.Flags & MaterialFlags_Deprecated::UseRefraction)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseRefraction))
         UsageFlags |= MaterialUsageFlags::UseRefraction;
     FeaturesFlags = MaterialFeaturesFlags::None;
-    if (other.Flags & MaterialFlags_Deprecated::Wireframe)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::Wireframe))
         FeaturesFlags |= MaterialFeaturesFlags::Wireframe;
-    if (other.Flags & MaterialFlags_Deprecated::TransparentDisableDepthTest && BlendMode != MaterialBlendMode::Opaque)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::TransparentDisableDepthTest) && BlendMode != MaterialBlendMode::Opaque)
         FeaturesFlags |= MaterialFeaturesFlags::DisableDepthTest;
-    if (other.Flags & MaterialFlags_Deprecated::TransparentDisableFog && BlendMode != MaterialBlendMode::Opaque)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::TransparentDisableFog) && BlendMode != MaterialBlendMode::Opaque)
         FeaturesFlags |= MaterialFeaturesFlags::DisableFog;
-    if (other.Flags & MaterialFlags_Deprecated::TransparentDisableReflections && BlendMode != MaterialBlendMode::Opaque)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::TransparentDisableReflections) && BlendMode != MaterialBlendMode::Opaque)
         FeaturesFlags |= MaterialFeaturesFlags::DisableReflections;
-    if (other.Flags & MaterialFlags_Deprecated::DisableDepthWrite)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::DisableDepthWrite))
         FeaturesFlags |= MaterialFeaturesFlags::DisableDepthWrite;
-    if (other.Flags & MaterialFlags_Deprecated::TransparentDisableDistortion && BlendMode != MaterialBlendMode::Opaque)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::TransparentDisableDistortion) && BlendMode != MaterialBlendMode::Opaque)
         FeaturesFlags |= MaterialFeaturesFlags::DisableDistortion;
-    if (other.Flags & MaterialFlags_Deprecated::InputWorldSpaceNormal)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::InputWorldSpaceNormal))
         FeaturesFlags |= MaterialFeaturesFlags::InputWorldSpaceNormal;
-    if (other.Flags & MaterialFlags_Deprecated::UseDitheredLODTransition)
+    if (EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::UseDitheredLODTransition))
         FeaturesFlags |= MaterialFeaturesFlags::DitheredLODTransition;
     if (other.BlendMode != MaterialBlendMode::Opaque && other.TransparentLighting == MaterialTransparentLighting_Deprecated::None)
         ShadingModel = MaterialShadingModel::Unlit;
     DecalBlendingMode = other.DecalBlendingMode;
     PostFxLocation = other.PostFxLocation;
-    CullMode = other.Flags & MaterialFlags_Deprecated::TwoSided ? ::CullMode::TwoSided : ::CullMode::Normal;
+    CullMode = EnumHasAnyFlags(other.Flags, MaterialFlags_Deprecated::TwoSided) ? ::CullMode::TwoSided : ::CullMode::Normal;
     MaskThreshold = other.MaskThreshold;
     OpacityThreshold = other.OpacityThreshold;
     TessellationMode = other.TessellationMode;
     MaxTessellationFactor = other.MaxTessellationFactor;
 }
 
-bool MaterialInfo::operator==(const MaterialInfo& other) const
+bool MaterialInfo9::operator==(const MaterialInfo9& other) const
 {
     return Domain == other.Domain
             && BlendMode == other.BlendMode
@@ -92,76 +94,38 @@ bool MaterialInfo::operator==(const MaterialInfo& other) const
             && MaxTessellationFactor == other.MaxTessellationFactor;
 }
 
-const Char* ToString(MaterialParameterType value)
+MaterialInfo::MaterialInfo(const MaterialInfo9& other)
 {
-    const Char* result;
-    switch (value)
-    {
-    case MaterialParameterType::Invalid:
-        result = TEXT("Invalid");
-        break;
-    case MaterialParameterType::Bool:
-        result = TEXT("Bool");
-        break;
-    case MaterialParameterType::Integer:
-        result = TEXT("Integer");
-        break;
-    case MaterialParameterType::Float:
-        result = TEXT("Float");
-        break;
-    case MaterialParameterType::Vector2:
-        result = TEXT("Vector2");
-        break;
-    case MaterialParameterType::Vector3:
-        result = TEXT("Vector3");
-        break;
-    case MaterialParameterType::Vector4:
-        result = TEXT("Vector4");
-        break;
-    case MaterialParameterType::Color:
-        result = TEXT("Color");
-        break;
-    case MaterialParameterType::Texture:
-        result = TEXT("Texture");
-        break;
-    case MaterialParameterType::CubeTexture:
-        result = TEXT("CubeTexture");
-        break;
-    case MaterialParameterType::NormalMap:
-        result = TEXT("NormalMap");
-        break;
-    case MaterialParameterType::SceneTexture:
-        result = TEXT("SceneTexture");
-        break;
-    case MaterialParameterType::GPUTexture:
-        result = TEXT("GPUTexture");
-        break;
-    case MaterialParameterType::Matrix:
-        result = TEXT("Matrix");
-        break;
-    case MaterialParameterType::GPUTextureArray:
-        result = TEXT("GPUTextureArray");
-        break;
-    case MaterialParameterType::GPUTextureVolume:
-        result = TEXT("GPUTextureVolume");
-        break;
-    case MaterialParameterType::GPUTextureCube:
-        result = TEXT("GPUTextureCube");
-        break;
-    case MaterialParameterType::ChannelMask:
-        result = TEXT("ChannelMask");
-        break;
-    case MaterialParameterType::GameplayGlobal:
-        result = TEXT("GameplayGlobal");
-        break;
-    case MaterialParameterType::TextureGroupSampler:
-        result = TEXT("TextureGroupSampler");
-        break;
-    default:
-        result = TEXT("");
-        break;
-    }
-    return result;
+    Domain = other.Domain;
+    BlendMode = other.BlendMode;
+    ShadingModel = other.ShadingModel;
+    UsageFlags = other.UsageFlags;
+    FeaturesFlags = other.FeaturesFlags;
+    DecalBlendingMode = other.DecalBlendingMode;
+    TransparentLightingMode = MaterialTransparentLightingMode::Surface;
+    PostFxLocation = other.PostFxLocation;
+    CullMode = other.CullMode;
+    MaskThreshold = other.MaskThreshold;
+    OpacityThreshold = other.OpacityThreshold;
+    TessellationMode = other.TessellationMode;
+    MaxTessellationFactor = other.MaxTessellationFactor;
+}
+
+bool MaterialInfo::operator==(const MaterialInfo& other) const
+{
+    return Domain == other.Domain
+            && BlendMode == other.BlendMode
+            && ShadingModel == other.ShadingModel
+            && UsageFlags == other.UsageFlags
+            && FeaturesFlags == other.FeaturesFlags
+            && DecalBlendingMode == other.DecalBlendingMode
+            && TransparentLightingMode == other.TransparentLightingMode
+            && PostFxLocation == other.PostFxLocation
+            && CullMode == other.CullMode
+            && Math::NearEqual(MaskThreshold, other.MaskThreshold)
+            && Math::NearEqual(OpacityThreshold, other.OpacityThreshold)
+            && TessellationMode == other.TessellationMode
+            && MaxTessellationFactor == other.MaxTessellationFactor;
 }
 
 Variant MaterialParameter::GetValue() const
@@ -182,7 +146,7 @@ Variant MaterialParameter::GetValue() const
     case MaterialParameterType::Vector3:
         return _asVector3;
     case MaterialParameterType::Vector4:
-        return *(Vector4*)&AsData;
+        return *(Float4*)&AsData;
     case MaterialParameterType::Color:
         return _asColor;
     case MaterialParameterType::Matrix:
@@ -198,7 +162,6 @@ Variant MaterialParameter::GetValue() const
     case MaterialParameterType::GPUTexture:
         return _asGPUTexture.Get();
     default:
-    CRASH;
         return Variant::Zero;
     }
 }
@@ -221,13 +184,13 @@ void MaterialParameter::SetValue(const Variant& value)
         _asFloat = (float)value;
         break;
     case MaterialParameterType::Vector2:
-        _asVector2 = (Vector2)value;
+        _asVector2 = (Float2)value;
         break;
     case MaterialParameterType::Vector3:
-        _asVector3 = (Vector3)value;
+        _asVector3 = (Float3)value;
         break;
     case MaterialParameterType::Vector4:
-        *(Vector4*)&AsData = (Vector4)value;
+        *(Float4*)&AsData = (Float4)value;
         break;
     case MaterialParameterType::Color:
         _asColor = (Color)value;
@@ -303,12 +266,14 @@ void MaterialParameter::SetValue(const Variant& value)
             invalidType = true;
         }
         break;
+    case MaterialParameterType::GlobalSDF:
+        break;
     default:
         invalidType = true;
     }
     if (invalidType)
     {
-        LOG(Error, "Invalid material parameter value type {0} to set (param type: {1})", value.Type, ::ToString(_type));
+        LOG(Error, "Invalid material parameter value type {0} to set (param type: {1})", value.Type, ScriptingEnum::ToString(_type));
     }
 }
 
@@ -329,19 +294,19 @@ void MaterialParameter::Bind(BindMeta& meta) const
         *((float*)(meta.Constants.Get() + _offset)) = _asFloat;
         break;
     case MaterialParameterType::Vector2:
-        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector2));
-        *((Vector2*)(meta.Constants.Get() + _offset)) = _asVector2;
+        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float2));
+        *((Float2*)(meta.Constants.Get() + _offset)) = _asVector2;
         break;
     case MaterialParameterType::Vector3:
-        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector3));
-        *((Vector3*)(meta.Constants.Get() + _offset)) = _asVector3;
+        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float3));
+        *((Float3*)(meta.Constants.Get() + _offset)) = _asVector3;
         break;
     case MaterialParameterType::Vector4:
-        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector4));
-        *((Vector4*)(meta.Constants.Get() + _offset)) = *(Vector4*)&AsData;
+        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float4));
+        *((Float4*)(meta.Constants.Get() + _offset)) = *(Float4*)&AsData;
         break;
     case MaterialParameterType::Color:
-        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector4));
+        ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float4));
         *((Color*)(meta.Constants.Get() + _offset)) = _asColor;
         break;
     case MaterialParameterType::Matrix:
@@ -399,12 +364,17 @@ void MaterialParameter::Bind(BindMeta& meta) const
             switch (type)
             {
             case MaterialSceneTextures::SceneDepth:
+            case MaterialSceneTextures::WorldPosition:
                 view = meta.CanSampleDepth
-                           ? (GPUDevice::Instance->Limits.HasReadOnlyDepth ? meta.Buffers->DepthBuffer->ViewReadOnlyDepth() : meta.Buffers->DepthBuffer->View())
+                           ? EnumHasAnyFlags(meta.Buffers->DepthBuffer->Flags(), GPUTextureFlags::ReadOnlyDepthView)
+                                 ? meta.Buffers->DepthBuffer->ViewReadOnlyDepth()
+                                 : meta.Buffers->DepthBuffer->View()
                            : GPUDevice::Instance->GetDefaultWhiteTexture()->View();
                 break;
             case MaterialSceneTextures::AmbientOcclusion:
             case MaterialSceneTextures::BaseColor:
+            case MaterialSceneTextures::DiffuseColor:
+            case MaterialSceneTextures::SpecularColor:
                 view = meta.CanSampleGBuffer ? meta.Buffers->GBuffer0->View() : nullptr;
                 break;
             case MaterialSceneTextures::WorldNormal:
@@ -428,7 +398,7 @@ void MaterialParameter::Bind(BindMeta& meta) const
     }
     case MaterialParameterType::ChannelMask:
         ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(int32));
-        *((Vector4*)(meta.Constants.Get() + _offset)) = Vector4(_asInteger == 0, _asInteger == 1, _asInteger == 2, _asInteger == 3);
+        *((Float4*)(meta.Constants.Get() + _offset)) = Float4(_asInteger == 0, _asInteger == 1, _asInteger == 2, _asInteger == 3);
         break;
     case MaterialParameterType::GameplayGlobal:
         if (_asAsset)
@@ -454,18 +424,30 @@ void MaterialParameter::Bind(BindMeta& meta) const
                     ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(float));
                     *((float*)(meta.Constants.Get() + _offset)) = e->Value.AsFloat;
                     break;
-                case VariantType::Vector2:
-                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector2));
-                    *((Vector2*)(meta.Constants.Get() + _offset)) = e->Value.AsVector2();
+                case VariantType::Float2:
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float2));
+                    *((Float2*)(meta.Constants.Get() + _offset)) = e->Value.AsFloat2();
                     break;
-                case VariantType::Vector3:
-                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector3));
-                    *((Vector3*)(meta.Constants.Get() + _offset)) = e->Value.AsVector3();
+                case VariantType::Float3:
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float3));
+                    *((Float3*)(meta.Constants.Get() + _offset)) = e->Value.AsFloat3();
                     break;
-                case VariantType::Vector4:
+                case VariantType::Float4:
                 case VariantType::Color:
-                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Vector4));
-                    *((Vector4*)(meta.Constants.Get() + _offset)) = e->Value.AsVector4();
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float4));
+                    *((Float4*)(meta.Constants.Get() + _offset)) = e->Value.AsFloat4();
+                    break;
+                case VariantType::Double2:
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float2));
+                    *((Float2*)(meta.Constants.Get() + _offset)) = (Float2)e->Value.AsDouble2();
+                    break;
+                case VariantType::Double3:
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float3));
+                    *((Float3*)(meta.Constants.Get() + _offset)) = (Float3)e->Value.AsDouble3();
+                    break;
+                case VariantType::Double4:
+                    ASSERT_LOW_LAYER(meta.Constants.Get() && meta.Constants.Length() >= (int32)_offset + sizeof(Float4));
+                    *((Float4*)(meta.Constants.Get() + _offset)) = (Float4)e->Value.AsDouble4();
                     break;
                 default: ;
                 }
@@ -475,6 +457,15 @@ void MaterialParameter::Bind(BindMeta& meta) const
     case MaterialParameterType::TextureGroupSampler:
         meta.Context->BindSampler(_registerIndex, Streaming::GetTextureGroupSampler(_asInteger));
         break;
+    case MaterialParameterType::GlobalSDF:
+    {
+        GlobalSignDistanceFieldPass::BindingData bindingData;
+        if (GlobalSignDistanceFieldPass::Instance()->Get(meta.Buffers, bindingData))
+            Platform::MemoryClear(&bindingData, sizeof(bindingData));
+        meta.Context->BindSR(_registerIndex, bindingData.Texture ? bindingData.Texture->ViewVolume() : nullptr);
+        *((GlobalSignDistanceFieldPass::ConstantsData*)(meta.Constants.Get() + _offset)) = bindingData.Constants;
+        break;
+    }
     default:
         break;
     }
@@ -517,7 +508,7 @@ void MaterialParameter::clone(const MaterialParameter* param)
         _asVector3 = param->_asVector3;
         break;
     case MaterialParameterType::Vector4:
-        *(Vector4*)&AsData = *(Vector4*)&param->AsData;
+        *(Float4*)&AsData = *(Float4*)&param->AsData;
         break;
     case MaterialParameterType::Color:
         _asColor = param->_asColor;
@@ -539,7 +530,7 @@ bool MaterialParameter::operator==(const MaterialParameter& other) const
 
 String MaterialParameter::ToString() const
 {
-    return String::Format(TEXT("\'{0}\' ({1}:{2}:{3})"), _name, ::ToString(_type), _paramId, _isPublic);
+    return String::Format(TEXT("\'{0}\' ({1}:{2}:{3})"), _name, ScriptingEnum::ToString(_type), _paramId, _isPublic);
 }
 
 MaterialParameter* MaterialParams::Get(const Guid& id)
@@ -691,35 +682,35 @@ bool MaterialParams::Load(ReadStream* stream)
                     stream->ReadFloat(&param->_asFloat);
                     break;
                 case MaterialParameterType::Vector2:
-                    stream->Read(&param->_asVector2);
+                    stream->Read(param->_asVector2);
                     break;
                 case MaterialParameterType::Vector3:
-                    stream->Read(&param->_asVector3);
+                    stream->Read(param->_asVector3);
                     break;
                 case MaterialParameterType::Vector4:
-                    stream->Read((Vector4*)&param->AsData);
+                    stream->Read((Float4&)param->AsData);
                     break;
                 case MaterialParameterType::Color:
-                    stream->Read(&param->_asColor);
+                    stream->Read(param->_asColor);
                     break;
                 case MaterialParameterType::Matrix:
-                    stream->Read((Matrix*)&param->AsData);
+                    stream->Read((Matrix&)param->AsData);
                     break;
                 case MaterialParameterType::NormalMap:
                 case MaterialParameterType::Texture:
                 case MaterialParameterType::CubeTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<TextureBase>(id);
                     break;
                 case MaterialParameterType::GPUTextureVolume:
                 case MaterialParameterType::GPUTextureCube:
                 case MaterialParameterType::GPUTextureArray:
                 case MaterialParameterType::GPUTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asGPUTexture = id;
                     break;
                 case MaterialParameterType::GameplayGlobal:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<GameplayGlobals>(id);
                     break;
                 default:
@@ -743,7 +734,7 @@ bool MaterialParams::Load(ReadStream* stream)
 
                 // Read properties
                 param->_type = static_cast<MaterialParameterType>(stream->ReadByte());
-                stream->Read(&param->_paramId);
+                stream->Read(param->_paramId);
                 param->_isPublic = stream->ReadBool();
                 param->_override = param->_isPublic;
                 stream->ReadString(&param->_name, 10421);
@@ -765,35 +756,35 @@ bool MaterialParams::Load(ReadStream* stream)
                     stream->ReadFloat(&param->_asFloat);
                     break;
                 case MaterialParameterType::Vector2:
-                    stream->Read(&param->_asVector2);
+                    stream->Read(param->_asVector2);
                     break;
                 case MaterialParameterType::Vector3:
-                    stream->Read(&param->_asVector3);
+                    stream->Read(param->_asVector3);
                     break;
                 case MaterialParameterType::Vector4:
-                    stream->Read((Vector4*)&param->AsData);
+                    stream->Read((Float4&)param->AsData);
                     break;
                 case MaterialParameterType::Color:
-                    stream->Read(&param->_asColor);
+                    stream->Read(param->_asColor);
                     break;
                 case MaterialParameterType::Matrix:
-                    stream->Read((Matrix*)&param->AsData);
+                    stream->Read((Matrix&)param->AsData);
                     break;
                 case MaterialParameterType::NormalMap:
                 case MaterialParameterType::Texture:
                 case MaterialParameterType::CubeTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<TextureBase>(id);
                     break;
                 case MaterialParameterType::GPUTextureVolume:
                 case MaterialParameterType::GPUTextureCube:
                 case MaterialParameterType::GPUTextureArray:
                 case MaterialParameterType::GPUTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asGPUTexture = id;
                     break;
                 case MaterialParameterType::GameplayGlobal:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<GameplayGlobals>(id);
                     break;
                 default:
@@ -817,7 +808,7 @@ bool MaterialParams::Load(ReadStream* stream)
 
                 // Read properties
                 param->_type = static_cast<MaterialParameterType>(stream->ReadByte());
-                stream->Read(&param->_paramId);
+                stream->Read(param->_paramId);
                 param->_isPublic = stream->ReadBool();
                 param->_override = stream->ReadBool();
                 stream->ReadString(&param->_name, 10421);
@@ -840,35 +831,35 @@ bool MaterialParams::Load(ReadStream* stream)
                     stream->ReadFloat(&param->_asFloat);
                     break;
                 case MaterialParameterType::Vector2:
-                    stream->Read(&param->_asVector2);
+                    stream->Read(param->_asVector2);
                     break;
                 case MaterialParameterType::Vector3:
-                    stream->Read(&param->_asVector3);
+                    stream->Read(param->_asVector3);
                     break;
                 case MaterialParameterType::Vector4:
-                    stream->Read((Vector4*)&param->AsData);
+                    stream->Read((Float4&)param->AsData);
                     break;
                 case MaterialParameterType::Color:
-                    stream->Read(&param->_asColor);
+                    stream->Read(param->_asColor);
                     break;
                 case MaterialParameterType::Matrix:
-                    stream->Read((Matrix*)&param->AsData);
+                    stream->Read((Matrix&)param->AsData);
                     break;
                 case MaterialParameterType::NormalMap:
                 case MaterialParameterType::Texture:
                 case MaterialParameterType::CubeTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<TextureBase>(id);
                     break;
                 case MaterialParameterType::GPUTextureVolume:
                 case MaterialParameterType::GPUTextureCube:
                 case MaterialParameterType::GPUTextureArray:
                 case MaterialParameterType::GPUTexture:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asGPUTexture = id;
                     break;
                 case MaterialParameterType::GameplayGlobal:
-                    stream->Read(&id);
+                    stream->Read(id);
                     param->_asAsset = Content::LoadAsync<GameplayGlobals>(id);
                     break;
                 default:
@@ -909,7 +900,7 @@ void MaterialParams::Save(WriteStream* stream)
 
         // Write properties
         stream->WriteByte(static_cast<byte>(param->_type));
-        stream->Write(&param->_paramId);
+        stream->Write(param->_paramId);
         stream->WriteBool(param->_isPublic);
         stream->WriteBool(param->_override);
         stream->WriteString(param->_name, 10421);
@@ -933,33 +924,33 @@ void MaterialParams::Save(WriteStream* stream)
             stream->WriteFloat(param->_asFloat);
             break;
         case MaterialParameterType::Vector2:
-            stream->Write(&param->_asVector2);
+            stream->Write(param->_asVector2);
             break;
         case MaterialParameterType::Vector3:
-            stream->Write(&param->_asVector3);
+            stream->Write(param->_asVector3);
             break;
         case MaterialParameterType::Vector4:
-            stream->Write((Vector4*)&param->AsData);
+            stream->Write((Float4&)param->AsData);
             break;
         case MaterialParameterType::Color:
-            stream->Write(&param->_asColor);
+            stream->Write(param->_asColor);
             break;
         case MaterialParameterType::Matrix:
-            stream->Write((Matrix*)&param->AsData);
+            stream->Write((Matrix&)param->AsData);
             break;
         case MaterialParameterType::NormalMap:
         case MaterialParameterType::Texture:
         case MaterialParameterType::CubeTexture:
         case MaterialParameterType::GameplayGlobal:
             id = param->_asAsset.GetID();
-            stream->Write(&id);
+            stream->Write(id);
             break;
         case MaterialParameterType::GPUTextureVolume:
         case MaterialParameterType::GPUTextureArray:
         case MaterialParameterType::GPUTextureCube:
         case MaterialParameterType::GPUTexture:
             id = param->_asGPUTexture.GetID();
-            stream->Write(&id);
+            stream->Write(id);
             break;
         default:
             break;
@@ -985,7 +976,7 @@ void MaterialParams::Save(WriteStream* stream, const Array<SerializedMaterialPar
 
             // Write properties
             stream->WriteByte(static_cast<byte>(param.Type));
-            stream->Write(&param.ID);
+            stream->Write(param.ID);
             stream->WriteBool(param.IsPublic);
             stream->WriteBool(param.Override);
             stream->WriteString(param.Name, 10421);
@@ -1008,19 +999,19 @@ void MaterialParams::Save(WriteStream* stream, const Array<SerializedMaterialPar
                 stream->WriteFloat(param.AsFloat);
                 break;
             case MaterialParameterType::Vector2:
-                stream->Write(&param.AsVector2);
+                stream->Write(param.AsFloat2);
                 break;
             case MaterialParameterType::Vector3:
-                stream->Write(&param.AsVector3);
+                stream->Write(param.AsFloat3);
                 break;
             case MaterialParameterType::Vector4:
-                stream->Write((Vector4*)&param.AsData);
+                stream->Write((Float4&)param.AsData);
                 break;
             case MaterialParameterType::Color:
-                stream->Write(&param.AsColor);
+                stream->Write(param.AsColor);
                 break;
             case MaterialParameterType::Matrix:
-                stream->Write((Matrix*)&param.AsData);
+                stream->Write((Matrix&)param.AsData);
                 break;
             case MaterialParameterType::NormalMap:
             case MaterialParameterType::Texture:
@@ -1030,7 +1021,7 @@ void MaterialParams::Save(WriteStream* stream, const Array<SerializedMaterialPar
             case MaterialParameterType::GPUTextureCube:
             case MaterialParameterType::GPUTextureArray:
             case MaterialParameterType::GPUTexture:
-                stream->Write(&param.AsGuid);
+                stream->Write(param.AsGuid);
                 break;
             default:
                 break;

@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Material.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Types/DataContainer.h"
 #include "Engine/Content/Upgraders/ShaderAssetUpgrader.h"
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
+#include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/RenderTools.h"
 #include "Engine/Graphics/Materials/MaterialShader.h"
 #include "Engine/Graphics/Shaders/Cache/ShaderCacheManager.h"
@@ -19,6 +20,7 @@
 #include "Engine/ShadersCompilation/Config.h"
 #if BUILD_DEBUG
 #include "Engine/Engine/Globals.h"
+#include "Engine/Scripting/BinaryModule.h"
 #endif
 #endif
 
@@ -46,6 +48,11 @@ const MaterialInfo& Material::GetInfo() const
 
     static MaterialInfo EmptyInfo;
     return EmptyInfo;
+}
+
+GPUShader* Material::GetShader() const
+{
+    return _materialShader ? _materialShader->GetShader() : nullptr;
 }
 
 bool Material::IsReady() const
@@ -118,6 +125,18 @@ Asset::LoadResult Material::load()
 {
     ASSERT(_materialShader == nullptr);
     FlaxChunk* materialParamsChunk;
+
+    // Wait for the GPU Device to be ready (eg. case when loading material before GPU init)
+#define IS_GPU_NOT_READY() (GPUDevice::Instance == nullptr || GPUDevice::Instance->GetState() != GPUDevice::DeviceState::Ready)
+    if (!IsInMainThread() && IS_GPU_NOT_READY())
+    {
+        int32 timeout = 1000;
+        while (IS_GPU_NOT_READY() && timeout-- > 0)
+            Platform::Sleep(1);
+        if (IS_GPU_NOT_READY())
+            return LoadResult::InvalidData;
+    }
+#undef IS_GPU_NOT_READY
 
     // Special case for Null renderer
     if (IsNullRenderer())
@@ -238,7 +257,9 @@ Asset::LoadResult Material::load()
 
 #if BUILD_DEBUG && USE_EDITOR
         // Dump generated material source to the temporary file
+        BinaryModule::Locker.Lock();
         source.SaveToFile(Globals::ProjectCacheFolder / TEXT("material.txt"));
+        BinaryModule::Locker.Unlock();
 #endif
 
         // Encrypt source code
@@ -406,8 +427,8 @@ void Material::InitCompilationOptions(ShaderCompilationOptions& options)
     const bool useDistortion =
             (info.Domain == MaterialDomain::Surface || info.Domain == MaterialDomain::Deformable || info.Domain == MaterialDomain::Particle) &&
             info.BlendMode != MaterialBlendMode::Opaque &&
-            (info.UsageFlags & MaterialUsageFlags::UseRefraction) != 0 &&
-            (info.FeaturesFlags & MaterialFeaturesFlags::DisableDistortion) == 0;
+            EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseRefraction) &&
+            (info.FeaturesFlags & MaterialFeaturesFlags::DisableDistortion) == MaterialFeaturesFlags::None;
 
     // @formatter:off
     static const char* Numbers[] =
@@ -420,19 +441,31 @@ void Material::InitCompilationOptions(ShaderCompilationOptions& options)
     options.Macros.Add({ "MATERIAL_DOMAIN", Numbers[(int32)info.Domain] });
     options.Macros.Add({ "MATERIAL_BLEND", Numbers[(int32)info.BlendMode] });
     options.Macros.Add({ "MATERIAL_SHADING_MODEL", Numbers[(int32)info.ShadingModel] });
-    options.Macros.Add({ "MATERIAL_MASKED", Numbers[info.UsageFlags & MaterialUsageFlags::UseMask ? 1 : 0] });
+    options.Macros.Add({ "MATERIAL_MASKED", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseMask) ? 1 : 0] });
     options.Macros.Add({ "DECAL_BLEND_MODE", Numbers[(int32)info.DecalBlendingMode] });
-    options.Macros.Add({ "USE_EMISSIVE", Numbers[info.UsageFlags & MaterialUsageFlags::UseEmissive ? 1 : 0] });
-    options.Macros.Add({ "USE_NORMAL", Numbers[info.UsageFlags & MaterialUsageFlags::UseNormal ? 1 : 0] });
-    options.Macros.Add({ "USE_POSITION_OFFSET", Numbers[info.UsageFlags & MaterialUsageFlags::UsePositionOffset ? 1 : 0] });
-    options.Macros.Add({ "USE_VERTEX_COLOR", Numbers[info.UsageFlags & MaterialUsageFlags::UseVertexColor ? 1 : 0] });
-    options.Macros.Add({ "USE_DISPLACEMENT", Numbers[info.UsageFlags & MaterialUsageFlags::UseDisplacement ? 1 : 0] });
-    options.Macros.Add({ "USE_DITHERED_LOD_TRANSITION", Numbers[info.FeaturesFlags & MaterialFeaturesFlags::DitheredLODTransition ? 1 : 0] });
+    options.Macros.Add({ "USE_EMISSIVE", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseEmissive) ? 1 : 0] });
+    options.Macros.Add({ "USE_NORMAL", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseNormal) ? 1 : 0] });
+    options.Macros.Add({ "USE_POSITION_OFFSET", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UsePositionOffset) ? 1 : 0] });
+    options.Macros.Add({ "USE_VERTEX_COLOR", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseVertexColor) ? 1 : 0] });
+    options.Macros.Add({ "USE_DISPLACEMENT", Numbers[EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseDisplacement) ? 1 : 0] });
+    options.Macros.Add({ "USE_DITHERED_LOD_TRANSITION", Numbers[EnumHasAnyFlags(info.FeaturesFlags, MaterialFeaturesFlags::DitheredLODTransition) ? 1 : 0] });
     options.Macros.Add({ "USE_GBUFFER_CUSTOM_DATA", Numbers[useCustomData ? 1 : 0] });
-    options.Macros.Add({ "USE_REFLECTIONS", Numbers[info.FeaturesFlags & MaterialFeaturesFlags::DisableReflections ? 0 : 1] });
-    options.Macros.Add({ "USE_FOG", Numbers[info.FeaturesFlags & MaterialFeaturesFlags::DisableFog ? 0 : 1] });
+    options.Macros.Add({ "USE_REFLECTIONS", Numbers[EnumHasAnyFlags(info.FeaturesFlags, MaterialFeaturesFlags::DisableReflections) ? 0 : 1] });
+    if (!(info.FeaturesFlags & MaterialFeaturesFlags::DisableReflections) && EnumHasAnyFlags(info.FeaturesFlags, MaterialFeaturesFlags::ScreenSpaceReflections))
+        options.Macros.Add({ "MATERIAL_REFLECTIONS", Numbers[1] });
+    options.Macros.Add({ "USE_FOG", Numbers[EnumHasAnyFlags(info.FeaturesFlags, MaterialFeaturesFlags::DisableFog) ? 0 : 1] });
     if (useForward)
-        options.Macros.Add({ "USE_PIXEL_NORMAL_OFFSET_REFRACTION", Numbers[info.FeaturesFlags & MaterialFeaturesFlags::PixelNormalOffsetRefraction ? 1 : 0] });
+    {
+        options.Macros.Add({ "USE_PIXEL_NORMAL_OFFSET_REFRACTION", Numbers[EnumHasAnyFlags(info.FeaturesFlags, MaterialFeaturesFlags::PixelNormalOffsetRefraction) ? 1 : 0] });
+        switch (info.TransparentLightingMode)
+        {
+        case MaterialTransparentLightingMode::Surface:
+            break;
+        case MaterialTransparentLightingMode::SurfaceNonDirectional:
+            options.Macros.Add({ "LIGHTING_NO_DIRECTIONAL", "1" });
+            break;
+        }
+    }
 
     // TODO: don't compile VS_Depth for deferred/forward materials if material doesn't use position offset or masking
 
@@ -452,7 +485,7 @@ void Material::InitCompilationOptions(ShaderCompilationOptions& options)
             options.Macros.Add({ "MATERIAL_TESSELLATION", "MATERIAL_TESSELLATION_PHONG" });
             break;
         }
-        options.Macros.Add({ "MAX_TESSELLATION_FACTOR", Numbers[info.MaxTessellationFactor] });
+        options.Macros.Add({ "MAX_TESSELLATION_FACTOR", Numbers[Math::Min<int32>(info.MaxTessellationFactor, ARRAY_COUNT(Numbers) - 1)] });
     }
 
     // Helper macros (used by the parser)
@@ -474,6 +507,8 @@ void Material::InitCompilationOptions(ShaderCompilationOptions& options)
 BytesContainer Material::LoadSurface(bool createDefaultIfMissing)
 {
     BytesContainer result;
+    if (WaitForLoaded() && !LastLoadFailed())
+        return result;
     ScopeLock lock(Locker);
 
     // Check if has that chunk

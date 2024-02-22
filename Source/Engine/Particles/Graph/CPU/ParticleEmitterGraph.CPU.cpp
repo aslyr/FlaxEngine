@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticleEmitterGraph.CPU.h"
 #include "Engine/Core/Collections/Sorting.h"
@@ -8,7 +8,7 @@
 #include "Engine/Engine/Time.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 
-ThreadLocal<ParticleEmitterGraphCPUContext> ParticleEmitterGraphCPUExecutor::Context;
+ThreadLocal<ParticleEmitterGraphCPUContext*> ParticleEmitterGraphCPUExecutor::Context;
 
 namespace
 {
@@ -79,9 +79,9 @@ bool ParticleEmitterGraphCPU::Load(ReadStream* stream, bool loadMeta)
             *(type*)(_defaultParticleData.Get() + attr.Offset) = AttributesDefaults[i].getter; \
             break
         SETUP_ATTR(float, Float, AsFloat);
-        SETUP_ATTR(Vector2, Vector2, AsVector2());
-        SETUP_ATTR(Vector3, Vector3, AsVector3());
-        SETUP_ATTR(Vector4, Vector4, AsVector4());
+        SETUP_ATTR(Float2, Float2, AsFloat2());
+        SETUP_ATTR(Float3, Float3, AsFloat3());
+        SETUP_ATTR(Float4, Float4, AsFloat4());
         SETUP_ATTR(int32, Int, AsInt);
         SETUP_ATTR(uint32, Uint, AsUint);
 #undef SETUP_ATTR
@@ -102,7 +102,7 @@ void ParticleEmitterGraphCPU::InitializeNode(Node* node)
 
     switch (node->Type)
     {
-        // Position (spiral)
+    // Position (spiral)
     case GRAPH_NODE_MAKE_TYPE(15, 214):
         node->CustomDataOffset = CustomDataSize;
         CustomDataSize += sizeof(float);
@@ -122,9 +122,12 @@ ParticleEmitterGraphCPUExecutor::ParticleEmitterGraphCPUExecutor(ParticleEmitter
 
 void ParticleEmitterGraphCPUExecutor::Init(ParticleEmitter* emitter, ParticleEffect* effect, ParticleEmitterInstance& data, float dt)
 {
-    auto& context = Context.Get();
+    auto& contextPtr = Context.Get();
+    if (!contextPtr)
+        contextPtr = New<ParticleEmitterGraphCPUContext>();
+    auto& context = *contextPtr;
     context.GraphStack.Clear();
-    context.GraphStack.Push((Graph*)&_graph);
+    context.GraphStack.Push(&_graph);
     context.Data = &data;
     context.Emitter = emitter;
     context.Effect = effect;
@@ -133,6 +136,8 @@ void ParticleEmitterGraphCPUExecutor::Init(ParticleEmitter* emitter, ParticleEff
     context.ViewTask = effect->GetRenderTask();
     context.CallStackSize = 0;
     context.Functions.Clear();
+    for (int32 i = 0; i < PARTICLE_ATTRIBUTES_MAX_COUNT; i++)
+        context.AttributesRemappingTable[i] = i;
 }
 
 bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, ParticleEffect* effect, ParticleEmitterInstance& data, BoundingBox& result)
@@ -153,10 +158,10 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
         // Build sphere bounds out of all living particles positions
         byte* positionPtr = bufferPtr + layout->Attributes[_graph._attrPosition].Offset;
 #if 0
-        BoundingSphere sphere(*((Vector3*)positionPtr), 0.0f);
+        BoundingSphere sphere(*((Float3*)positionPtr), 0.0f);
         for (int32 particleIndex = 0; particleIndex < count; particleIndex++)
         {
-            BoundingSphere::Merge(sphere, *((Vector3*)positionPtr), &sphere);
+            BoundingSphere::Merge(sphere, *((Float3*)positionPtr), &sphere);
             positionPtr += stride;
         }
 #endif
@@ -167,7 +172,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
             Vector3 center = Vector3::Zero;
             for (int32 i = 0; i < count; i++)
             {
-                Vector3::Add(*((Vector3*)positionPtr), center, &center);
+                Vector3::Add(*((Float3*)positionPtr), center, &center);
                 positionPtr += stride;
             }
             center /= static_cast<float>(count);
@@ -178,7 +183,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
             for (int32 i = 0; i < count; i++)
             {
                 // We are doing a relative distance comparison to find the maximum distance from the center of our sphere
-                const float distance = Vector3::DistanceSquared(center, *(Vector3*)positionPtr);
+                const float distance = Float3::DistanceSquared(center, *(Float3*)positionPtr);
                 positionPtr += stride;
 
                 if (distance > radius)
@@ -197,7 +202,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
             BoundingBox box = BoundingBox::Empty;
             for (int32 particleIndex = 0; particleIndex < count; particleIndex++)
             {
-                Vector3 position = *(Vector3*)positionPtr;
+                Float3 position = *(Float3*)positionPtr;
 #if ENABLE_ASSERTION
                 if (!position.IsNanOrInfinity())
 #endif
@@ -226,7 +231,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
             const auto module = emitter->Graph.RenderModules[moduleIndex];
             switch (module->TypeID)
             {
-                // Sprite Rendering
+            // Sprite Rendering
             case 400:
             {
                 if (_graph._attrSpriteSize != -1)
@@ -246,12 +251,12 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
                 }
                 break;
             }
-                // Light Rendering
+            // Light Rendering
             case 401:
             {
                 // Prepare graph data
-                auto& context = Context.Get();
                 Init(emitter, effect, data);
+                auto& context = *Context.Get();
 
                 // Find the maximum radius of the particle light
                 float maxRadius = 0.0f;
@@ -269,7 +274,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
 
                 break;
             }
-                // Model Rendering
+            // Model Rendering
             case 403:
             {
                 const auto modelAsset = (Model*)module->Assets[0].Get();
@@ -281,11 +286,11 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
                 if (_graph._attrScale != -1)
                 {
                     // Find the maximum local bounds of the particle model
-                    Vector3 maxScale = Vector3::Zero;
+                    Float3 maxScale = Float3::Zero;
                     byte* scale = bufferPtr + layout->Attributes[_graph._attrScale].Offset;
                     for (int32 i = 0; i < count; i++)
                     {
-                        Vector3::Max(*((Vector3*)scale), maxScale, maxScale);
+                        Float3::Max(*((Float3*)scale), maxScale, maxScale);
                         scale += stride;
                     }
 
@@ -297,7 +302,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
                 }
                 break;
             }
-                // Ribbon Rendering
+            // Ribbon Rendering
             case 404:
             {
                 if (_graph._attrRibbonWidth != -1)
@@ -317,7 +322,7 @@ bool ParticleEmitterGraphCPUExecutor::ComputeBounds(ParticleEmitter* emitter, Pa
                 }
                 break;
             }
-                // Volumetric Fog Rendering
+            // Volumetric Fog Rendering
             case 405:
             {
                 // Find the maximum radius of the particle
@@ -375,7 +380,7 @@ void ParticleEmitterGraphCPUExecutor::Draw(ParticleEmitter* emitter, ParticleEff
 
     // Prepare graph data
     Init(emitter, effect, data);
-    auto& context = Context.Get();
+    auto& context = *Context.Get();
 
     // Draw lights
     for (int32 moduleIndex = 0; moduleIndex < emitter->Graph.LightModules.Count(); moduleIndex++)
@@ -387,7 +392,7 @@ void ParticleEmitterGraphCPUExecutor::Draw(ParticleEmitter* emitter, ParticleEff
         lightData.MinRoughness = 0.04f;
         lightData.ShadowsDistance = 2000.0f;
         lightData.ShadowsStrength = 1.0f;
-        lightData.Direction = Vector3::Forward;
+        lightData.Direction = Float3::Forward;
         lightData.ShadowsFadeDistance = 50.0f;
         lightData.ShadowsNormalOffsetScale = 10.0f;
         lightData.ShadowsDepthBias = 0.5f;
@@ -409,13 +414,11 @@ void ParticleEmitterGraphCPUExecutor::Draw(ParticleEmitter* emitter, ParticleEff
             const float radius = (float)GetValue(module->GetBox(1), 3);
             const float fallOffExponent = (float)GetValue(module->GetBox(2), 4);
 
-            lightData.Position = *(Vector3*)positionPtr;
-            lightData.Color = Vector3(color) * color.W;
+            lightData.Color = Float3(color) * color.W;
             lightData.Radius = radius;
             lightData.FallOffExponent = fallOffExponent;
 
-            if (emitter->SimulationSpace == ParticlesSimulationSpace::Local)
-                Vector3::Transform(lightData.Position, transform, lightData.Position);
+            Float3::Transform(*(Float3*)positionPtr, transform, lightData.Position);
 
             renderContext.List->PointLights.Add(lightData);
 
@@ -470,7 +473,7 @@ void ParticleEmitterGraphCPUExecutor::Update(ParticleEmitter* emitter, ParticleE
         byte* positionPtr = cpu.Buffer.Get() + data.Buffer->Layout->Attributes[_graph._attrPosition].Offset;
         for (int32 particleIndex = 0; particleIndex < cpu.Count; particleIndex++)
         {
-            Vector3 pos = *((Vector3*)positionPtr);
+            Float3 pos = *((Float3*)positionPtr);
             ASSERT(!pos.IsNanOrInfinity());
             positionPtr += data.Buffer->Stride;
         }
@@ -485,7 +488,7 @@ void ParticleEmitterGraphCPUExecutor::Update(ParticleEmitter* emitter, ParticleE
         byte* velocityPtr = cpu.Buffer.Get() + data.Buffer->Layout->Attributes[_graph._attrVelocity].Offset;
         for (int32 particleIndex = 0; particleIndex < cpu.Count; particleIndex++)
         {
-            *((Vector3*)positionPtr) += *((Vector3*)velocityPtr) * dt;
+            *((Float3*)positionPtr) += *((Float3*)velocityPtr) * dt;
             positionPtr += data.Buffer->Stride;
             velocityPtr += data.Buffer->Stride;
         }
@@ -499,7 +502,7 @@ void ParticleEmitterGraphCPUExecutor::Update(ParticleEmitter* emitter, ParticleE
         byte* angularVelocityPtr = cpu.Buffer.Get() + data.Buffer->Layout->Attributes[_graph._attrAngularVelocity].Offset;
         for (int32 particleIndex = 0; particleIndex < cpu.Count; particleIndex++)
         {
-            *((Vector3*)rotationPtr) += *((Vector3*)angularVelocityPtr) * dt;
+            *((Float3*)rotationPtr) += *((Float3*)angularVelocityPtr) * dt;
             rotationPtr += data.Buffer->Stride;
             angularVelocityPtr += data.Buffer->Stride;
         }
@@ -571,7 +574,6 @@ int32 ParticleEmitterGraphCPUExecutor::UpdateSpawn(ParticleEmitter* emitter, Par
     PROFILE_CPU_NAMED("Spawn");
 
     // Prepare data
-    auto& context = Context.Get();
     Init(emitter, effect, data, dt);
 
     // Spawn particles
@@ -587,7 +589,7 @@ int32 ParticleEmitterGraphCPUExecutor::UpdateSpawn(ParticleEmitter* emitter, Par
 VisjectExecutor::Value ParticleEmitterGraphCPUExecutor::eatBox(Node* caller, Box* box)
 {
     // Check if graph is looped or is too deep
-    auto& context = Context.Get();
+    auto& context = *Context.Get();
     if (context.CallStackSize >= PARTICLE_EMITTER_MAX_CALL_STACK)
     {
         OnError(caller, box, TEXT("Graph is looped or too deep!"));
@@ -618,6 +620,6 @@ VisjectExecutor::Value ParticleEmitterGraphCPUExecutor::eatBox(Node* caller, Box
 
 VisjectExecutor::Graph* ParticleEmitterGraphCPUExecutor::GetCurrentGraph() const
 {
-    auto& context = Context.Get();
-    return context.GraphStack.Peek();
+    auto& context = *Context.Get();
+    return (Graph*)context.GraphStack.Peek();
 }

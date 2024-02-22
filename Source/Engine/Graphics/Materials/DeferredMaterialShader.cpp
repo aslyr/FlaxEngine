@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "DeferredMaterialShader.h"
 #include "MaterialShaderFeatures.h"
@@ -17,30 +17,18 @@
 #include "Engine/Graphics/RenderTask.h"
 
 PACK_STRUCT(struct DeferredMaterialShaderData {
-    Matrix ViewProjectionMatrix;
     Matrix WorldMatrix;
-    Matrix ViewMatrix;
-    Matrix PrevViewProjectionMatrix;
     Matrix PrevWorldMatrix;
-    Vector3 ViewPos;
-    float ViewFar;
-    Vector3 ViewDir;
-    float TimeParam;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
-    Vector3 WorldInvScale;
-    float WorldDeterminantSign;
-    Vector2 Dummy0;
+    Float2 Dummy0;
     float LODDitherFactor;
     float PerInstanceRandom;
-    Vector4 TemporalAAJitter;
-    Vector3 GeometrySize;
-    float Dummy1;
+    Float3 GeometrySize;
+    float WorldDeterminantSign;
     });
 
 DrawPass DeferredMaterialShader::GetDrawModes() const
 {
-    return DrawPass::Depth | DrawPass::GBuffer | DrawPass::MotionVectors;
+    return DrawPass::Depth | DrawPass::GBuffer | DrawPass::GlobalSurfaceAtlas | DrawPass::MotionVectors | DrawPass::QuadOverdraw;
 }
 
 bool DeferredMaterialShader::CanUseLightmap() const
@@ -56,6 +44,7 @@ bool DeferredMaterialShader::CanUseInstancing(InstancingHandler& handler) const
 
 void DeferredMaterialShader::Bind(BindParameters& params)
 {
+    //PROFILE_CPU();
     // Prepare
     auto context = params.GPUContext;
     auto& view = params.RenderContext.View;
@@ -74,35 +63,18 @@ void DeferredMaterialShader::Bind(BindParameters& params)
     bindMeta.Context = context;
     bindMeta.Constants = cb;
     bindMeta.Input = nullptr;
-    bindMeta.Buffers = nullptr;
+    bindMeta.Buffers = params.RenderContext.Buffers;
     bindMeta.CanSampleDepth = false;
     bindMeta.CanSampleGBuffer = false;
     MaterialParams::Bind(params.ParamsLink, bindMeta);
 
     // Setup material constants
     {
-        Matrix::Transpose(view.Frustum.GetMatrix(), materialData->ViewProjectionMatrix);
         Matrix::Transpose(drawCall.World, materialData->WorldMatrix);
-        Matrix::Transpose(view.View, materialData->ViewMatrix);
         Matrix::Transpose(drawCall.Surface.PrevWorld, materialData->PrevWorldMatrix);
-        Matrix::Transpose(view.PrevViewProjection, materialData->PrevViewProjectionMatrix);
-        materialData->ViewPos = view.Position;
-        materialData->ViewFar = view.Far;
-        materialData->ViewDir = view.Direction;
-        materialData->TimeParam = params.TimeParam;
-        materialData->ViewInfo = view.ViewInfo;
-        materialData->ScreenSize = view.ScreenSize;
-        const float scaleX = Vector3(drawCall.World.M11, drawCall.World.M12, drawCall.World.M13).Length();
-        const float scaleY = Vector3(drawCall.World.M21, drawCall.World.M22, drawCall.World.M23).Length();
-        const float scaleZ = Vector3(drawCall.World.M31, drawCall.World.M32, drawCall.World.M33).Length();
-        materialData->WorldInvScale = Vector3(
-            scaleX > 0.00001f ? 1.0f / scaleX : 0.0f,
-            scaleY > 0.00001f ? 1.0f / scaleY : 0.0f,
-            scaleZ > 0.00001f ? 1.0f / scaleZ : 0.0f);
         materialData->WorldDeterminantSign = drawCall.WorldDeterminantSign;
         materialData->LODDitherFactor = drawCall.Surface.LODDitherFactor;
         materialData->PerInstanceRandom = drawCall.PerInstanceRandom;
-        materialData->TemporalAAJitter = view.TemporalAAJitter;
         materialData->GeometrySize = drawCall.Surface.GeometrySize;
     }
 
@@ -129,7 +101,7 @@ void DeferredMaterialShader::Bind(BindParameters& params)
     }
 
     // Select pipeline state based on current pass and render mode
-    const bool wireframe = (_info.FeaturesFlags & MaterialFeaturesFlags::Wireframe) != 0 || view.Mode == ViewMode::Wireframe;
+    const bool wireframe = (_info.FeaturesFlags & MaterialFeaturesFlags::Wireframe) != MaterialFeaturesFlags::None || view.Mode == ViewMode::Wireframe;
     CullMode cullMode = view.Pass == DrawPass::Depth ? CullMode::TwoSided : _info.CullMode;
 #if USE_EDITOR
     if (IsRunningRadiancePass)
@@ -164,9 +136,15 @@ void DeferredMaterialShader::Unload()
 
 bool DeferredMaterialShader::Load()
 {
+    bool failed = false;
     auto psDesc = GPUPipelineState::Description::Default;
-    psDesc.DepthTestEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthTest) == 0;
-    psDesc.DepthWriteEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthWrite) == 0;
+    psDesc.DepthWriteEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthWrite) == MaterialFeaturesFlags::None;
+    if (EnumHasAnyFlags(_info.FeaturesFlags, MaterialFeaturesFlags::DisableDepthTest))
+    {
+        psDesc.DepthFunc = ComparisonFunc::Always;
+        if (!psDesc.DepthWriteEnable)
+            psDesc.DepthEnable = false;
+    }
 
     // Check if use tessellation (both material and runtime supports it)
     const bool useTess = _info.TessellationMode != TessellationMethod::None && GPUDevice::Instance->Limits.HasTessellation;
@@ -178,16 +156,20 @@ bool DeferredMaterialShader::Load()
 
     // GBuffer Pass
     psDesc.VS = _shader->GetVS("VS");
+    failed |= psDesc.VS == nullptr;
     psDesc.PS = _shader->GetPS("PS_GBuffer");
     _cache.Default.Init(psDesc);
     psDesc.VS = _shader->GetVS("VS", 1);
+    failed |= psDesc.VS == nullptr;
     _cacheInstanced.Default.Init(psDesc);
 
     // GBuffer Pass with lightmap (pixel shader permutation for USE_LIGHTMAP=1)
     psDesc.VS = _shader->GetVS("VS");
+    failed |= psDesc.VS == nullptr;
     psDesc.PS = _shader->GetPS("PS_GBuffer", 1);
     _cache.DefaultLightmap.Init(psDesc);
     psDesc.VS = _shader->GetVS("VS", 1);
+    failed |= psDesc.VS == nullptr;
     _cacheInstanced.DefaultLightmap.Init(psDesc);
 
     // GBuffer Pass with skinning
@@ -195,9 +177,23 @@ bool DeferredMaterialShader::Load()
     psDesc.PS = _shader->GetPS("PS_GBuffer");
     _cache.DefaultSkinned.Init(psDesc);
 
+#if USE_EDITOR
+    if (_shader->HasShader("PS_QuadOverdraw"))
+    {
+        // Quad Overdraw
+        psDesc.VS = _shader->GetVS("VS");
+        psDesc.PS = _shader->GetPS("PS_QuadOverdraw");
+        _cache.QuadOverdraw.Init(psDesc);
+        psDesc.VS = _shader->GetVS("VS", 1);
+        _cacheInstanced.Depth.Init(psDesc);
+        psDesc.VS = _shader->GetVS("VS_Skinned");
+        _cache.QuadOverdrawSkinned.Init(psDesc);
+    }
+#endif
+
     // Motion Vectors pass
     psDesc.DepthWriteEnable = false;
-    psDesc.DepthTestEnable = true;
+    psDesc.DepthEnable = true;
     psDesc.DepthFunc = ComparisonFunc::LessEqual;
     psDesc.VS = _shader->GetVS("VS");
     psDesc.PS = _shader->GetPS("PS_MotionVectors");
@@ -215,12 +211,12 @@ bool DeferredMaterialShader::Load()
     psDesc.CullMode = CullMode::TwoSided;
     psDesc.DepthClipEnable = false;
     psDesc.DepthWriteEnable = true;
-    psDesc.DepthTestEnable = true;
+    psDesc.DepthEnable = true;
     psDesc.DepthFunc = ComparisonFunc::Less;
     psDesc.HS = nullptr;
     psDesc.DS = nullptr;
     GPUShaderProgramVS* instancedDepthPassVS;
-    if ((_info.UsageFlags & (MaterialUsageFlags::UseMask | MaterialUsageFlags::UsePositionOffset)) != 0)
+    if (EnumHasAnyFlags(_info.UsageFlags, MaterialUsageFlags::UseMask | MaterialUsageFlags::UsePositionOffset))
     {
         // Materials with masking need full vertex buffer to get texcoord used to sample textures for per pixel masking.
         // Materials with world pos offset need full VB to apply offset using texcoord etc.
@@ -242,5 +238,5 @@ bool DeferredMaterialShader::Load()
     psDesc.VS = _shader->GetVS("VS_Skinned");
     _cache.DepthSkinned.Init(psDesc);
 
-    return false;
+    return failed;
 }

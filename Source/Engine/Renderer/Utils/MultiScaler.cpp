@@ -1,12 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MultiScaler.h"
 #include "Engine/Graphics/Textures/GPUTexture.h"
 #include "Engine/Content/Content.h"
+#include "Engine/Graphics/GPUContext.h"
 
 PACK_STRUCT(struct Data {
-    Vector2 TexelSize;
-    Vector2 Padding;
+    Float2 TexelSize;
+    Float2 Padding;
     });
 
 String MultiScaler::ToString() const
@@ -75,7 +76,7 @@ bool MultiScaler::setupResources()
     {
         psDesc.PS = shader->GetPS("PS_HalfDepth");
         psDesc.DepthWriteEnable = true;
-        psDesc.DepthTestEnable = true;
+        psDesc.DepthEnable = true;
         psDesc.DepthFunc = ComparisonFunc::Always;
         if (_psHalfDepth->Init(psDesc))
             return true;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,6 @@
 class FLAXENGINE_API DebugLog
 {
 public:
-
     /// <summary>
     /// Sends the log message to the Flax console and the log file.
     /// </summary>
@@ -50,10 +49,9 @@ public:
     /// Logs a formatted exception message to the Flax Console.
     /// </summary>
     /// <param name="exceptionObject">Runtime Exception.</param>
-    static void LogException(MonoObject* exceptionObject);
+    static void LogException(MObject* exceptionObject);
 
 public:
-
     /// <summary>
     /// Gets the managed stack trace.
     /// </summary>

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,6 +11,13 @@
 
 class GameCooker;
 class PlatformTools;
+
+#if OFFICIAL_BUILD
+// Use the fixed .NET SDK version in packaged builds for compatibility (FlaxGame is precompiled with it)
+#define GAME_BUILD_DOTNET_VER TEXT("-dotnet=7")
+#else
+#define GAME_BUILD_DOTNET_VER TEXT("")
+#endif
 
 /// <summary>
 /// Game building options. Used as flags.
@@ -26,6 +33,16 @@ API_ENUM(Attributes="Flags") enum class BuildOptions
     /// Shows the output directory folder on building end.
     /// </summary>
     ShowOutput = 1 << 0,
+
+    /// <summary>
+    /// Starts the cooked game build on building end.
+    /// </summary>
+    AutoRun = 1 << 1,
+
+    /// <summary>
+    /// Skips cooking logic and uses already cooked data (eg. to only use AutoRun or ShowOutput feature).
+    /// </summary>
+    NoCook = 1 << 2,
 };
 
 DECLARE_ENUM_OPERATORS(BuildOptions);
@@ -93,9 +110,31 @@ API_ENUM() enum class BuildPlatform
     /// Switch.
     /// </summary>
     Switch = 10,
-};
 
-extern FLAXENGINE_API const Char* ToString(const BuildPlatform platform);
+    /// <summary>
+    /// PlayStation 5
+    /// </summary>
+    API_ENUM(Attributes="EditorDisplay(null, \"PlayStation 5\")")
+    PS5 = 11,
+
+    /// <summary>
+    /// MacOS (x86-64 Intel)
+    /// </summary>
+    API_ENUM(Attributes="EditorDisplay(null, \"Mac x64\")")
+    MacOSx64 = 12,
+
+    /// <summary>
+    /// MacOS (ARM64 Apple Silicon)
+    /// </summary>
+    API_ENUM(Attributes="EditorDisplay(null, \"Mac ARM64\")")
+    MacOSARM64 = 13,
+
+    /// <summary>
+    /// iOS (ARM64)
+    /// </summary>
+    API_ENUM(Attributes="EditorDisplay(null, \"iOS ARM64\")")
+    iOSARM64 = 14,
+};
 
 /// <summary>
 /// Game build configuration modes.
@@ -118,14 +157,42 @@ API_ENUM() enum class BuildConfiguration
     Release = 2,
 };
 
+/// <summary>
+/// .NET Ahead of Time Compilation (AOT) modes.
+/// </summary>
+enum class DotNetAOTModes
+{
+    /// <summary>
+    /// AOT is not used.
+    /// </summary>
+    None,
+
+    /// <summary>
+    /// Use .NET Native IL Compiler (shorten as ILC) to convert all C# assemblies in native platform executable binary.
+    /// </summary>
+    ILC,
+
+    /// <summary>
+    /// Use Mono AOT to cross-compile all used C# assemblies into native platform shared libraries.
+    /// </summary>
+    MonoAOTDynamic,
+
+    /// <summary>
+    /// Use Mono AOT to cross-compile all used C# assemblies into native platform static libraries which can be linked into a single shared library.
+    /// </summary>
+    MonoAOTStatic,
+};
+
+extern FLAXENGINE_API const Char* ToString(const BuildPlatform platform);
 extern FLAXENGINE_API const Char* ToString(const BuildConfiguration configuration);
+extern FLAXENGINE_API const Char* ToString(const DotNetAOTModes mode);
 
 #define BUILD_STEP_CANCEL_CHECK if (GameCooker::IsCancelRequested()) return true
 
 /// <summary>
 /// Game cooking temporary data.
 /// </summary>
-API_CLASS(Sealed, Namespace="FlaxEditor") class FLAXENGINE_API CookingData : public PersistentScriptingObject
+API_CLASS(Sealed, Namespace="FlaxEditor") class FLAXENGINE_API CookingData : public ScriptingObject
 {
 DECLARE_SCRIPTING_TYPE(CookingData);
 public:
@@ -166,7 +233,7 @@ public:
     API_FIELD(ReadOnly) String OriginalOutputPath;
 
     /// <summary>
-    /// The output path for data files (Content, Mono, etc.).
+    /// The output path for data files (Content, Dotnet, Mono, etc.).
     /// </summary>
     API_FIELD(ReadOnly) String DataOutputPath;
 
@@ -278,14 +345,17 @@ public:
     /// <summary>
     /// Gets the absolute path to the Platform Data folder that contains the binary files used by the current build configuration.
     /// </summary>
-    /// <returns>The platform data folder path.</returns>
     String GetGameBinariesPath() const;
 
     /// <summary>
     /// Gets the absolute path to the platform folder that contains the dependency files used by the current build configuration.
     /// </summary>
-    /// <returns>The platform deps folder path.</returns>
     String GetPlatformBinariesRoot() const;
+
+    /// <summary>
+    /// Gets the name of the platform and architecture for the current BuildPlatform.
+    /// </summary>
+    void GetBuildPlatformName(const Char*& platform, const Char*& architecture) const;
 
 public:
 
@@ -346,17 +416,15 @@ public:
 
 public:
 
-    void Error(const String& msg);
+    void Error(const StringView& msg);
+
+    void Error(const String& msg)
+    {
+        Error(StringView(msg));
+    }
 
     void Error(const Char* msg)
     {
-        Error(String(msg));
-    }
-
-    template<typename... Args>
-    void Error(const Char* format, const Args& ... args)
-    {
-        const String msg = String::Format(format, args...);
-        Error(msg);
+        Error(StringView(msg));
     }
 };

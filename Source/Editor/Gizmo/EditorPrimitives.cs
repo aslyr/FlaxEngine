@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine;
@@ -33,7 +33,10 @@ namespace FlaxEditor.Gizmo
         public IEditorPrimitivesOwner Viewport;
 
         /// <inheritdoc />
-        public override int Order => -100;
+        public EditorPrimitives()
+        {
+            Order = -100;
+        }
 
         /// <inheritdoc />
         public override void Render(GPUContext context, ref RenderContext renderContext, GPUTexture input, GPUTexture output)
@@ -67,6 +70,7 @@ namespace FlaxEditor.Gizmo
             var renderList = RenderList.GetFromPool();
             var prevList = renderContext.List;
             renderContext.List = renderList;
+            renderContext.View.Pass = DrawPass.GBuffer | DrawPass.Forward;
             try
             {
                 Viewport.DrawEditorPrimitives(context, ref renderContext, target, targetDepth);

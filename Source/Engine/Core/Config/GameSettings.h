@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -67,6 +67,7 @@ public:
     Guid Physics;
     Guid Input;
     Guid Graphics;
+    Guid Network;
     Guid Navigation;
     Guid Localization;
     Guid GameCooking;
@@ -81,6 +82,9 @@ public:
     Guid XboxScarlettPlatform;
     Guid AndroidPlatform;
     Guid SwitchPlatform;
+    Guid PS5Platform;
+    Guid MacPlatform;
+    Guid iOSPlatform;
 
 public:
 

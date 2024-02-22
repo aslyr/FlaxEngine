@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticleEmitterFunction.h"
 #include "Engine/Core/Log.h"
@@ -8,6 +8,27 @@
 #include "Engine/Core/Types/DataContainer.h"
 #endif
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
+
+void InitParticleEmitterFunctionCall(const Guid& assetId, AssetReference<Asset>& asset, bool& usesParticleData, ParticleLayout& layout)
+{
+    const auto function = Content::Load<ParticleEmitterFunction>(assetId);
+    asset = function;
+    if (function)
+    {
+        // Insert any used particle data into the calling graph
+        for (const ParticleAttribute& e : function->Graph.Layout.Attributes)
+        {
+            if (layout.FindAttribute(e.Name, e.ValueType) == -1)
+                layout.AddAttribute(e.Name, e.ValueType);
+        }
+
+        // Detect if function needs to be evaluated per-particle
+        for (int32 i = 0; i < function->Outputs.Count() && !usesParticleData; i++)
+        {
+            usesParticleData = function->Graph.Nodes[function->Outputs.Get()[i]].UsesParticleData;
+        }
+    }
+}
 
 REGISTER_BINARY_ASSET(ParticleEmitterFunction, "FlaxEngine.ParticleEmitterFunction", false);
 
@@ -84,6 +105,8 @@ AssetChunksFlag ParticleEmitterFunction::getChunksToPreload() const
 
 bool ParticleEmitterFunction::LoadSurface(ParticleEmitterGraphCPU& graph)
 {
+    if (WaitForLoaded())
+        return true;
     ScopeLock lock(Locker);
     if (HasChunk(0))
     {
@@ -102,6 +125,8 @@ bool ParticleEmitterFunction::LoadSurface(ParticleEmitterGraphCPU& graph)
 BytesContainer ParticleEmitterFunction::LoadSurface()
 {
     BytesContainer result;
+    if (WaitForLoaded())
+        return result;
     ScopeLock lock(Locker);
     if (HasChunk(0))
     {
@@ -118,6 +143,8 @@ BytesContainer ParticleEmitterFunction::LoadSurface()
 
 bool ParticleEmitterFunction::LoadSurface(ParticleEmitterGraphGPU& graph)
 {
+    if (WaitForLoaded())
+        return true;
     ScopeLock lock(Locker);
     if (HasChunk(0))
     {

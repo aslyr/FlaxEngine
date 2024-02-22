@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "AudioListener.h"
 #include "Engine/Engine/Time.h"
@@ -12,7 +12,7 @@ AudioListener::AudioListener(const SpawnParams& params)
 {
 }
 
-bool AudioListener::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool AudioListener::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     return false;
 }
@@ -66,7 +66,7 @@ void AudioListener::OnTransformChanged()
     _box = BoundingBox(_transform.Translation);
     _sphere = BoundingSphere(_transform.Translation, 0.0f);
 
-    if (IsActiveInHierarchy())
+    if (IsActiveInHierarchy() && IsDuringPlay())
     {
         AudioBackend::Listener::TransformChanged(this);
     }

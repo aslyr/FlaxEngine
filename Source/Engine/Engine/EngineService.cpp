@@ -1,10 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "EngineService.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Collections/Array.h"
 #include "Engine/Core/Collections/Sorting.h"
-#include <ThirdParty/tracy/Tracy.h>
+#include <ThirdParty/tracy/tracy/Tracy.hpp>
 
 static bool CompareEngineServices(EngineService* const& a, EngineService* const& b)
 {
@@ -33,6 +33,7 @@ static bool CompareEngineServices(EngineService* const& a, EngineService* const&
 DEFINE_ENGINE_SERVICE_EVENT(FixedUpdate);
 DEFINE_ENGINE_SERVICE_EVENT(Update);
 DEFINE_ENGINE_SERVICE_EVENT(LateUpdate);
+DEFINE_ENGINE_SERVICE_EVENT(LateFixedUpdate);
 DEFINE_ENGINE_SERVICE_EVENT(Draw);
 DEFINE_ENGINE_SERVICE_EVENT_INVERTED(BeforeExit);
 
@@ -71,9 +72,6 @@ void EngineService::OnInit()
 
     // Init services from front to back
     auto& services = GetServices();
-#if TRACY_ENABLE
-    Char nameBuffer[100];
-#endif
     for (int32 i = 0; i < services.Count(); i++)
     {
         const auto service = services[i];
@@ -81,6 +79,7 @@ void EngineService::OnInit()
 #if TRACY_ENABLE
         ZoneScoped;
         int32 nameBufferLength = 0;
+        Char nameBuffer[100];
         for (int32 j = 0; j < name.Length(); j++)
             if (name[j] != ' ')
                 nameBuffer[nameBufferLength++] = name[j];
@@ -113,6 +112,18 @@ void EngineService::OnDispose()
         const auto service = services[i];
         if (service->IsInitialized)
         {
+#if TRACY_ENABLE
+            ZoneScoped;
+            const StringView name(service->Name);
+            int32 nameBufferLength = 0;
+            Char nameBuffer[100];
+            for (int32 j = 0; j < name.Length(); j++)
+                if (name[j] != ' ')
+                    nameBuffer[nameBufferLength++] = name[j];
+            Platform::MemoryCopy(nameBuffer + nameBufferLength, TEXT("::Dispose"), 10 * sizeof(Char));
+            nameBufferLength += 10;
+            ZoneName(nameBuffer, nameBufferLength);
+#endif
             service->IsInitialized = false;
             service->Dispose();
         }

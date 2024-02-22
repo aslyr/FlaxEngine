@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -29,7 +29,7 @@ API_ENUM() enum class WindowStartPosition
 /// <summary>
 /// Settings for new window.
 /// </summary>
-API_STRUCT() struct CreateWindowSettings
+API_STRUCT(NoDefault) struct CreateWindowSettings
 {
 DECLARE_SCRIPTING_TYPE_MINIMAL(CreateWindowSettings);
 
@@ -46,22 +46,22 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(CreateWindowSettings);
     /// <summary>
     /// The custom start position.
     /// </summary>
-    API_FIELD() Vector2 Position = Vector2(100, 400);
+    API_FIELD() Float2 Position = Float2(100, 400);
 
     /// <summary>
     /// The client size.
     /// </summary>
-    API_FIELD() Vector2 Size = Vector2(640, 480);
+    API_FIELD() Float2 Size = Float2(640, 480);
 
     /// <summary>
     /// The minimum size.
     /// </summary>
-    API_FIELD() Vector2 MinimumSize = Vector2(1, 1);
+    API_FIELD() Float2 MinimumSize = Float2(1, 1);
 
     /// <summary>
-    /// The maximum size.
+    /// The maximum size. Set to 0 to use unlimited size.
     /// </summary>
-    API_FIELD() Vector2 MaximumSize = Vector2(8192, 4096);
+    API_FIELD() Float2 MaximumSize = Float2(0, 0);
 
     /// <summary>
     /// The start position mode.
@@ -131,7 +131,7 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(CreateWindowSettings);
     /// <summary>
     /// Enable/disable window auto-show after the first paint.
     /// </summary>
-    API_FIELD() bool ShowAfterFirstPaint = false;
+    API_FIELD() bool ShowAfterFirstPaint = true;
 
     /// <summary>
     /// The custom data (platform dependant).

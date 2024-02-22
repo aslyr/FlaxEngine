@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -38,6 +38,7 @@ public:
 
     // [IMaterial]
     const MaterialInfo& GetInfo() const override;
+    GPUShader* GetShader() const override;
     bool IsReady() const override;
     DrawPass GetDrawModes() const override;
     void Bind(BindParameters& params) override;

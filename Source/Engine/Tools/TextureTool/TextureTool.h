@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -7,127 +7,101 @@
 #include "Engine/Render2D/SpriteAtlas.h"
 #include "Engine/Graphics/Textures/Types.h"
 #include "Engine/Graphics/Textures/GPUTexture.h"
-#include "Engine/Serialization/ISerializable.h"
+#include "Engine/Core/ISerializable.h"
 
 class JsonWriter;
 
 /// <summary>
 /// Textures importing, processing and exporting utilities.
 /// </summary>
-class FLAXENGINE_API TextureTool
+API_CLASS(Namespace="FlaxEngine.Tools", Static) class FLAXENGINE_API TextureTool
 {
-public:
+    DECLARE_SCRIPTING_TYPE_MINIMAL(TextureTool);
 
     /// <summary>
-    /// Importing texture options
+    /// Texture import options.
     /// </summary>
-    struct Options : public ISerializable
+    API_STRUCT(Attributes="HideInEditor") struct FLAXENGINE_API Options : public ISerializable
     {
-        /// <summary>
-        /// Texture format type
-        /// </summary>
-        TextureFormatType Type;
+        DECLARE_SCRIPTING_TYPE_MINIMAL(Options);
 
-        /// <summary>
-        /// True if texture should be imported as a texture atlas resource
-        /// </summary>
-        bool IsAtlas;
+        // Texture format type.
+        API_FIELD(Attributes="EditorOrder(0)")
+        TextureFormatType Type = TextureFormatType::ColorRGB;
 
-        /// <summary>
-        /// True if disable dynamic texture streaming
-        /// </summary>
-        bool NeverStream;
+        // True if texture should be imported as a texture atlas (with sprites).
+        API_FIELD(Attributes="EditorOrder(10)")
+        bool IsAtlas = false;
 
-        /// <summary>
-        /// Enables/disables texture data compression.
-        /// </summary>
-        bool Compress;
+        // True if disable dynamic texture streaming.
+        API_FIELD(Attributes="EditorOrder(20)")
+        bool NeverStream = false;
 
-        /// <summary>
-        /// True if texture channels have independent data
-        /// </summary>
-        bool IndependentChannels;
+        // True if disable dynamic texture streaming.
+        API_FIELD(Attributes="EditorOrder(30)")
+        bool Compress = true;
 
-        /// <summary>
-        /// True if use sRGB format for texture data. Recommended for color maps and diffuse color textures.
-        /// </summary>
-        bool sRGB;
+        // True if texture channels have independent data (for compression methods).
+        API_FIELD(Attributes="EditorOrder(40)")
+        bool IndependentChannels = false;
 
-        /// <summary>
-        /// True if generate mip maps chain for the texture.
-        /// </summary>
-        bool GenerateMipMaps;
+        // True if use sRGB format for texture data. Recommended for color maps and diffuse color textures.
+        API_FIELD(Attributes="EditorOrder(50), EditorDisplay(null, \"sRGB\")")
+        bool sRGB = false;
 
-        /// <summary>
-        /// True if flip Y coordinate of the texture.
-        /// </summary>
-        bool FlipY;
+        // True if generate mip maps chain for the texture.
+        API_FIELD(Attributes="EditorOrder(60)")
+        bool GenerateMipMaps = true;
 
-        /// <summary>
-        /// True if resize the texture.
-        /// </summary>
-        bool Resize;
+        // True if flip Y coordinate of the texture.
+        API_FIELD(Attributes="EditorOrder(70)")
+        bool FlipY = false;
 
-        /// <summary>
-        /// True if preserve alpha coverage in generated mips for alpha test reference. Scales mipmap alpha values to preserve alpha coverage based on an alpha test reference value.
-        /// </summary>
-        bool PreserveAlphaCoverage;
+        // True if to invert the green channel on a normal map. Good for OpenGL to DirectX conversion.
+        API_FIELD(Attributes = "EditorOrder(71)")
+        bool InvertGreenChannel = false;
 
-        /// <summary>
-        /// The reference value for the alpha coverage preserving.
-        /// </summary>
-        float PreserveAlphaCoverageReference;
+        // Texture size scale. Allows increasing or decreasing the imported texture resolution. Default is 1.
+        API_FIELD(Attributes="EditorOrder(80), Limit(0.0001f, 1000.0f, 0.01f)")
+        float Scale = 1.0f;
 
-        /// <summary>
-        /// Texture group for streaming (negative if unused). See Streaming Settings.
-        /// </summary>
-        int32 TextureGroup;
+        // Maximum size of the texture (for both width and height). Higher resolution textures will be resized during importing process. Used to clip textures that are too big.
+        API_FIELD(Attributes="HideInEditor")
+        int32 MaxSize = 8192;
 
-        /// <summary>
-        /// The import texture scale.
-        /// </summary>
-        float Scale;
+        // True if resize texture on import. Use SizeX/SizeY properties to define texture width and height. Texture scale property will be ignored.
+        API_FIELD(Attributes="EditorOrder(100)")
+        bool Resize = false;
 
-        /// <summary>
-        /// Custom texture size X, use only if Resize texture flag is set.
-        /// </summary>
-        int32 SizeX;
+        // The width of the imported texture. If Resize property is set to true then texture will be resized during the import to this value during the import, otherwise it will be ignored.
+        API_FIELD(Attributes="HideInEditor")
+        int32 SizeX = 1024;
 
-        /// <summary>
-        /// Custom texture size Y, use only if Resize texture flag is set.
-        /// </summary>
-        int32 SizeY;
+        // The height of the imported texture. If Resize property is set to true then texture will be resized during the import to this value during the import, otherwise it will be ignored.
+        API_FIELD(Attributes="HideInEditor")
+        int32 SizeY = 1024;
 
-        /// <summary>
-        /// Maximum size of the texture (for both width and height).
-        /// Higher resolution textures will be resized during importing process.
-        /// </summary>
-        int32 MaxSize;
+        // Check to preserve alpha coverage in generated mips for alpha test reference. Scales mipmap alpha values to preserve alpha coverage based on an alpha test reference value.
+        API_FIELD(Attributes="EditorOrder(200)")
+        bool PreserveAlphaCoverage = false;
 
-        /// <summary>
-        /// Function used for fast importing textures used by internal parts of the engine
-        /// </summary>
-        Function<bool(TextureData&)> InternalLoad;
+        // The reference value for the alpha coverage preserving.
+        API_FIELD(Attributes="EditorOrder(210), VisibleIf(\"PreserveAlphaCoverage\")")
+        float PreserveAlphaCoverageReference = 0.5f;
 
-        /// <summary>
-        /// The sprites for the sprite sheet import mode.
-        /// </summary>
+        // The texture group for streaming (negative if unused). See Streaming Settings.
+        API_FIELD(Attributes="EditorOrder(300), CustomEditorAlias(\"FlaxEditor.CustomEditors.Dedicated.TextureGroupEditor\")")
+        int32 TextureGroup = -1;
+
+        // The sprites for the sprite sheet import mode.
+        API_FIELD(Attributes="HideInEditor")
         Array<Sprite> Sprites;
 
+        // Function used for fast importing textures used by internal parts of the engine
+        Function<bool(TextureData&)> InternalLoad;
+
     public:
-
-        /// <summary>
-        /// Init
-        /// </summary>
-        Options();
-
-        /// <summary>
-        /// Gets string that contains information about options
-        /// </summary>
-        /// <returns>String</returns>
         String ToString() const;
-
-    public:
 
         // [ISerializable]
         void Serialize(SerializeStream& stream, const void* otherObj) override;
@@ -135,16 +109,13 @@ public:
     };
 
 public:
-
 #if USE_EDITOR
-
     /// <summary>
     /// Checks whenever the given texture file contains alpha channel data with values different than solid fill of 1 (non fully opaque).
     /// </summary>
     /// <param name="path">The file path.</param>
     /// <returns>True if has alpha channel, otherwise false.</returns>
     static bool HasAlpha(const StringView& path);
-
 #endif
 
     /// <summary>
@@ -193,7 +164,6 @@ public:
     static bool Resize(TextureData& dst, const TextureData& src, int32 dstWidth, int32 dstHeight);
 
 public:
-
     typedef Color (*ReadPixel)(const void*);
     typedef void (*WritePixel)(const void*, const Color&);
 
@@ -238,7 +208,7 @@ public:
     /// <param name="size">The size of the input texture (in pixels).</param>
     /// <param name="rowPitch">The row pitch (in bytes). The offset between each image rows.</param>
     /// <returns>The sampled color (linear).</returns>
-    static Color SamplePoint(const PixelFormatSampler* sampler, const Vector2& uv, const void* data, const Int2& size, int32 rowPitch);
+    static Color SamplePoint(const PixelFormatSampler* sampler, const Float2& uv, const void* data, const Int2& size, int32 rowPitch);
 
     /// <summary>
     /// Samples the specified texture data (uses no interpolation).
@@ -266,10 +236,11 @@ public:
     /// <param name="size">The size of the input texture (in pixels).</param>
     /// <param name="rowPitch">The row pitch (in bytes). The offset between each image rows.</param>
     /// <returns>The sampled color (linear).</returns>
-    static Color SampleLinear(const PixelFormatSampler* sampler, const Vector2& uv, const void* data, const Int2& size, int32 rowPitch);
+    static Color SampleLinear(const PixelFormatSampler* sampler, const Float2& uv, const void* data, const Int2& size, int32 rowPitch);
+
+    static PixelFormat ToPixelFormat(TextureFormatType format, int32 width, int32 height, bool canCompress);
 
 private:
-
     enum class ImageType
     {
         DDS,

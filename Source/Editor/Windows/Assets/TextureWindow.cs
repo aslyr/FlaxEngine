@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Xml;
 using FlaxEditor.Content;
@@ -36,9 +36,9 @@ namespace FlaxEditor.Windows.Assets
                 // Texture info
                 var general = layout.Group("General");
                 general.Label("Format: " + texture.Format);
-                general.Label(string.Format("Size: {0}x{1}", texture.Width, texture.Height));
+                general.Label(string.Format("Size: {0}x{1}", texture.Width, texture.Height)).AddCopyContextMenu();
                 general.Label("Mip levels: " + texture.MipLevels);
-                general.Label("Memory usage: " + Utilities.Utils.FormatBytesCount(texture.TotalMemoryUsage));
+                general.Label("Memory usage: " + Utilities.Utils.FormatBytesCount(texture.TotalMemoryUsage)).AddCopyContextMenu();
 
                 // Texture properties
                 var properties = layout.Group("Properties");
@@ -70,7 +70,7 @@ namespace FlaxEditor.Windows.Assets
             internal TextureWindow _window;
 
             [EditorOrder(1000), EditorDisplay("Import Settings", EditorDisplayAttribute.InlineStyle)]
-            public TextureImportSettings ImportSettings = new TextureImportSettings();
+            public FlaxEngine.Tools.TextureTool.Options ImportSettings = new();
 
             /// <summary>
             /// Gathers parameters from the specified texture.
@@ -82,7 +82,7 @@ namespace FlaxEditor.Windows.Assets
                 _window = window;
 
                 // Try to restore target asset texture import options (useful for fast reimport)
-                TextureImportSettings.TryRestore(ref ImportSettings, window.Item.Path);
+                Editor.TryRestoreImportOptions(ref ImportSettings, window.Item.Path);
 
                 // Prepare restore data
                 PeekState();
@@ -245,14 +245,13 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutSerialize(XmlWriter writer)
         {
-            writer.WriteAttributeString("Split", _split.SplitterValue.ToString());
+            LayoutSerializeSplitter(writer, "Split", _split);
         }
 
         /// <inheritdoc />
         public override void OnLayoutDeserialize(XmlElement node)
         {
-            if (float.TryParse(node.GetAttribute("Split"), out float value1))
-                _split.SplitterValue = value1;
+            LayoutDeserializeSplitter(node, "Split", _split);
         }
 
         /// <inheritdoc />

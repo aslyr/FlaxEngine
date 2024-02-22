@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Platform/File.h"
 #include "Engine/Core/Types/Guid.h"
 #include "Engine/Core/Types/String.h"
 #include "Engine/Core/Types/StringView.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Engine/Globals.h"
 
@@ -20,7 +21,7 @@ bool FileSystemBase::ShowSaveFileDialog(Window* parentWindow, const StringView& 
     return true;
 }
 
-bool FileSystemBase::ShowBrowseFolderDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& title, StringView& path)
+bool FileSystemBase::ShowBrowseFolderDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& title, String& path)
 {
     // No supported
     return true;
@@ -245,6 +246,16 @@ bool FileSystemBase::CopyDirectory(const String& dst, const String& src, bool wi
 
     // Copy
     return FileSystemBase::DirectoryCopyHelper(dst, src, withSubDirectories);
+}
+
+uint64 FileSystemBase::GetDirectorySize(const StringView& path)
+{
+    uint64 result = 0;
+    Array<String> files;
+    FileSystem::DirectoryGetFiles(files, path, TEXT("*"), DirectorySearchOption::AllDirectories);
+    for (const String& file : files)
+        result += FileSystem::GetFileSize(file);
+    return result;
 }
 
 String FileSystemBase::ConvertRelativePathToAbsolute(const String& path)

@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI;
 using FlaxEditor.Scripting;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.CustomEditors.Editors
 {
@@ -124,7 +125,7 @@ namespace FlaxEditor.CustomEditors.Editors
             }
 
             // Value
-            var values = new CustomValueContainer(type, (instance, index) => instance, (instance, index, value) => { });
+            var values = new CustomValueContainer(type, (instance, index) => instance);
             values.AddRange(Values);
             var editor = CustomEditorsUtil.CreateEditor(type);
             var style = editor.Style;
@@ -157,7 +158,8 @@ namespace FlaxEditor.CustomEditors.Editors
             if (comboBox.SelectedIndex != -1)
             {
                 var option = _options[comboBox.SelectedIndex];
-                value = option.Creator(option.Type);
+                if (option.Type != null)
+                    value = option.Creator(option.Type);
             }
             SetValue(value);
             RebuildLayoutOnRefresh();

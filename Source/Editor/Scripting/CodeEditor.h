@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -56,6 +56,11 @@ API_ENUM(Namespace="FlaxEditor", Attributes="HideInEditor") enum class CodeEdito
     /// Visual Studio 2019
     /// </summary>
     VS2019,
+
+    /// <summary>
+    /// Visual Studio 2022
+    /// </summary>
+    VS2022,
 
     /// <summary>
     /// Visual Studio Code
@@ -187,12 +192,6 @@ public:
     /// <param name="editorType">The code editor type.</param>
     /// <param name="path">The path.</param>
     API_FUNCTION() static void OnFileAdded(CodeEditorTypes editorType, const String& path);
-
-    /// <summary>
-    /// Opens the solution project. Handles async opening.
-    /// </summary>
-    /// <param name="editor">The code editor.</param>
-    static void OpenSolution(CodeEditor* editor);
 
     /// <summary>
     /// The asynchronous open begins.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -23,7 +23,7 @@ namespace FlaxEditor.Surface
             /// <summary>
             /// The surface location.
             /// </summary>
-            public Vector2 SurfaceLocation;
+            public Float2 SurfaceLocation;
         }
 
         /// <summary>
@@ -32,7 +32,7 @@ namespace FlaxEditor.Surface
         public readonly DragHandlers DragHandlers = new DragHandlers();
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             var result = base.OnDragEnter(ref location, data);
             if (result != DragDropEffect.None)
@@ -42,7 +42,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             var result = base.OnDragMove(ref location, data);
             if (result != DragDropEffect.None)
@@ -60,7 +60,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
             if (result != DragDropEffect.None)
@@ -151,7 +151,7 @@ namespace FlaxEditor.Surface
         /// </summary>
         /// <param name="groupId">The group ID.</param>
         /// <returns>The node archetype.</returns>
-        protected virtual NodeArchetype GetParameterGetterNodeArchetype(out ushort groupId)
+        protected internal virtual NodeArchetype GetParameterGetterNodeArchetype(out ushort groupId)
         {
             groupId = 6;
             return Archetypes.Parameters.Nodes[0];

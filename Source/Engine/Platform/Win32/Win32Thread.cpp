@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_WIN32
 
@@ -113,6 +113,7 @@ unsigned long Win32Thread::ThreadProc(void* pThis)
 void Win32Thread::Join()
 {
     WaitForSingleObject((HANDLE)_thread, INFINITE);
+    ClearHandleInternal();
 }
 
 void Win32Thread::ClearHandleInternal()

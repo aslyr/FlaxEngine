@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -20,7 +20,7 @@ class InputDevice;
 /// </summary>
 API_CLASS(Static) class FLAXENGINE_API Input
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(Input);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(Input);
 
     /// <summary>
     /// Gets the mouse (null if platform does not support mouse or it is not connected).
@@ -67,75 +67,67 @@ DECLARE_SCRIPTING_TYPE_NO_SPAWN(Input);
 
 public:
 
-    typedef Delegate<Char> CharDelegate;
-    typedef Delegate<KeyboardKeys> KeyboardDelegate;
-    typedef Delegate<const Vector2&> MouseDelegate;
-    typedef Delegate<const Vector2&, MouseButton> MouseButtonDelegate;
-    typedef Delegate<const Vector2&, float> MouseWheelDelegate;
-    typedef Delegate<const Vector2&, int32> TouchDelegate;
-
     /// <summary>
     /// Event fired on character input.
     /// </summary>
-    static CharDelegate CharInput;
+    API_EVENT() static Delegate<Char> CharInput;
 
     /// <summary>
     /// Event fired on key pressed.
     /// </summary>
-    static KeyboardDelegate KeyDown;
+    API_EVENT() static Delegate<KeyboardKeys> KeyDown;
 
     /// <summary>
     /// Event fired on key released.
     /// </summary>
-    static KeyboardDelegate KeyUp;
+    API_EVENT() static Delegate<KeyboardKeys> KeyUp;
 
     /// <summary>
     /// Event fired when mouse button goes down.
     /// </summary>
-    static MouseButtonDelegate MouseDown;
+    API_EVENT() static Delegate<const Float2&, MouseButton> MouseDown;
 
     /// <summary>
     /// Event fired when mouse button goes up.
     /// </summary>
-    static MouseButtonDelegate MouseUp;
+    API_EVENT() static Delegate<const Float2&, MouseButton> MouseUp;
 
     /// <summary>
     /// Event fired when mouse button double clicks.
     /// </summary>
-    static MouseButtonDelegate MouseDoubleClick;
+    API_EVENT() static Delegate<const Float2&, MouseButton> MouseDoubleClick;
 
     /// <summary>
     /// Event fired when mouse wheel is scrolling (wheel delta is normalized).
     /// </summary>
-    static MouseWheelDelegate MouseWheel;
+    API_EVENT() static Delegate<const Float2&, float> MouseWheel;
 
     /// <summary>
     /// Event fired when mouse moves.
     /// </summary>
-    static MouseDelegate MouseMove;
+    API_EVENT() static Delegate<const Float2&> MouseMove;
 
     /// <summary>
     /// Event fired when mouse leaves window.
     /// </summary>
-    static Action MouseLeave;
+    API_EVENT() static Action MouseLeave;
 
     /// <summary>
     /// Event fired when touch action begins.
     /// </summary>
-    static TouchDelegate TouchDown;
+    API_EVENT() static Delegate<const Float2&, int32> TouchDown;
 
     /// <summary>
     /// Event fired when touch action moves.
     /// </summary>
-    static TouchDelegate TouchMove;
+    API_EVENT() static Delegate<const Float2&, int32> TouchMove;
 
     /// <summary>
     /// Event fired when touch action ends.
     /// </summary>
-    static TouchDelegate TouchUp;
+    API_EVENT() static Delegate<const Float2&, int32> TouchUp;
 
 public:
-
     /// <summary>
     /// Gets the text entered during the current frame (Unicode).
     /// </summary>
@@ -164,36 +156,35 @@ public:
     API_FUNCTION() static bool GetKeyUp(KeyboardKeys key);
 
 public:
-
     /// <summary>
     /// Gets the mouse position in game window coordinates.
     /// </summary>
     /// <returns>Mouse cursor coordinates</returns>
-    API_PROPERTY() static Vector2 GetMousePosition();
+    API_PROPERTY() static Float2 GetMousePosition();
 
     /// <summary>
     /// Sets the mouse position in game window coordinates.
     /// </summary>
     /// <param name="position">Mouse position to set on</param>
-    API_PROPERTY() static void SetMousePosition(const Vector2& position);
+    API_PROPERTY() static void SetMousePosition(const Float2& position);
 
     /// <summary>
     /// Gets the mouse position in screen-space coordinates.
     /// </summary>
     /// <returns>Mouse cursor coordinates</returns>
-    API_PROPERTY() static Vector2 GetMouseScreenPosition();
+    API_PROPERTY() static Float2 GetMouseScreenPosition();
 
     /// <summary>
     /// Sets the mouse position in screen-space coordinates.
     /// </summary>
     /// <param name="position">Mouse position to set on</param>
-    API_PROPERTY() static void SetMouseScreenPosition(const Vector2& position);
+    API_PROPERTY() static void SetMouseScreenPosition(const Float2& position);
 
     /// <summary>
     /// Gets the mouse position change during the last frame.
     /// </summary>
     /// <returns>Mouse cursor position delta</returns>
-    API_PROPERTY() static Vector2 GetMousePositionDelta();
+    API_PROPERTY() static Float2 GetMousePositionDelta();
 
     /// <summary>
     /// Gets the mouse wheel change during the last frame.
@@ -223,7 +214,6 @@ public:
     API_FUNCTION() static bool GetMouseButtonUp(MouseButton button);
 
 public:
-
     /// <summary>
     /// Gets the gamepad axis value.
     /// </summary>
@@ -289,7 +279,6 @@ public:
     API_FUNCTION() static bool GetGamepadButtonUp(InputGamepadIndex gamepad, GamepadButton button);
 
 public:
-
     /// <summary>
     /// Maps a discrete button or key press events to a "friendly name" that will later be bound to event-driven behavior. The end effect is that pressing (and/or releasing) a key, mouse button, or keypad button.
     /// </summary>
@@ -304,7 +293,13 @@ public:
     /// Event fired when virtual input action is triggered. Called before scripts update. See <see cref="ActionMappings"/> to edit configuration.
     /// </summary>
     /// <seealso cref="InputEvent"/>
-    API_EVENT() static Delegate<StringView> ActionTriggered;
+    API_EVENT() static Delegate<StringView, InputActionState> ActionTriggered;
+
+    /// <summary>
+    /// Event fired when virtual input axis is changed. Called before scripts update. See <see cref="AxisMappings"/> to edit configuration.
+    /// </summary>
+    /// <seealso cref="InputAxis"/>
+    API_EVENT() static Delegate<StringView> AxisValueChanged;
 
     /// <summary>
     /// Gets the value of the virtual action identified by name. Use <see cref="ActionMappings"/> to get the current config.
@@ -313,6 +308,14 @@ public:
     /// <returns>True if action has been triggered in the current frame (e.g. button pressed), otherwise false.</returns>
     /// <seealso cref="ActionMappings"/>
     API_FUNCTION() static bool GetAction(const StringView& name);
+
+    /// <summary>
+    /// Gets the value of the virtual action identified by name. Use <see cref="ActionMappings"/> to get the current config.
+    /// </summary>
+    /// <param name="name">The action name.</param>
+    /// <returns>A InputActionPhase determining the current phase of the Action (e.g If it was just pressed, is being held or just released).</returns>
+    /// <seealso cref="ActionMappings"/>
+    API_FUNCTION() static InputActionState GetActionState(const StringView& name);
 
     /// <summary>
     /// Gets the value of the virtual axis identified by name. Use <see cref="AxisMappings"/> to get the current config.

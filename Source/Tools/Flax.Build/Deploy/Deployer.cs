@@ -1,9 +1,57 @@
-// Copyright (c) 2012-2020 Flax Engine. All rights reserved.
+// Copyright (c) 2012-2023 Flax Engine. All rights reserved.
 
 using System;
 using System.IO;
 using System.Text;
 using Flax.Build;
+
+namespace Flax.Build
+{
+    public static partial class Configuration
+    {
+        /// <summary>
+        /// Compresses deployed files.
+        /// </summary>
+        [CommandLine("deployDontCompress", "Skips compressing deployed files, and keeps files.")]
+        public static bool DontCompress = false;
+
+        /// <summary>
+        /// Package deployment output path.
+        /// </summary>
+        [CommandLine("deployOutput", "Package deployment output path.")]
+        public static string DeployOutput;
+
+        /// <summary>
+        /// Builds and packages the editor.
+        /// </summary>
+        [CommandLine("deployEditor", "Builds and packages the editor.")]
+        public static bool DeployEditor;
+
+        /// <summary>
+        /// Builds and packages the platforms data.
+        /// </summary>
+        [CommandLine("deployPlatforms", "Builds and packages the platforms data.")]
+        public static bool DeployPlatforms;
+
+        /// <summary>
+        /// Certificate file path for binaries signing. Or sign identity for Apple platforms.
+        /// </summary>
+        [CommandLine("deployCert", "Certificate file path for binaries signing. Or sign identity for Apple platforms.")]
+        public static string DeployCert;
+
+        /// <summary>
+        /// Certificate file password for binaries signing.
+        /// </summary>
+        [CommandLine("deployCertPass", "Certificate file password for binaries signing.")]
+        public static string DeployCertPass;
+
+        /// <summary>
+        /// Apple keychain profile name to use for app notarize action (installed locally).
+        /// </summary>
+        [CommandLine("deployKeychainProfile", "Apple keychain profile name to use for app notarize action (installed locally).")]
+        public static string DeployKeychainProfile;
+    }
+}
 
 namespace Flax.Deploy
 {
@@ -24,20 +72,18 @@ namespace Flax.Deploy
             {
                 Initialize();
 
-                if (Configuration.DeployEditor)
-                {
-                    BuildEditor();
-                    Deployment.Editor.Package();
-                }
-
                 if (Configuration.DeployPlatforms)
                 {
                     if (Configuration.BuildPlatforms == null || Configuration.BuildPlatforms.Length == 0)
                     {
                         BuildPlatform(TargetPlatform.Linux, TargetArchitecture.x64);
-                        BuildPlatform(TargetPlatform.UWP, TargetArchitecture.x64);
                         BuildPlatform(TargetPlatform.Windows, TargetArchitecture.x64);
                         BuildPlatform(TargetPlatform.Android, TargetArchitecture.ARM64);
+                        if (Platform.BuildTargetPlatform == TargetPlatform.Mac)
+                        {
+                            BuildPlatform(TargetPlatform.Mac, Platform.BuildTargetArchitecture);
+                            BuildPlatform(TargetPlatform.iOS, TargetArchitecture.ARM64);
+                        }
                     }
                     else
                     {
@@ -47,6 +93,12 @@ namespace Flax.Deploy
                             BuildPlatform(platform, architectures);
                         }
                     }
+                }
+
+                if (Configuration.DeployEditor)
+                {
+                    BuildEditor();
+                    Deployment.Editor.Package();
                 }
             }
             catch (Exception ex)
@@ -112,7 +164,8 @@ namespace Flax.Deploy
             var targetPlatform = Platform.BuildPlatform.Target;
             foreach (var configuration in Configurations)
             {
-                FlaxBuild.Build(Globals.EngineRoot, "FlaxEditor", targetPlatform, TargetArchitecture.x64, configuration);
+                var arch = targetPlatform == TargetPlatform.Mac ? Platform.BuildTargetArchitecture : TargetArchitecture.x64;
+                FlaxBuild.Build(Globals.EngineRoot, "FlaxEditor", targetPlatform, arch, configuration);
             }
         }
 
@@ -136,6 +189,10 @@ namespace Flax.Deploy
             {
                 if (Platform.IsPlatformSupported(platform, architecture))
                 {
+                    Log.Info(string.Empty);
+                    Log.Info($"Build {platform} {architecture} platform");
+                    Log.Info(string.Empty);
+
                     foreach (var configuration in Configurations)
                     {
                         FlaxBuild.Build(Globals.EngineRoot, "FlaxGame", platform, architecture, configuration);

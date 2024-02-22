@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,6 @@
 class FLAXENGINE_API SceneTicking
 {
 public:
-
     /// <summary>
     /// Tick function type.
     /// </summary>
@@ -48,7 +47,6 @@ public:
     class FLAXENGINE_API TickData
     {
     public:
-
         Array<Script*> Scripts;
         Array<Tick> Ticks;
 #if USE_EDITOR
@@ -93,7 +91,6 @@ public:
     class FLAXENGINE_API FixedUpdateTickData : public TickData
     {
     public:
-
         FixedUpdateTickData();
         void TickScripts(const Array<Script*>& scripts) override;
     };
@@ -101,7 +98,6 @@ public:
     class FLAXENGINE_API UpdateTickData : public TickData
     {
     public:
-
         UpdateTickData();
         void TickScripts(const Array<Script*>& scripts) override;
     };
@@ -109,13 +105,18 @@ public:
     class FLAXENGINE_API LateUpdateTickData : public TickData
     {
     public:
-
         LateUpdateTickData();
         void TickScripts(const Array<Script*>& scripts) override;
     };
 
-public:
+    class FLAXENGINE_API LateFixedUpdateTickData : public TickData
+    {
+    public:
+        LateFixedUpdateTickData();
+        void TickScripts(const Array<Script*>& scripts) override;
+    };
 
+public:
     /// <summary>
     /// Adds the script to scene ticking system.
     /// </summary>
@@ -134,7 +135,6 @@ public:
     void Clear();
 
 public:
-
     /// <summary>
     /// The fixed update tick function.
     /// </summary>
@@ -149,4 +149,9 @@ public:
     /// The late update tick function.
     /// </summary>
     LateUpdateTickData LateUpdate;
+
+    /// <summary>
+    /// The late fixed update tick function.
+    /// </summary>
+    LateFixedUpdateTickData LateFixedUpdate;
 };

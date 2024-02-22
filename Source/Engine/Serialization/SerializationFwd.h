@@ -1,14 +1,16 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Core/ISerializable.h"
-#include "ISerializeModifier.h"
 #include "Json.h"
 #include "JsonWriter.h"
 
+class ISerializeModifier;
+
 // The floating-point values serialization epsilon for equality checks precision
-#define SERIALIZE_EPSILON 0.0000001f
+#define SERIALIZE_EPSILON 1e-7f
+#define SERIALIZE_EPSILON_DOUBLE 1e-17
 
 // Helper macro to cast object on diff serialization
 #define SERIALIZE_GET_OTHER_OBJ(type) const auto other = static_cast<const type*>(otherObj)

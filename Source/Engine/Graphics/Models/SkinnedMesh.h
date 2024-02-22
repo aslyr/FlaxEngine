@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,29 +6,20 @@
 #include "Types.h"
 #include "BlendShape.h"
 
-struct GeometryDrawStateData;
-struct RenderContext;
-class GPUBuffer;
-class SkinnedMeshDrawData;
-
 /// <summary>
 /// Represents part of the skinned model that is made of vertices and can be rendered using custom material, transformation and skeleton bones hierarchy.
 /// </summary>
 API_CLASS(NoSpawn) class FLAXENGINE_API SkinnedMesh : public MeshBase
 {
-DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(SkinnedMesh, MeshBase);
+    DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(SkinnedMesh, MeshBase);
 protected:
-
-    int32 _index;
-    int32 _lodIndex;
-    GPUBuffer* _vertexBuffer;
-    GPUBuffer* _indexBuffer;
+    GPUBuffer* _vertexBuffer = nullptr;
+    GPUBuffer* _indexBuffer = nullptr;
     mutable Array<byte> _cachedIndexBuffer;
     mutable Array<byte> _cachedVertexBuffer;
     mutable int32 _cachedIndexBufferCount;
 
 public:
-
     SkinnedMesh(const SkinnedMesh& other)
         : SkinnedMesh()
     {
@@ -43,21 +34,12 @@ public:
     ~SkinnedMesh();
 
 public:
-
     /// <summary>
     /// Gets the skinned model owning this mesh.
     /// </summary>
     FORCE_INLINE SkinnedModel* GetSkinnedModel() const
     {
         return (SkinnedModel*)_model;
-    }
-
-    /// <summary>
-    /// Gets the mesh index.
-    /// </summary>
-    FORCE_INLINE int32 GetIndex() const
-    {
-        return _index;
     }
 
     /// <summary>
@@ -74,7 +56,6 @@ public:
     Array<BlendShape> BlendShapes;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="SkinnedMesh"/> class.
     /// </summary>
@@ -103,7 +84,6 @@ public:
     void Unload();
 
 public:
-
     /// <summary>
     /// Updates the model mesh (used by the virtual models created with Init rather than Load).
     /// </summary>
@@ -155,7 +135,6 @@ public:
     bool UpdateMesh(uint32 vertexCount, uint32 triangleCount, VB0SkinnedElementType* vb, void* ib, bool use16BitIndices);
 
 public:
-
     /// <summary>
     /// Determines if there is an intersection between the mesh and a ray in given world
     /// </summary>
@@ -164,75 +143,19 @@ public:
     /// <param name="distance">When the method completes and returns true, contains the distance of the intersection (if any valid).</param>
     /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
     /// <returns>True whether the two objects intersected</returns>
-    bool Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal) const;
+    bool Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal) const;
 
     /// <summary>
-    /// Retrieves the eight corners of the bounding box.
+    /// Determines if there is an intersection between the mesh and a ray in given world
     /// </summary>
-    /// <param name="corners">An array of points representing the eight corners of the bounding box.</param>
-    FORCE_INLINE void GetCorners(Vector3 corners[8]) const
-    {
-        _box.GetCorners(corners);
-    }
+    /// <param name="ray">The ray to test</param>
+    /// <param name="transform">Instance transformation</param>
+    /// <param name="distance">When the method completes and returns true, contains the distance of the intersection (if any valid).</param>
+    /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
+    /// <returns>True whether the two objects intersected</returns>
+    bool Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal) const;
 
 public:
-
-    /// <summary>
-    /// Model instance drawing packed data.
-    /// </summary>
-    struct DrawInfo
-    {
-        /// <summary>
-        /// The instance buffer to use during model rendering
-        /// </summary>
-        ModelInstanceEntries* Buffer;
-
-        /// <summary>
-        /// The skinning.
-        /// </summary>
-        SkinnedMeshDrawData* Skinning;
-
-        /// <summary>
-        /// The blend shapes.
-        /// </summary>
-        BlendShapesInstance* BlendShapes;
-
-        /// <summary>
-        /// The world transformation of the model.
-        /// </summary>
-        Matrix* World;
-
-        /// <summary>
-        /// The instance drawing state data container. Used for LOD transition handling and previous world transformation matrix updating. 
-        /// </summary>
-        GeometryDrawStateData* DrawState;
-
-        /// <summary>
-        /// The object draw modes.
-        /// </summary>
-        DrawPass DrawModes;
-
-        /// <summary>
-        /// The bounds of the model (used to select a proper LOD during rendering).
-        /// </summary>
-        BoundingSphere Bounds;
-
-        /// <summary>
-        /// The per-instance random value.
-        /// </summary>
-        float PerInstanceRandom;
-
-        /// <summary>
-        /// The LOD bias value.
-        /// </summary>
-        char LODBias;
-
-        /// <summary>
-        /// The forced LOD to use. Value -1 disables this feature.
-        /// </summary>
-        char ForcedLOD;
-    };
-
     /// <summary>
     /// Draws the mesh. Binds vertex and index buffers and invokes the draw call.
     /// </summary>
@@ -247,18 +170,26 @@ public:
     /// <param name="lodDitherFactor">The LOD transition dither factor.</param>
     void Draw(const RenderContext& renderContext, const DrawInfo& info, float lodDitherFactor) const;
 
-public:
+    /// <summary>
+    /// Draws the mesh.
+    /// </summary>
+    /// <param name="renderContextBatch">The rendering context batch.</param>
+    /// <param name="info">The packed drawing info data.</param>
+    /// <param name="lodDitherFactor">The LOD transition dither factor.</param>
+    void Draw(const RenderContextBatch& renderContextBatch, const DrawInfo& info, float lodDitherFactor) const;
 
+public:
     // [MeshBase]
     bool DownloadDataGPU(MeshBufferType type, BytesContainer& result) const override;
     Task* DownloadDataGPUAsync(MeshBufferType type, BytesContainer& result) const override;
     bool DownloadDataCPU(MeshBufferType type, BytesContainer& result, int32& count) const override;
 
 private:
-
     // Internal bindings
     API_FUNCTION(NoProxy) ScriptingObject* GetParentModel();
-    API_FUNCTION(NoProxy) bool UpdateMeshUInt(MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* blendIndicesObj, MonoArray* blendWeightsObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj);
-    API_FUNCTION(NoProxy) bool UpdateMeshUShort(MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* blendIndicesObj, MonoArray* blendWeightsObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj);
-    API_FUNCTION(NoProxy) bool DownloadBuffer(bool forceGpu, MonoArray* resultObj, int32 typeI);
+#if !COMPILE_WITHOUT_CSHARP
+    API_FUNCTION(NoProxy) bool UpdateMeshUInt(MArray* verticesObj, MArray* trianglesObj, MArray* blendIndicesObj, MArray* blendWeightsObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj);
+    API_FUNCTION(NoProxy) bool UpdateMeshUShort(MArray* verticesObj, MArray* trianglesObj, MArray* blendIndicesObj, MArray* blendWeightsObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj);
+    API_FUNCTION(NoProxy) MArray* DownloadBuffer(bool forceGpu, MTypeObject* resultType, int32 typeI);
+#endif
 };

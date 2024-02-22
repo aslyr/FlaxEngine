@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -26,70 +26,21 @@ namespace DescriptorSet
     {
         // Vertex shader stage
         Vertex = 0,
-
         // Pixel shader stage
         Pixel = 1,
-
         // Geometry shader stage
         Geometry = 2,
-
         // Hull shader stage
         Hull = 3,
-
         // Domain shader stage
         Domain = 4,
-
         // Graphics pipeline stages count
         GraphicsStagesCount = 5,
-
         // Compute pipeline slot
         Compute = 0,
-
         // The maximum amount of slots for all stages
         Max = 5,
     };
-
-    inline Stage GetSetForFrequency(ShaderStage stage)
-    {
-        switch (stage)
-        {
-        case ShaderStage::Vertex:
-            return Vertex;
-        case ShaderStage::Hull:
-            return Hull;
-        case ShaderStage::Domain:
-            return Domain;
-        case ShaderStage::Pixel:
-            return Pixel;
-        case ShaderStage::Geometry:
-            return Geometry;
-        case ShaderStage::Compute:
-            return Compute;
-        default:
-        CRASH;
-            return Max;
-        }
-    }
-
-    inline ShaderStage GetFrequencyForGfxSet(Stage stage)
-    {
-        switch (stage)
-        {
-        case Vertex:
-            return ShaderStage::Vertex;
-        case Hull:
-            return ShaderStage::Hull;
-        case Domain:
-            return ShaderStage::Domain;
-        case Pixel:
-            return ShaderStage::Pixel;
-        case Geometry:
-            return ShaderStage::Geometry;
-        default:
-        CRASH;
-            return static_cast<ShaderStage>(ShaderStage_Count);
-        }
-    }
 
     template<typename T>
     inline bool CopyAndReturnNotEqual(T& a, T b)
@@ -117,7 +68,6 @@ protected:
     uint32 _typesUsageID = ~0;
 
     void CacheTypesUsageID();
-    void AddDescriptor(int32 descriptorSetIndex, const VkDescriptorSetLayoutBinding& descriptor);
 
 public:
 
@@ -138,11 +88,6 @@ public:
         return _setLayouts;
     }
 
-    inline const uint32* GetLayoutTypes() const
-    {
-        return _layoutTypes;
-    }
-
     inline uint32 GetTypesUsageID() const
     {
         return _typesUsageID;
@@ -160,25 +105,7 @@ public:
         _setLayouts = info._setLayouts;
     }
 
-    inline bool operator ==(const DescriptorSetLayoutInfoVulkan& other) const
-    {
-        if (other._setLayouts.Count() != _setLayouts.Count())
-            return false;
-        if (other._typesUsageID != _typesUsageID)
-            return false;
-
-        for (int32 index = 0; index < other._setLayouts.Count(); index++)
-        {
-            const int32 bindingsCount = _setLayouts[index].LayoutBindings.Count();
-            if (other._setLayouts[index].LayoutBindings.Count() != bindingsCount)
-                return false;
-
-            if (bindingsCount != 0 && Platform::MemoryCompare(other._setLayouts[index].LayoutBindings.Get(), _setLayouts[index].LayoutBindings.Get(), bindingsCount * sizeof(VkDescriptorSetLayoutBinding)))
-                return false;
-        }
-
-        return true;
-    }
+    bool operator==(const DescriptorSetLayoutInfoVulkan& other) const;
 
     friend inline uint32 GetHash(const DescriptorSetLayoutInfoVulkan& key)
     {
@@ -413,6 +340,7 @@ struct DescriptorSetWriteContainerVulkan
 {
     Array<VkDescriptorImageInfo> DescriptorImageInfo;
     Array<VkDescriptorBufferInfo> DescriptorBufferInfo;
+    Array<VkBufferView> DescriptorTexelBufferView;
     Array<VkWriteDescriptorSet> DescriptorWrites;
     Array<byte> BindingToDynamicOffset;
 
@@ -420,6 +348,7 @@ struct DescriptorSetWriteContainerVulkan
     {
         DescriptorImageInfo.Resize(0);
         DescriptorBufferInfo.Resize(0);
+        DescriptorTexelBufferView.Resize(0);
         DescriptorWrites.Resize(0);
         BindingToDynamicOffset.Resize(0);
     }
@@ -436,26 +365,24 @@ public:
 
 public:
 
-    uint32 SetupDescriptorWrites(const SpirvShaderDescriptorInfo& info, VkWriteDescriptorSet* writeDescriptors, VkDescriptorImageInfo* imageInfo, VkDescriptorBufferInfo* bufferInfo, byte* bindingToDynamicOffset);
+    uint32 SetupDescriptorWrites(const SpirvShaderDescriptorInfo& info, VkWriteDescriptorSet* writeDescriptors, VkDescriptorImageInfo* imageInfo, VkDescriptorBufferInfo* bufferInfo, VkBufferView* texelBufferView, byte* bindingToDynamicOffset);
 
-    bool WriteUniformBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) const
+    bool WriteUniformBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-        VkDescriptorBufferInfo* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo);
-        ASSERT(bufferInfo);
+        auto* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(bufferInfo->buffer, buffer);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->offset, offset);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->range, range);
         return edited;
     }
 
-    bool WriteDynamicUniformBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range, uint32 dynamicOffset) const
+    bool WriteDynamicUniformBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range, uint32 dynamicOffset, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
-        VkDescriptorBufferInfo* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo);
-        ASSERT(bufferInfo);
+        auto* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(bufferInfo->buffer, buffer);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->offset, offset);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->range, range);
@@ -464,63 +391,61 @@ public:
         return edited;
     }
 
-    bool WriteSampler(uint32 descriptorIndex, VkSampler sampler) const
+    bool WriteSampler(uint32 descriptorIndex, VkSampler sampler, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER || WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        VkDescriptorImageInfo* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo);
-        ASSERT(imageInfo);
+        auto* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(imageInfo->sampler, sampler);
         return edited;
     }
 
-    bool WriteImage(uint32 descriptorIndex, VkImageView imageView, VkImageLayout layout) const
+    bool WriteImage(uint32 descriptorIndex, VkImageView imageView, VkImageLayout layout, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        VkDescriptorImageInfo* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo);
-        ASSERT(imageInfo);
+        auto* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(imageInfo->imageView, imageView);
         edited |= DescriptorSet::CopyAndReturnNotEqual(imageInfo->imageLayout, layout);
         return edited;
     }
 
-    bool WriteStorageImage(uint32 descriptorIndex, VkImageView imageView, VkImageLayout layout) const
+    bool WriteStorageImage(uint32 descriptorIndex, VkImageView imageView, VkImageLayout layout, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        VkDescriptorImageInfo* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo);
-        ASSERT(imageInfo);
+        auto* imageInfo = const_cast<VkDescriptorImageInfo*>(WriteDescriptors[descriptorIndex].pImageInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(imageInfo->imageView, imageView);
         edited |= DescriptorSet::CopyAndReturnNotEqual(imageInfo->imageLayout, layout);
         return edited;
     }
 
-    bool WriteStorageTexelBuffer(uint32 descriptorIndex, const VkBufferView* bufferView) const
+    bool WriteStorageTexelBuffer(uint32 descriptorIndex, VkBufferView bufferView, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
-        WriteDescriptors[descriptorIndex].pTexelBufferView = bufferView;
+        auto* bufferInfo = const_cast<VkBufferView*>(WriteDescriptors[descriptorIndex].pTexelBufferView + index);
+        *bufferInfo = bufferView;
         return true;
     }
 
-    bool WriteStorageBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range) const
+    bool WriteStorageBuffer(uint32 descriptorIndex, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize range, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC);
-        VkDescriptorBufferInfo* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo);
-        ASSERT(bufferInfo);
+        auto* bufferInfo = const_cast<VkDescriptorBufferInfo*>(WriteDescriptors[descriptorIndex].pBufferInfo + index);
         bool edited = DescriptorSet::CopyAndReturnNotEqual(bufferInfo->buffer, buffer);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->offset, offset);
         edited |= DescriptorSet::CopyAndReturnNotEqual(bufferInfo->range, range);
         return edited;
     }
 
-    bool WriteUniformTexelBuffer(uint32 descriptorIndex, const VkBufferView* view) const
+    bool WriteUniformTexelBuffer(uint32 descriptorIndex, VkBufferView view, uint32 index = 0) const
     {
         ASSERT(descriptorIndex < WritesCount);
         ASSERT(WriteDescriptors[descriptorIndex].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER);
-        return DescriptorSet::CopyAndReturnNotEqual(WriteDescriptors[descriptorIndex].pTexelBufferView, view);
+        auto* bufferInfo = const_cast<VkBufferView*>(WriteDescriptors[descriptorIndex].pTexelBufferView + index);
+        return DescriptorSet::CopyAndReturnNotEqual(*bufferInfo, view);
     }
 
     void SetDescriptorSet(VkDescriptorSet descriptorSet) const

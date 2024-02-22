@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,7 +6,6 @@
 
 #include "Engine/Graphics/Materials/MaterialInfo.h"
 #include "Engine/Graphics/Materials/MaterialParams.h"
-#include "Engine/Content/AssetsContainer.h"
 #include "MaterialLayer.h"
 #include "Types.h"
 
@@ -190,9 +189,9 @@ private:
     enum class ParticleAttributeValueTypes
     {
         Float,
-        Vector2,
-        Vector3,
-        Vector4,
+        Float2,
+        Float3,
+        Float4,
         Int,
         Uint,
     };
@@ -205,6 +204,7 @@ private:
 
     MaterialValue AccessParticleAttribute(Node* caller, const StringView& name, ParticleAttributeValueTypes valueType, const Char* index = nullptr, ParticleAttributeSpace space = ParticleAttributeSpace::AsIs);
     void prepareLayer(MaterialLayer* layer, bool allowVisibleParams);
+    void WriteCustomGlobalCode(const Array<const MaterialGraph::Node*, InlinedAllocation<8>>& nodes, int32 templateInputsMapping);
 
 public:
 

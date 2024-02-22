@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -69,7 +69,7 @@ namespace FlaxEditor.Windows.Assets
             [EditorDisplay("General"), Tooltip("The base material used to override it's properties")]
             public MaterialBase BaseMaterial
             {
-                get => Window?.Asset?.BaseMaterial;
+                get => Window?.Asset != null ? Window?.Asset.BaseMaterial : null;
                 set
                 {
                     var asset = Window?.Asset;
@@ -101,10 +101,12 @@ namespace FlaxEditor.Windows.Assets
             [HideInEditor]
             public object[] Values
             {
-                get => Window?.Asset?.Parameters.Select(x => x.Value).ToArray();
+                get => Window?.Asset != null ? Window?.Asset.Parameters.Select(x => x.Value).ToArray() : null;
                 set
                 {
-                    var parameters = Window?.Asset?.Parameters;
+                    if (Window?.Asset == null)
+                        return;
+                    var parameters = Window?.Asset.Parameters;
                     if (value != null && parameters != null)
                     {
                         if (value.Length != parameters.Length)
@@ -131,9 +133,11 @@ namespace FlaxEditor.Windows.Assets
             [HideInEditor]
             public FlaxEngine.Object[] ValuesRef
             {
-                get => Window?.Asset?.Parameters.Select(x => x.Value as FlaxEngine.Object).ToArray();
+                get => Window?.Asset != null ? Window?.Asset.Parameters.Select(x => x.Value as FlaxEngine.Object).ToArray() : null;
                 set
                 {
+                    if (Window?.Asset == null)
+                        return;
                     var parameters = Window?.Asset?.Parameters;
                     if (value != null && parameters != null)
                     {
@@ -218,6 +222,8 @@ namespace FlaxEditor.Windows.Assets
         /// <seealso cref="FlaxEditor.CustomEditors.CustomEditor" />
         public class ParametersEditor : GenericEditor
         {
+            private SurfaceUtils.GraphParameterData[] _graphParameters;
+
             /// <inheritdoc />
             public override void Initialize(LayoutElementsContainer layout)
             {
@@ -231,7 +237,7 @@ namespace FlaxEditor.Windows.Assets
                 }
                 if (!materialInstance.IsLoaded || (materialInstance.BaseMaterial && !materialInstance.BaseMaterial.IsLoaded))
                 {
-                    layout.Label("Loading...");
+                    layout.Label("Loading...", TextAlignment.Center);
                     return;
                 }
                 var parameters = materialInstance.Parameters;
@@ -240,6 +246,21 @@ namespace FlaxEditor.Windows.Assets
 
                 if (parameters.Length == 0)
                     return;
+
+                // Utility buttons
+                {
+                    var buttons = layout.CustomContainer<UniformGridPanel>();
+                    var gridControl = buttons.CustomControl;
+                    gridControl.ClipChildren = false;
+                    gridControl.Height = Button.DefaultHeight;
+                    gridControl.SlotsHorizontally = 2;
+                    gridControl.SlotsVertically = 1;
+                    var rebuildButton = buttons.Button("Remove overrides", "Unchecks all overrides for parameters.").Button;
+                    rebuildButton.Clicked += OnRemoveOverrides;
+                    var removeButton = buttons.Button("Override all", "Checks all parameters overrides.").Button;
+                    removeButton.Clicked += OnOverrideAll;
+                }
+
                 var parametersGroup = layout.Group("Parameters");
                 var baseMaterial = materialInstance.BaseMaterial;
                 var material = baseMaterial;
@@ -249,8 +270,8 @@ namespace FlaxEditor.Windows.Assets
                         material = instance.BaseMaterial;
                 }
 
-                var data = SurfaceUtils.InitGraphParameters(parameters, (Material)material);
-                SurfaceUtils.DisplayGraphParameters(parametersGroup, data,
+                _graphParameters = SurfaceUtils.InitGraphParameters(parameters, (Material)material);
+                SurfaceUtils.DisplayGraphParameters(parametersGroup, _graphParameters,
                                                     (instance, parameter, tag) =>
                                                     {
                                                         // Get material parameter
@@ -276,7 +297,7 @@ namespace FlaxEditor.Windows.Assets
                                                         var p = (MaterialParameter)e.Tag;
 
                                                         // Try to get default value (from the base material)
-                                                        var pBase = baseMaterial?.GetParameter(p.Name);
+                                                        var pBase = baseMaterial != null ? baseMaterial.GetParameter(p.Name) : null;
                                                         if (pBase != null && pBase.ParameterType == p.ParameterType)
                                                         {
                                                             valueContainer.SetDefaultValue(pBase.Value);
@@ -302,6 +323,40 @@ namespace FlaxEditor.Windows.Assets
                                                         itemLayout.Property(label, valueContainer, null, e.Tooltip?.Text);
                                                     });
             }
+
+            private void OnRemoveOverrides()
+            {
+                OnSetOverrides(false);
+            }
+
+            private void OnOverrideAll()
+            {
+                OnSetOverrides(true);
+            }
+
+            private void OnSetOverrides(bool isOverride)
+            {
+                var proxy = (PropertiesProxy)Values[0];
+                var undoActions = new List<IUndoAction>();
+                foreach (var graphParameter in _graphParameters)
+                {
+                    var p = (MaterialParameter)graphParameter.Tag;
+                    if (!p.IsPublic || p.IsOverride == isOverride)
+                        continue;
+                    p.IsOverride = isOverride;
+                    undoActions.Add(new EditParamOverrideAction
+                    {
+                        Window = proxy.Window,
+                        Name = p.Name,
+                        Before = !isOverride,
+                    });
+                }
+                if (undoActions.Count == 0)
+                    return;
+                proxy.Window._undo.AddAction(new MultiUndoAction(undoActions));
+                proxy.Window.MarkAsEdited();
+                Presenter.BuildLayoutOnUpdate();
+            }
         }
 
         private readonly SplitPanel _split;
@@ -320,6 +375,8 @@ namespace FlaxEditor.Windows.Assets
         public MaterialInstanceWindow(Editor editor, AssetItem item)
         : base(editor, item)
         {
+            var inputOptions = Editor.Options.Options.Input;
+
             // Undo
             _undo = new Undo();
             _undo.UndoDone += OnUndoRedo;
@@ -329,8 +386,8 @@ namespace FlaxEditor.Windows.Assets
             // Toolstrip
             _saveButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Save64, Save).LinkTooltip("Save");
             _toolstrip.AddSeparator();
-            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip("Undo (Ctrl+Z)");
-            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip("Redo (Ctrl+Y)");
+            _undoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip($"Undo ({inputOptions.Undo})");
+            _redoButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip($"Redo ({inputOptions.Redo})");
             _toolstrip.AddSeparator();
             _toolstrip.AddButton(Editor.Icons.Rotate64, OnRevertAllParameters).LinkTooltip("Revert all the parameters to the default values");
             _toolstrip.AddSeparator();
@@ -466,8 +523,11 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         protected override void OnClose()
         {
-            // Discard unsaved changes
-            _properties.DiscardChanges();
+            if (Asset)
+            {
+                // Discard unsaved changes
+                _properties.DiscardChanges();
+            }
 
             // Cleanup
             _undo.Clear();
@@ -497,14 +557,13 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutSerialize(XmlWriter writer)
         {
-            writer.WriteAttributeString("Split", _split.SplitterValue.ToString());
+            LayoutSerializeSplitter(writer, "Split", _split);
         }
 
         /// <inheritdoc />
         public override void OnLayoutDeserialize(XmlElement node)
         {
-            if (float.TryParse(node.GetAttribute("Split"), out float value1))
-                _split.SplitterValue = value1;
+            LayoutDeserializeSplitter(node, "Split", _split);
         }
 
         /// <inheritdoc />

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Globals.h"
 #include "Engine/Core/Types/String.h"
@@ -15,7 +15,9 @@ String Globals::EngineContentFolder;
 String Globals::ProjectSourceFolder;
 #endif
 String Globals::ProjectContentFolder;
+#if USE_MONO
 String Globals::MonoPath;
+#endif
 bool Globals::FatalErrorOccurred;
 bool Globals::IsRequestingExit;
 int32 Globals::ExitCode;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.IO;
 using Flax.Build;
@@ -56,6 +56,10 @@ public class Platform : EngineModule
             options.SourcePaths.Add(Path.Combine(FolderPath, "Unix"));
             options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS4", "Engine", "Platform"));
             break;
+        case TargetPlatform.PS5:
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Unix"));
+            options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS5", "Engine", "Platform"));
+            break;
         case TargetPlatform.XboxOne:
             options.SourcePaths.Add(Path.Combine(FolderPath, "Win32"));
             options.SourcePaths.Add(Path.Combine(FolderPath, "GDK"));
@@ -73,6 +77,16 @@ public class Platform : EngineModule
         case TargetPlatform.Switch:
             options.SourcePaths.Add(Path.Combine(Globals.EngineRoot, "Source", "Platforms", "Switch", "Engine", "Platform"));
             break;
+        case TargetPlatform.Mac:
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Unix"));
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Apple"));
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Mac"));
+            break;
+        case TargetPlatform.iOS:
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Unix"));
+            options.SourcePaths.Add(Path.Combine(FolderPath, "Apple"));
+            options.SourcePaths.Add(Path.Combine(FolderPath, "iOS"));
+            break;
         default: throw new InvalidPlatformException(options.Platform.Target);
         }
         if (options.Target.IsEditor)
@@ -83,9 +97,13 @@ public class Platform : EngineModule
             options.SourceFiles.Add(Path.Combine(FolderPath, "Linux", "LinuxPlatformSettings.h"));
             options.SourceFiles.Add(Path.Combine(FolderPath, "Android", "AndroidPlatformSettings.h"));
             options.SourceFiles.Add(Path.Combine(FolderPath, "GDK", "GDKPlatformSettings.h"));
+            options.SourceFiles.Add(Path.Combine(FolderPath, "Apple", "ApplePlatformSettings.h"));
+            options.SourceFiles.Add(Path.Combine(FolderPath, "Mac", "MacPlatformSettings.h"));
+            options.SourceFiles.Add(Path.Combine(FolderPath, "iOS", "iOSPlatformSettings.h"));
             AddSourceFileIfExists(options, Path.Combine(Globals.EngineRoot, "Source", "Platforms", "XboxOne", "Engine", "Platform", "XboxOnePlatformSettings.h"));
             AddSourceFileIfExists(options, Path.Combine(Globals.EngineRoot, "Source", "Platforms", "XboxScarlett", "Engine", "Platform", "XboxScarlettPlatformSettings.h"));
             AddSourceFileIfExists(options, Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS4", "Engine", "Platform", "PS4PlatformSettings.h"));
+            AddSourceFileIfExists(options, Path.Combine(Globals.EngineRoot, "Source", "Platforms", "PS5", "Engine", "Platform", "PS5PlatformSettings.h"));
             AddSourceFileIfExists(options, Path.Combine(Globals.EngineRoot, "Source", "Platforms", "Switch", "Engine", "Platform", "SwitchPlatformSettings.h"));
         }
     }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -64,6 +64,22 @@ namespace FlaxEditor.Windows
                 set => Graphics.VolumetricFogQuality = value;
             }
 
+            [DefaultValue(Quality.High)]
+            [EditorOrder(1280), EditorDisplay("Quality"), Tooltip("The Global SDF quality. Controls the volume texture resolution and amount of cascades to use.")]
+            public Quality GlobalSDFQuality
+            {
+                get => Graphics.GlobalSDFQuality;
+                set => Graphics.GlobalSDFQuality = value;
+            }
+
+            [DefaultValue(Quality.High)]
+            [EditorOrder(1290), EditorDisplay("Quality"), Tooltip("The Global Illumination quality. Controls the quality of the GI effect.")]
+            public Quality GIQuality
+            {
+                get => Graphics.GIQuality;
+                set => Graphics.GIQuality = value;
+            }
+
             [DefaultValue(Quality.Medium)]
             [EditorOrder(1300), EditorDisplay("Quality", "Shadows Quality"), Tooltip("The shadows quality.")]
             public Quality ShadowsQuality
@@ -96,6 +112,17 @@ namespace FlaxEditor.Windows
                 get => MainRenderTask.Instance.RenderingPercentage;
                 set => MainRenderTask.Instance.RenderingPercentage = value;
             }
+
+            [NoSerialize, DefaultValue(RenderingUpscaleLocation.AfterAntiAliasingPass), VisibleIf(nameof(UpscaleLocation_Visible))]
+            [EditorOrder(1401), EditorDisplay("Quality")]
+            [Tooltip("The image resolution upscale location within rendering pipeline.")]
+            public RenderingUpscaleLocation UpscaleLocation
+            {
+                get => MainRenderTask.Instance.UpscaleLocation;
+                set => MainRenderTask.Instance.UpscaleLocation = value;
+            }
+
+            private bool UpscaleLocation_Visible => MainRenderTask.Instance.RenderingPercentage < 1.0f;
 
             [NoSerialize, DefaultValue(1.0f), Limit(0, 1)]
             [EditorOrder(1500), EditorDisplay("Quality"), Tooltip("The global density scale for all foliage instances. The default value is 1. Use values from range 0-1. Lower values decrease amount of foliage instances in-game. Use it to tweak game performance for slower devices.")]

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,7 +6,7 @@
 #include "Engine/Scripting/ScriptingType.h"
 #include "Types.h"
 
-template<typename T, int32 MaxThreads, bool ClearMemory>
+template<typename T, int32 MaxThreads>
 class ThreadLocal;
 
 /// <summary>
@@ -47,12 +47,12 @@ public:
 public:
 
     /// <summary>
-    /// Gets mono root domain
+    /// Gets the root domain.
     /// </summary>
     static MDomain* GetRootDomain();
 
     /// <summary>
-    /// Gets scripts domain
+    /// Gets the scripts domain (it can be the root domain if not using separate domain for scripting).
     /// </summary>
     static MDomain* GetScriptsDomain();
 
@@ -70,23 +70,14 @@ public:
     static void Release();
 
 #if USE_EDITOR
-
     /// <summary>
     /// Reloads scripts.
     /// </summary>
     /// <param name="canTriggerSceneReload">True if allow to scene scripts reload callback, otherwise it won't be possible.</param>
     static void Reload(bool canTriggerSceneReload = true);
-
 #endif
 
 public:
-
-    /// <summary>
-    /// Finds the class from the given Mono class object within whole assembly.
-    /// </summary>
-    /// <param name="monoClass">The Mono class.</param>
-    /// <returns>The MClass object or null if missing.</returns>
-    static MClass* FindClass(MonoClass* monoClass);
 
     /// <summary>
     /// Finds the class with given fully qualified name within whole assembly.
@@ -96,18 +87,25 @@ public:
     static MClass* FindClass(const StringAnsiView& fullname);
 
     /// <summary>
-    /// Finds the native class with given fully qualified name within whole assembly.
-    /// </summary>
-    /// <param name="fullname">The full name of the type eg: System.Int64.</param>
-    /// <returns>The MClass object or null if missing.</returns>
-    static MonoClass* FindClassNative(const StringAnsiView& fullname);
-
-    /// <summary>
     /// Finds the scripting type of the given fullname by searching loaded scripting assemblies.
     /// </summary>
     /// <param name="fullname">The full name of the type eg: System.Int64.</param>
     /// <returns>The scripting type or invalid type if missing.</returns>
     static ScriptingTypeHandle FindScriptingType(const StringAnsiView& fullname);
+
+    /// <summary>
+    /// Creates a new instance of the given type object (native construction).
+    /// </summary>
+    /// <param name="type">The scripting object type class.</param>
+    /// <returns>The created object or null if failed.</returns>
+    static ScriptingObject* NewObject(const ScriptingTypeHandle& type);
+
+    /// <summary>
+    /// Creates a new instance of the given class object (native construction).
+    /// </summary>
+    /// <param name="type">The Managed type class.</param>
+    /// <returns>The created object or null if failed.</returns>
+    static ScriptingObject* NewObject(const MClass* type);
 
 public:
 
@@ -116,7 +114,7 @@ public:
     /// <summary>
     /// The objects lookup identifier mapping used to override the object ids on FindObject call (used by the object references deserialization).
     /// </summary>
-    static ThreadLocal<IdsMappingTable*, PLATFORM_THREADS_LIMIT, true> ObjectsLookupIdMapping;
+    static ThreadLocal<IdsMappingTable*, PLATFORM_THREADS_LIMIT> ObjectsLookupIdMapping;
 
     /// <summary>
     /// Finds the object by the given identifier. Searches registered scene objects and optionally assets. Logs warning if fails.
@@ -136,6 +134,13 @@ public:
     /// <param name="type">The type of the object to find (optional).</param>
     /// <returns>The found object or null if missing.</returns>
     static ScriptingObject* FindObject(Guid id, MClass* type = nullptr);
+
+    /// <summary>
+    /// Tries to find the object by the given class.
+    /// </summary>
+    /// <param name="type">The type of the object to find.</param>
+    /// <returns>The found object or null if missing.</returns>
+    static ScriptingObject* TryFindObject(MClass* type);
 
     /// <summary>
     /// Tries to find the object by the given identifier.
@@ -161,7 +166,7 @@ public:
     /// </summary>
     /// <param name="managedInstance">The managed instance pointer.</param>
     /// <returns>The found object or null if missing.</returns>
-    static ScriptingObject* FindObject(const MonoObject* managedInstance);
+    static ScriptingObject* FindObject(const MObject* managedInstance);
 
     /// <summary>
     /// Event called by the internal call on a finalizer thread when the managed objects gets deleted by the GC.

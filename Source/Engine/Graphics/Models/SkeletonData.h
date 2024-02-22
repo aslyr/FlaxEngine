@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,7 +13,7 @@
 /// </summary>
 API_STRUCT() struct SkeletonNode
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(SkeletonNode);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(SkeletonNode);
 
     /// <summary>
     /// The parent node index. The root node uses value -1.
@@ -36,7 +36,7 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(SkeletonNode);
 /// </summary>
 API_STRUCT() struct SkeletonBone
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(SkeletonBone);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(SkeletonBone);
 
     /// <summary>
     /// The parent bone index. The root bone uses value -1.
@@ -74,7 +74,6 @@ struct TIsPODType<SkeletonBone>
 class SkeletonData
 {
 public:
-
     /// <summary>
     /// The nodes in this hierarchy. The root node is always at the index 0.
     /// </summary>
@@ -86,63 +85,39 @@ public:
     Array<SkeletonBone> Bones;
 
 public:
-
     /// <summary>
     /// Gets the root node reference.
     /// </summary>
-    /// <returns>The root node.</returns>
     FORCE_INLINE SkeletonNode& RootNode()
     {
         ASSERT(Nodes.HasItems());
-        return Nodes[0];
+        return Nodes.Get()[0];
     }
 
     /// <summary>
     /// Gets the root node reference.
     /// </summary>
-    /// <returns>The root node.</returns>
     FORCE_INLINE const SkeletonNode& RootNode() const
     {
         ASSERT(Nodes.HasItems());
-        return Nodes[0];
+        return Nodes.Get()[0];
     }
 
     /// <summary>
     /// Swaps the contents of object with the other object without copy operation. Performs fast internal data exchange.
     /// </summary>
-    /// <param name="other">The other object.</param>
-    void Swap(SkeletonData& other)
-    {
-        Nodes.Swap(other.Nodes);
-        Bones.Swap(other.Bones);
-    }
+    void Swap(SkeletonData& other);
 
-    int32 FindNode(const StringView& name)
-    {
-        for (int32 i = 0; i < Nodes.Count(); i++)
-        {
-            if (Nodes[i].Name == name)
-                return i;
-        }
-        return -1;
-    }
+    Transform GetNodeTransform(int32 nodeIndex) const;
+    void SetNodeTransform(int32 nodeIndex, const Transform& value);
 
-    int32 FindBone(int32 nodeIndex)
-    {
-        for (int32 i = 0; i < Bones.Count(); i++)
-        {
-            if (Bones[i].NodeIndex == nodeIndex)
-                return i;
-        }
-        return -1;
-    }
+    int32 FindNode(const StringView& name) const;
+    int32 FindBone(int32 nodeIndex) const;
+
+    uint64 GetMemoryUsage() const;
 
     /// <summary>
     /// Releases data.
     /// </summary>
-    void Dispose()
-    {
-        Nodes.Resize(0);
-        Bones.Resize(0);
-    }
+    void Dispose();
 };

@@ -1,12 +1,38 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_VULKAN
 
 #include "GPUPipelineStateVulkan.h"
 #include "RenderToolsVulkan.h"
-#include "Engine/Profiler/ProfilerCPU.h"
 #include "DescriptorSetVulkan.h"
 #include "GPUShaderProgramVulkan.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Profiler/ProfilerCPU.h"
+
+static VkStencilOp ToVulkanStencilOp(const StencilOperation value)
+{
+    switch (value)
+    {
+    case StencilOperation::Keep:
+        return VK_STENCIL_OP_KEEP;
+    case StencilOperation::Zero:
+        return VK_STENCIL_OP_ZERO;
+    case StencilOperation::Replace:
+        return VK_STENCIL_OP_REPLACE;
+    case StencilOperation::IncrementSaturated:
+        return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+    case StencilOperation::DecrementSaturated:
+        return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+    case StencilOperation::Invert:
+        return VK_STENCIL_OP_INVERT;
+    case StencilOperation::Increment:
+        return VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    case StencilOperation::Decrement:
+        return VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    default:
+        return VK_STENCIL_OP_KEEP;
+    }
+}
 
 GPUShaderProgramCSVulkan::~GPUShaderProgramCSVulkan()
 {
@@ -51,9 +77,11 @@ ComputePipelineStateVulkan* GPUShaderProgramCSVulkan::GetOrCreateState()
     uint32 dynamicOffsetsCount = 0;
     if (DescriptorInfo.DescriptorTypesCount != 0)
     {
+        // TODO: merge into a single allocation
         _pipelineState->DSWriteContainer.DescriptorWrites.AddZeroed(DescriptorInfo.DescriptorTypesCount);
         _pipelineState->DSWriteContainer.DescriptorImageInfo.AddZeroed(DescriptorInfo.ImageInfosCount);
         _pipelineState->DSWriteContainer.DescriptorBufferInfo.AddZeroed(DescriptorInfo.BufferInfosCount);
+        _pipelineState->DSWriteContainer.DescriptorTexelBufferView.AddZeroed(DescriptorInfo.TexelBufferViewsCount);
 
         ASSERT(DescriptorInfo.DescriptorTypesCount < 255);
         _pipelineState->DSWriteContainer.BindingToDynamicOffset.AddDefault(DescriptorInfo.DescriptorTypesCount);
@@ -62,9 +90,10 @@ ComputePipelineStateVulkan* GPUShaderProgramCSVulkan::GetOrCreateState()
         VkWriteDescriptorSet* currentDescriptorWrite = _pipelineState->DSWriteContainer.DescriptorWrites.Get();
         VkDescriptorImageInfo* currentImageInfo = _pipelineState->DSWriteContainer.DescriptorImageInfo.Get();
         VkDescriptorBufferInfo* currentBufferInfo = _pipelineState->DSWriteContainer.DescriptorBufferInfo.Get();
+        VkBufferView* currentTexelBufferView = _pipelineState->DSWriteContainer.DescriptorTexelBufferView.Get();
         uint8* currentBindingToDynamicOffsetMap = _pipelineState->DSWriteContainer.BindingToDynamicOffset.Get();
 
-        dynamicOffsetsCount = _pipelineState->DSWriter.SetupDescriptorWrites(DescriptorInfo, currentDescriptorWrite, currentImageInfo, currentBufferInfo, currentBindingToDynamicOffsetMap);
+        dynamicOffsetsCount = _pipelineState->DSWriter.SetupDescriptorWrites(DescriptorInfo, currentDescriptorWrite, currentImageInfo, currentBufferInfo, currentTexelBufferView, currentBindingToDynamicOffsetMap);
     }
 
     _pipelineState->DynamicOffsets.AddZeroed(dynamicOffsetsCount);
@@ -235,7 +264,7 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
 
     // Input Assembly
     RenderToolsVulkan::ZeroStruct(_descInputAssembly, VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);;
-    switch (desc.PrimitiveTopologyType)
+    switch (desc.PrimitiveTopology)
     {
     case PrimitiveTopologyType::Point:
         _descInputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
@@ -270,7 +299,7 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
     _descDynamic.pDynamicStates = _dynamicStates;
     _dynamicStates[_descDynamic.dynamicStateCount++] = VK_DYNAMIC_STATE_VIEWPORT;
     _dynamicStates[_descDynamic.dynamicStateCount++] = VK_DYNAMIC_STATE_SCISSOR;
-    //_dynamicStates[_descDynamic.dynamicStateCount++] = VK_DYNAMIC_STATE_STENCIL_REFERENCE;
+    _dynamicStates[_descDynamic.dynamicStateCount++] = VK_DYNAMIC_STATE_STENCIL_REFERENCE;
     static_assert(ARRAY_COUNT(_dynamicStates) <= 3, "Invalid dynamic states array.");
     _desc.pDynamicState = &_descDynamic;
 
@@ -282,9 +311,17 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
 
     // Depth Stencil
     RenderToolsVulkan::ZeroStruct(_descDepthStencil, VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
-    _descDepthStencil.depthTestEnable = desc.DepthTestEnable;
+    _descDepthStencil.depthTestEnable = desc.DepthEnable;
     _descDepthStencil.depthWriteEnable = desc.DepthWriteEnable;
     _descDepthStencil.depthCompareOp = RenderToolsVulkan::ToVulkanCompareOp(desc.DepthFunc);
+    _descDepthStencil.stencilTestEnable = desc.StencilEnable;
+    _descDepthStencil.front.compareMask = desc.StencilReadMask;
+    _descDepthStencil.front.writeMask = desc.StencilWriteMask;
+    _descDepthStencil.front.compareOp = RenderToolsVulkan::ToVulkanCompareOp(desc.StencilFunc);
+    _descDepthStencil.front.failOp = ToVulkanStencilOp(desc.StencilFailOp);
+    _descDepthStencil.front.depthFailOp = ToVulkanStencilOp(desc.StencilDepthFailOp);
+    _descDepthStencil.front.passOp = ToVulkanStencilOp(desc.StencilPassOp);
+    _descDepthStencil.front = _descDepthStencil.back;
     _desc.pDepthStencilState = &_descDepthStencil;
 
     // Rasterization
@@ -303,7 +340,7 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
         break;
     }
     _descRasterization.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    _descRasterization.depthClampEnable = !desc.DepthClipEnable;
+    _descRasterization.depthClampEnable = !desc.DepthClipEnable && _device->Limits.HasDepthClip;
     _descRasterization.lineWidth = 1.0f;
     _desc.pRasterizationState = &_descRasterization;
 
@@ -337,9 +374,11 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
         if (descriptor == nullptr || descriptor->DescriptorTypesCount == 0)
             continue;
 
+        // TODO: merge into a single allocation for a whole PSO
         DSWriteContainer.DescriptorWrites.AddZeroed(descriptor->DescriptorTypesCount);
         DSWriteContainer.DescriptorImageInfo.AddZeroed(descriptor->ImageInfosCount);
         DSWriteContainer.DescriptorBufferInfo.AddZeroed(descriptor->BufferInfosCount);
+        DSWriteContainer.DescriptorTexelBufferView.AddZeroed(descriptor->TexelBufferViewsCount);
 
         ASSERT(descriptor->DescriptorTypesCount < 255);
         DSWriteContainer.BindingToDynamicOffset.AddDefault(descriptor->DescriptorTypesCount);
@@ -349,6 +388,7 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
     VkWriteDescriptorSet* currentDescriptorWrite = DSWriteContainer.DescriptorWrites.Get();
     VkDescriptorImageInfo* currentImageInfo = DSWriteContainer.DescriptorImageInfo.Get();
     VkDescriptorBufferInfo* currentBufferInfo = DSWriteContainer.DescriptorBufferInfo.Get();
+    VkBufferView* currentTexelBufferView = DSWriteContainer.DescriptorTexelBufferView.Get();
     byte* currentBindingToDynamicOffsetMap = DSWriteContainer.BindingToDynamicOffset.Get();
     uint32 dynamicOffsetsStart[DescriptorSet::GraphicsStagesCount];
     uint32 dynamicOffsetsCount = 0;
@@ -360,12 +400,13 @@ bool GPUPipelineStateVulkan::Init(const Description& desc)
         if (descriptor == nullptr || descriptor->DescriptorTypesCount == 0)
             continue;
 
-        const uint32 numDynamicOffsets = DSWriter[stage].SetupDescriptorWrites(*descriptor, currentDescriptorWrite, currentImageInfo, currentBufferInfo, currentBindingToDynamicOffsetMap);
+        const uint32 numDynamicOffsets = DSWriter[stage].SetupDescriptorWrites(*descriptor, currentDescriptorWrite, currentImageInfo, currentBufferInfo, currentTexelBufferView, currentBindingToDynamicOffsetMap);
         dynamicOffsetsCount += numDynamicOffsets;
 
         currentDescriptorWrite += descriptor->DescriptorTypesCount;
         currentImageInfo += descriptor->ImageInfosCount;
         currentBufferInfo += descriptor->BufferInfosCount;
+        currentTexelBufferView += descriptor->TexelBufferViewsCount;
         currentBindingToDynamicOffsetMap += descriptor->DescriptorTypesCount;
     }
 

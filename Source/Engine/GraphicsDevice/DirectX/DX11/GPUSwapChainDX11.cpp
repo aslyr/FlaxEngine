@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX11
 
@@ -16,6 +16,10 @@ GPUSwapChainDX11::GPUSwapChainDX11(GPUDeviceDX11* device, Window* window)
     , _windowHandle(static_cast<IUnknown*>(window->GetNativePtr()))
 #endif
     , _swapChain(nullptr)
+#if PLATFORM_WINDOWS
+    , _allowTearing(false)
+    , _isFullscreen(false)
+#endif
     , _backBuffer(nullptr)
 {
     ASSERT(_windowHandle);
@@ -24,13 +28,13 @@ GPUSwapChainDX11::GPUSwapChainDX11(GPUDeviceDX11* device, Window* window)
 
 void GPUSwapChainDX11::getBackBuffer()
 {
-    VALIDATE_DIRECTX_RESULT(_swapChain->GetBuffer(0, __uuidof(_backBuffer), reinterpret_cast<void**>(&_backBuffer)));
+    VALIDATE_DIRECTX_CALL(_swapChain->GetBuffer(0, __uuidof(_backBuffer), reinterpret_cast<void**>(&_backBuffer)));
 
     ID3D11RenderTargetView* rtv;
     ID3D11ShaderResourceView* srv;
-    VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateRenderTargetView(_backBuffer, nullptr, &rtv));
+    VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateRenderTargetView(_backBuffer, nullptr, &rtv));
 #if GPU_USE_WINDOW_SRV
-    VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateShaderResourceView(_backBuffer, nullptr, &srv));
+    VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateShaderResourceView(_backBuffer, nullptr, &srv));
 #else
 	srv = nullptr;
 #endif
@@ -51,7 +55,7 @@ void GPUSwapChainDX11::OnReleaseGPU()
     // Disable fullscreen mode
     if (_swapChain)
     {
-        VALIDATE_DIRECTX_RESULT(_swapChain->SetFullscreenState(false, nullptr));
+        VALIDATE_DIRECTX_CALL(_swapChain->SetFullscreenState(false, nullptr));
     }
 #endif
 
@@ -74,7 +78,7 @@ bool GPUSwapChainDX11::IsFullscreen()
 
     // Get state
     BOOL state;
-    VALIDATE_DIRECTX_RESULT(_swapChain->GetFullscreenState(&state, nullptr));
+    VALIDATE_DIRECTX_CALL(_swapChain->GetFullscreenState(&state, nullptr));
     return state == TRUE;
 }
 
@@ -108,6 +112,18 @@ void GPUSwapChainDX11::SetFullscreen(bool isFullscreen)
         {
             LOG(Warning, "Cannot change fullscreen mode for '{0}' to {1}.", ToString(), isFullscreen);
         }
+
+        _isFullscreen = isFullscreen;
+
+        // Buffers must be resized in flip presentation model
+        if (swapChainDesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL ||
+            swapChainDesc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD)
+        {
+            const int32 width = _width;
+            const int32 height = _height;
+            _width = _height = 0;
+            Resize(width, height);
+        }
     }
 #else
     LOG(Info, "Cannot change fullscreen mode on this platform");
@@ -123,7 +139,14 @@ void GPUSwapChainDX11::Present(bool vsync)
 {
     // Present frame
     ASSERT(_swapChain);
-    const HRESULT result = _swapChain->Present(vsync ? 1 : 0, 0);
+    UINT presentFlags = 0;
+#if PLATFORM_WINDOWS
+    if (!vsync && !_isFullscreen && _allowTearing)
+    {
+        presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
+    }
+#endif
+    const HRESULT result = _swapChain->Present(vsync ? 1 : 0, presentFlags);
     LOG_DIRECTX_RESULT(result);
 
     // Base
@@ -140,6 +163,9 @@ bool GPUSwapChainDX11::Resize(int32 width, int32 height)
 
     _device->WaitForGPU();
     GPUDeviceLock lock(_device);
+#if PLATFORM_WINDOWS
+    _allowTearing = _device->_allowTearing;
+#endif
     _format = GPU_BACK_BUFFER_PIXEL_FORMAT;
 
 #if PLATFORM_WINDOWS
@@ -177,6 +203,11 @@ bool GPUSwapChainDX11::Resize(int32 width, int32 height)
         swapChainDesc.Windowed = TRUE;
         swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
         swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+        if (_allowTearing)
+        {
+            swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+            swapChainDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        }
 #else
         swapChainDesc.Width = width;
         swapChainDesc.Height = height;
@@ -198,21 +229,21 @@ bool GPUSwapChainDX11::Resize(int32 width, int32 height)
         // Create swap chain
 #if PLATFORM_WINDOWS
         auto dxgi = _device->GetDXGIFactory();
-        VALIDATE_DIRECTX_RESULT(dxgi->CreateSwapChain(_device->GetDevice(), &swapChainDesc, &_swapChain));
+        VALIDATE_DIRECTX_CALL(dxgi->CreateSwapChain(_device->GetDevice(), &swapChainDesc, &_swapChain));
         ASSERT(_swapChain);
 
         // Disable DXGI changes to the window
-        VALIDATE_DIRECTX_RESULT(dxgi->MakeWindowAssociation(_windowHandle, 0));
+        VALIDATE_DIRECTX_CALL(dxgi->MakeWindowAssociation(_windowHandle, DXGI_MWA_NO_ALT_ENTER));
 #else
         auto dxgiFactory = (IDXGIFactory2*)_device->GetDXGIFactory();
-        VALIDATE_DIRECTX_RESULT(dxgiFactory->CreateSwapChainForCoreWindow(_device->GetDevice(), static_cast<IUnknown*>(_windowHandle), &swapChainDesc, nullptr, &_swapChain));
+        VALIDATE_DIRECTX_CALL(dxgiFactory->CreateSwapChainForCoreWindow(_device->GetDevice(), static_cast<IUnknown*>(_windowHandle), &swapChainDesc, nullptr, &_swapChain));
         ASSERT(_swapChain);
 
         // Ensure that DXGI does not queue more than one frame at a time. This both reduces latency and
         // ensures that the application will only render after each VSync, minimizing power consumption.
         ComPtr<IDXGIDevice2> dxgiDevice;
-        VALIDATE_DIRECTX_RESULT(_device->GetDevice()->QueryInterface(IID_PPV_ARGS(&dxgiDevice)));
-        VALIDATE_DIRECTX_RESULT(dxgiDevice->SetMaximumFrameLatency(1));
+        VALIDATE_DIRECTX_CALL(_device->GetDevice()->QueryInterface(IID_PPV_ARGS(&dxgiDevice)));
+        VALIDATE_DIRECTX_CALL(dxgiDevice->SetMaximumFrameLatency(1));
 #endif
     }
     else
@@ -221,10 +252,10 @@ bool GPUSwapChainDX11::Resize(int32 width, int32 height)
 
 #if PLATFORM_WINDOWS
         _swapChain->GetDesc(&swapChainDesc);
-        VALIDATE_DIRECTX_RESULT(_swapChain->ResizeBuffers(swapChainDesc.BufferCount, width, height, swapChainDesc.BufferDesc.Format, swapChainDesc.Flags));
+        VALIDATE_DIRECTX_CALL(_swapChain->ResizeBuffers(swapChainDesc.BufferCount, width, height, swapChainDesc.BufferDesc.Format, swapChainDesc.Flags));
 #else
         _swapChain->GetDesc1(&swapChainDesc);
-        VALIDATE_DIRECTX_RESULT(_swapChain->ResizeBuffers(swapChainDesc.BufferCount, width, height, swapChainDesc.Format, swapChainDesc.Flags));
+        VALIDATE_DIRECTX_CALL(_swapChain->ResizeBuffers(swapChainDesc.BufferCount, width, height, swapChainDesc.Format, swapChainDesc.Flags));
 #endif
     }
 

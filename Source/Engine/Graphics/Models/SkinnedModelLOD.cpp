@@ -1,19 +1,17 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "SkinnedModelLOD.h"
+#include "MeshDeformation.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Math/Transform.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Content/Assets/Model.h"
 #include "Engine/Serialization/MemoryReadStream.h"
 
-bool SkinnedModelLOD::HasAnyMeshInitialized() const
-{
-    // Note: we initialize all meshes at once so the last one can be used to check it.
-    return Meshes.HasItems() && Meshes.Last().IsInitialized();
-}
-
 bool SkinnedModelLOD::Load(MemoryReadStream& stream)
 {
     // Load LOD for each mesh
+    byte version = stream.ReadByte();
     for (int32 i = 0; i < Meshes.Count(); i++)
     {
         auto& mesh = Meshes[i];
@@ -45,8 +43,8 @@ bool SkinnedModelLOD::Load(MemoryReadStream& stream)
         const uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
         if (vertices == 0 || triangles == 0)
             return true;
-        const auto vb0 = stream.Read<VB0SkinnedElementType>(vertices);
-        const auto ib = stream.Read<byte>(indicesCount * ibStride);
+        const auto vb0 = stream.Move<VB0SkinnedElementType>(vertices);
+        const auto ib = stream.Move<byte>(indicesCount * ibStride);
 
         // Setup GPU resources
         if (mesh.Load(vertices, triangles, vb0, ib, use16BitIndexBuffer))
@@ -75,18 +73,43 @@ void SkinnedModelLOD::Dispose()
     Meshes.Resize(0);
 }
 
-bool SkinnedModelLOD::Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal, SkinnedMesh** mesh)
+bool SkinnedModelLOD::Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal, SkinnedMesh** mesh)
 {
     // Check all meshes
     bool result = false;
-    float closest = MAX_float;
+    Real closest = MAX_float;
     Vector3 closestNormal = Vector3::Up;
     for (int32 i = 0; i < Meshes.Count(); i++)
     {
         // Test intersection with mesh and check if is closer than previous
-        float dst;
+        Real dst;
         Vector3 nrm;
         if (Meshes[i].Intersects(ray, world, dst, nrm) && dst < closest)
+        {
+            result = true;
+            *mesh = &Meshes[i];
+            closest = dst;
+            closestNormal = nrm;
+        }
+    }
+
+    distance = closest;
+    normal = closestNormal;
+    return result;
+}
+
+bool SkinnedModelLOD::Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal, SkinnedMesh** mesh)
+{
+    // Check all meshes
+    bool result = false;
+    Real closest = MAX_float;
+    Vector3 closestNormal = Vector3::Up;
+    for (int32 i = 0; i < Meshes.Count(); i++)
+    {
+        // Test intersection with mesh and check if is closer than previous
+        Real dst;
+        Vector3 nrm;
+        if (Meshes[i].Intersects(ray, transform, dst, nrm) && dst < closest)
         {
             result = true;
             *mesh = &Meshes[i];
@@ -108,8 +131,7 @@ BoundingBox SkinnedModelLOD::GetBox(const Matrix& world) const
     for (int32 j = 0; j < Meshes.Count(); j++)
     {
         const auto& mesh = Meshes[j];
-        mesh.GetCorners(corners);
-
+        mesh.GetBox().GetCorners(corners);
         for (int32 i = 0; i < 8; i++)
         {
             Vector3::Transform(corners[i], world, tmp);
@@ -121,13 +143,34 @@ BoundingBox SkinnedModelLOD::GetBox(const Matrix& world) const
     return BoundingBox(min, max);
 }
 
+BoundingBox SkinnedModelLOD::GetBox(const Transform& transform, const MeshDeformation* deformation) const
+{
+    Vector3 tmp, min = Vector3::Maximum, max = Vector3::Minimum;
+    Vector3 corners[8];
+    for (int32 meshIndex = 0; meshIndex < Meshes.Count(); meshIndex++)
+    {
+        const auto& mesh = Meshes[meshIndex];
+        BoundingBox box = mesh.GetBox();
+        if (deformation)
+            deformation->GetBounds(_lodIndex, meshIndex, box);
+        box.GetCorners(corners);
+        for (int32 i = 0; i < 8; i++)
+        {
+            transform.LocalToWorld(corners[i], tmp);
+            min = Vector3::Min(min, tmp);
+            max = Vector3::Max(max, tmp);
+        }
+    }
+    return BoundingBox(min, max);
+}
+
 BoundingBox SkinnedModelLOD::GetBox(const Matrix& world, int32 meshIndex) const
 {
     // Find minimum and maximum points of the mesh
     Vector3 tmp, min = Vector3::Maximum, max = Vector3::Minimum;
     Vector3 corners[8];
     const auto& mesh = Meshes[meshIndex];
-    mesh.GetCorners(corners);
+    mesh.GetBox().GetCorners(corners);
     for (int32 i = 0; i < 8; i++)
     {
         Vector3::Transform(corners[i], world, tmp);
@@ -145,8 +188,7 @@ BoundingBox SkinnedModelLOD::GetBox() const
     Vector3 corners[8];
     for (int32 j = 0; j < Meshes.Count(); j++)
     {
-        Meshes[j].GetCorners(corners);
-
+        Meshes[j].GetBox().GetCorners(corners);
         for (int32 i = 0; i < 8; i++)
         {
             min = Vector3::Min(min, corners[i]);

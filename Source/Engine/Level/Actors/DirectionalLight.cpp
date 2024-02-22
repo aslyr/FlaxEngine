@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "DirectionalLight.h"
 #include "Engine/Graphics/RenderTask.h"
@@ -10,6 +10,7 @@
 DirectionalLight::DirectionalLight(const SpawnParams& params)
     : LightWithShadow(params)
 {
+    _drawNoCulling = 1;
     Brightness = 8.0f;
 }
 
@@ -17,15 +18,17 @@ void DirectionalLight::Draw(RenderContext& renderContext)
 {
     float brightness = Brightness;
     AdjustBrightness(renderContext.View, brightness);
+    const Float3 position = GetPosition() - renderContext.View.Origin;
     if (Brightness > ZeroTolerance
-        && (renderContext.View.Flags & ViewFlags::DirectionalLights) != 0
-        && (ViewDistance < ZeroTolerance || Vector3::DistanceSquared(renderContext.View.Position, GetPosition()) < ViewDistance * ViewDistance))
+        && EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::DirectionalLights)
+        && EnumHasAnyFlags(renderContext.View.Pass, DrawPass::GBuffer)
+        && (ViewDistance < ZeroTolerance || Float3::DistanceSquared(renderContext.View.Position, position) < ViewDistance * ViewDistance))
     {
         RendererDirectionalLightData data;
-        data.Position = GetPosition();
+        data.Position = position;
         data.MinRoughness = MinRoughness;
         data.ShadowsDistance = ShadowsDistance;
-        data.Color = Color.ToVector3() * (Color.A * brightness);
+        data.Color = Color.ToFloat3() * (Color.A * brightness);
         data.ShadowsStrength = ShadowsStrength;
         data.Direction = GetDirection();
         data.ShadowsFadeDistance = ShadowsFadeDistance;
@@ -33,11 +36,20 @@ void DirectionalLight::Draw(RenderContext& renderContext)
         data.ShadowsDepthBias = ShadowsDepthBias;
         data.ShadowsSharpness = ShadowsSharpness;
         data.VolumetricScatteringIntensity = VolumetricScatteringIntensity;
+        data.IndirectLightingIntensity = IndirectLightingIntensity;
         data.CastVolumetricShadow = CastVolumetricShadow;
         data.RenderedVolumetricFog = 0;
         data.ShadowsMode = ShadowsMode;
         data.CascadeCount = CascadeCount;
+        data.Cascade1Spacing = Cascade1Spacing;
+        data.Cascade2Spacing = Cascade2Spacing;
+        data.Cascade3Spacing = Cascade3Spacing;
+        data.Cascade4Spacing = Cascade4Spacing;
+
+        data.PartitionMode = PartitionMode;
         data.ContactShadowsLength = ContactShadowsLength;
+        data.StaticFlags = GetStaticFlags();
+        data.ID = GetID();
         renderContext.List->DirectionalLights.Add(data);
     }
 }
@@ -50,6 +62,12 @@ void DirectionalLight::Serialize(SerializeStream& stream, const void* otherObj)
     SERIALIZE_GET_OTHER_OBJ(DirectionalLight);
 
     SERIALIZE(CascadeCount);
+    SERIALIZE(Cascade1Spacing);
+    SERIALIZE(Cascade2Spacing);
+    SERIALIZE(Cascade3Spacing);
+    SERIALIZE(Cascade4Spacing);
+
+    SERIALIZE(PartitionMode);
 }
 
 void DirectionalLight::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
@@ -58,33 +76,17 @@ void DirectionalLight::Deserialize(DeserializeStream& stream, ISerializeModifier
     LightWithShadow::Deserialize(stream, modifier);
 
     DESERIALIZE(CascadeCount);
+    DESERIALIZE(Cascade1Spacing);
+    DESERIALIZE(Cascade2Spacing);
+    DESERIALIZE(Cascade3Spacing);
+    DESERIALIZE(Cascade4Spacing);
+
+    DESERIALIZE(PartitionMode);
 }
 
-bool DirectionalLight::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool DirectionalLight::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     return false;
-}
-
-void DirectionalLight::OnEnable()
-{
-    GetSceneRendering()->AddCommonNoCulling(this);
-#if USE_EDITOR
-    GetSceneRendering()->AddViewportIcon(this);
-#endif
-
-    // Base
-    LightWithShadow::OnEnable();
-}
-
-void DirectionalLight::OnDisable()
-{
-#if USE_EDITOR
-    GetSceneRendering()->RemoveViewportIcon(this);
-#endif
-    GetSceneRendering()->RemoveCommonNoCulling(this);
-
-    // Base
-    LightWithShadow::OnDisable();
 }
 
 void DirectionalLight::OnTransformChanged()

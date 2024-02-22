@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -75,6 +75,7 @@ namespace FlaxEngine.GUI
         /// <param name="slotPadding">The slot padding.</param>
         public UniformGridPanel(float slotPadding = 2)
         {
+            AutoFocus = false;
             SlotPadding = new Margin(slotPadding);
             _slotsH = _slotsV = 5;
         }
@@ -86,26 +87,26 @@ namespace FlaxEngine.GUI
 
             int slotsV = _slotsV;
             int slotsH = _slotsH;
-            Vector2 slotSize;
+            Float2 slotSize;
             if (_slotsV + _slotsH == 0)
             {
-                slotSize = HasChildren ? Children[0].Size : new Vector2(32);
+                slotSize = HasChildren ? Children[0].Size : new Float2(32);
                 slotsH = Mathf.CeilToInt(Width / slotSize.X);
                 slotsV = Mathf.CeilToInt(Height / slotSize.Y);
             }
             else if (slotsH == 0)
             {
                 float size = Height / slotsV;
-                slotSize = new Vector2(size);
+                slotSize = new Float2(size);
             }
             else if (slotsV == 0)
             {
                 float size = Width / slotsH;
-                slotSize = new Vector2(size);
+                slotSize = new Float2(size);
             }
             else
             {
-                slotSize = new Vector2(Width / slotsH, Height / slotsV);
+                slotSize = new Float2(Width / slotsH, Height / slotsV);
             }
 
             int i = 0;

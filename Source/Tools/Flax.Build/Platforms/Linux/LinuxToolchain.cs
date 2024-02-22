@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using System.IO;
@@ -23,9 +23,26 @@ namespace Flax.Build.Platforms
         : base(platform, architecture, platform.ToolchainRoot, platform.Compiler)
         {
             // Setup system paths
-            SystemIncludePaths.Add(Path.Combine(ToolsetRoot, "usr", "include"));
-            SystemIncludePaths.Add(Path.Combine(ToolsetRoot, "include", "c++", "5.2.0"));
-            SystemIncludePaths.Add(Path.Combine(ToolsetRoot, "lib", "clang", ClangVersion.Major.ToString(), "include"));
+            var includePath = Path.Combine(ToolsetRoot, "usr", "include");
+            if (Directory.Exists(includePath))
+                SystemIncludePaths.Add(includePath);
+            else
+                Log.Error($"Missing toolset header files location {includePath}");
+            var cppIncludePath = Path.Combine(includePath, "c++", LibStdCppVersion);
+            if (Directory.Exists(cppIncludePath))
+                SystemIncludePaths.Add(cppIncludePath);
+            else
+                Log.Verbose($"Missing Clang {ClangVersion} C++ header files location {cppIncludePath}");
+            var clangLibPath = Path.Combine(ToolsetRoot, "usr", "lib", "clang");
+            var clangIncludePath = Path.Combine(clangLibPath, ClangVersion.Major.ToString(), "include");
+            if (!Directory.Exists(clangIncludePath))
+            {
+                var error = $"Missing Clang {ClangVersion} header files location {clangIncludePath}";
+                clangIncludePath = Path.Combine(clangLibPath, ClangVersion.ToString(), "include");
+                if (!Directory.Exists(clangIncludePath))
+                    Log.Error(error);
+            }
+            SystemIncludePaths.Add(clangIncludePath);
         }
 
         /// <inheritdoc />
@@ -68,6 +85,8 @@ namespace Flax.Build.Platforms
 
             args.Add("-Wl,-rpath,\"\\$ORIGIN\"");
             //args.Add("-Wl,--as-needed");
+            if (LdKind == "bfd")
+                args.Add("-Wl,--copy-dt-needed-entries");
             args.Add("-Wl,--hash-style=gnu");
             //args.Add("-Wl,--build-id");
 
@@ -87,6 +106,7 @@ namespace Flax.Build.Platforms
             args.Add("-pthread");
             args.Add("-ldl");
             args.Add("-lrt");
+            args.Add("-lz");
 
             // Link X11
             args.Add("-L/usr/X11R6/lib");

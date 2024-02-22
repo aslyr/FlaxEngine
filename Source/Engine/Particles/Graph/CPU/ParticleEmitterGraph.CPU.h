@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -37,7 +37,6 @@ class ParticleEmitterGraphCPUBox : public VisjectGraphBox
 class ParticleEmitterGraphCPUNode : public ParticleEmitterGraphNode<VisjectGraphNode<ParticleEmitterGraphCPUBox>>
 {
 public:
-
     /// <summary>
     /// The sorted indices buffer offset used by the rendering modules to point the sorted indices buffer start to use for rendering.
     /// </summary>
@@ -66,7 +65,6 @@ class ParticleEmitterGraphCPU : public ParticleEmitterGraph<VisjectGraph<Particl
     friend ParticleEmitterGraphCPUExecutor;
     typedef ParticleEmitterGraph<VisjectGraph<ParticleEmitterGraphCPUNode, ParticleEmitterGraphCPUBox, ParticleSystemParameter>, ParticleEmitterGraphCPUNode, Variant> Base;
 private:
-
     struct NodeState
     {
         union
@@ -74,10 +72,10 @@ private:
             int32 SpiralProgress;
         };
     };
+
     Array<byte> _defaultParticleData;
 
 public:
-
     // Size of the custom pre-node data buffer used for state tracking (eg. position on spiral arc progression).
     int32 CustomDataSize = 0;
 
@@ -103,7 +101,6 @@ public:
     }
 
 public:
-
     // [ParticleEmitterGraph]
     bool Load(ReadStream* stream, bool loadMeta) override;
     void InitializeNode(Node* node) override;
@@ -120,8 +117,9 @@ struct ParticleEmitterGraphCPUContext
     ParticleEmitter* Emitter;
     ParticleEffect* Effect;
     class SceneRenderTask* ViewTask;
-    Array<VisjectExecutor::Graph*, FixedAllocation<32>> GraphStack;
-    Dictionary<VisjectExecutor::Node*, VisjectExecutor::Graph*> Functions;
+    Array<ParticleEmitterGraphCPU*, FixedAllocation<32>> GraphStack;
+    Dictionary<VisjectExecutor::Node*, ParticleEmitterGraphCPU*> Functions;
+    byte AttributesRemappingTable[PARTICLE_ATTRIBUTES_MAX_COUNT]; // Maps node attribute indices to the current particle layout (used to support accessing particle data from function graph which has different layout).
     int32 CallStackSize = 0;
     VisjectExecutor::Node* CallStack[PARTICLE_EMITTER_MAX_CALL_STACK];
 };
@@ -135,10 +133,9 @@ private:
     ParticleEmitterGraphCPU& _graph;
 
     // Per-thread context to allow async execution
-    static ThreadLocal<ParticleEmitterGraphCPUContext> Context;
+    static ThreadLocal<ParticleEmitterGraphCPUContext*> Context;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="ParticleEmitterGraphCPUExecutor"/> class.
     /// </summary>
@@ -186,7 +183,6 @@ public:
     int32 UpdateSpawn(ParticleEmitter* emitter, ParticleEffect* effect, ParticleEmitterInstance& data, float dt);
 
 private:
-
     void Init(ParticleEmitter* emitter, ParticleEffect* effect, ParticleEmitterInstance& data, float dt = 0.0f);
     Value eatBox(Node* caller, Box* box) override;
     Graph* GetCurrentGraph() const override;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -88,7 +88,11 @@ namespace Flax.Build.Platforms
             // Pick the newest installed Visual Studio version if using the default toolset
             if (toolsetVer == WindowsPlatformToolset.Default)
             {
-                if (VisualStudioInstance.HasIDE(VisualStudioVersion.VisualStudio2019))
+                if (VisualStudioInstance.HasIDE(VisualStudioVersion.VisualStudio2022))
+                {
+                    toolsetVer = WindowsPlatformToolset.v143;
+                }
+                else if (VisualStudioInstance.HasIDE(VisualStudioVersion.VisualStudio2019))
                 {
                     toolsetVer = WindowsPlatformToolset.v142;
                 }
@@ -194,6 +198,7 @@ namespace Flax.Build.Platforms
             }
             case WindowsPlatformToolset.v141:
             case WindowsPlatformToolset.v142:
+            case WindowsPlatformToolset.v143:
             {
                 switch (Architecture)
                 {
@@ -274,6 +279,9 @@ namespace Flax.Build.Platforms
             case WindowsPlatformSDK.v10_0_17763_0:
             case WindowsPlatformSDK.v10_0_18362_0:
             case WindowsPlatformSDK.v10_0_19041_0:
+            case WindowsPlatformSDK.v10_0_20348_0:
+            case WindowsPlatformSDK.v10_0_22000_0:
+            case WindowsPlatformSDK.v10_0_22621_0:
             {
                 var sdkVersionName = WindowsPlatformBase.GetSDKVersion(SDK).ToString();
                 string includeRootDir = Path.Combine(windowsSdkDir, "include", sdkVersionName);
@@ -337,6 +345,9 @@ namespace Flax.Build.Platforms
         public override string DllImport => "__declspec(dllimport)";
 
         /// <inheritdoc />
+        public override TargetCompiler Compiler => TargetCompiler.MSVC;
+
+        /// <inheritdoc />
         public override void LogInfo()
         {
             var sdkPath = WindowsPlatformBase.GetSDKs()[SDK];
@@ -367,11 +378,10 @@ namespace Flax.Build.Platforms
             var vcToolChainDir = toolsets[Toolset];
             switch (Toolset)
             {
+            case WindowsPlatformToolset.v143:
             case WindowsPlatformToolset.v142:
-            case WindowsPlatformToolset.v141:
-                return Path.Combine(vcToolChainDir, "lib", "x86", "store", "references");
-            case WindowsPlatformToolset.v140:
-                return Path.Combine(vcToolChainDir, "lib", "store", "references");
+            case WindowsPlatformToolset.v141: return Path.Combine(vcToolChainDir, "lib", "x86", "store", "references");
+            case WindowsPlatformToolset.v140: return Path.Combine(vcToolChainDir, "lib", "store", "references");
             default: return null;
             }
         }
@@ -418,6 +428,7 @@ namespace Flax.Build.Platforms
 
             // Setup arguments shared by all source files
             var commonArgs = new List<string>();
+            commonArgs.AddRange(options.CompileEnv.CustomArgs);
             SetupCompileCppFilesArgs(graph, options, commonArgs);
             {
                 // Suppress Startup Banner
@@ -425,6 +436,24 @@ namespace Flax.Build.Platforms
 
                 // Compile Without Linking
                 commonArgs.Add("/c");
+
+                // C++ version
+                switch (compileEnvironment.CppVersion)
+                {
+                case CppVersion.Cpp14:
+                    commonArgs.Add("/std:c++14");
+                    break;
+                case CppVersion.Cpp17:
+                    commonArgs.Add("/std:c++17");
+                    break;
+                case CppVersion.Cpp20:
+                    commonArgs.Add("/std:c++20");
+                    break;
+                case CppVersion.Latest:
+                    commonArgs.Add("/std:c++latest");
+                    break;
+                }
+                commonArgs.Add("/Zc:__cplusplus");
 
                 // Generate Intrinsic Functions
                 if (compileEnvironment.IntrinsicFunctions)
@@ -454,10 +483,6 @@ namespace Flax.Build.Platforms
                 // Run-Time Error Checks
                 if (compileEnvironment.RuntimeChecks && !compileEnvironment.CompileAsWinRT)
                     commonArgs.Add("/RTC1");
-
-                // Enable Additional Security Checks
-                if (compileEnvironment.RuntimeChecks)
-                    commonArgs.Add("/sdl");
 
                 // Inline Function Expansion
                 if (compileEnvironment.Inlining)
@@ -548,7 +573,6 @@ namespace Flax.Build.Platforms
                     commonArgs.Add("/WX-");
 
                 // Show warnings
-                // TODO: compile with W4 and fix all warnings
                 commonArgs.Add("/W3");
 
                 // Silence macro redefinition warning
@@ -647,6 +671,7 @@ namespace Flax.Build.Platforms
 
             // Setup arguments
             var args = new List<string>();
+            args.AddRange(options.LinkEnv.CustomArgs);
             SetupLinkFilesArgs(graph, options, args);
             {
                 // Suppress startup banner
@@ -903,11 +928,7 @@ namespace Flax.Build.Platforms
                 // Create AppxManifest file
                 {
                     using (var stringWriter = new StringWriterWithEncoding(Encoding.UTF8))
-                    using (var xmlTextWriter = XmlWriter.Create(stringWriter, new XmlWriterSettings
-                    {
-                        Encoding = Encoding.UTF8,
-                        Indent = true,
-                    }))
+                    using (var xmlTextWriter = XmlWriter.Create(stringWriter, new XmlWriterSettings { Encoding = Encoding.UTF8, Indent = true, }))
                     {
                         xmlTextWriter.WriteStartDocument();
 
@@ -1005,6 +1026,36 @@ namespace Flax.Build.Platforms
                 priNewFile.PrerequisiteFiles.Add(configFile);
                 priNewFile.ProducedFiles.Add(priFile);
             }
+        }
+
+        /// <inheritdoc />
+        public override bool CompileCSharp(ref CSharpOptions options)
+        {
+            switch (options.Action)
+            {
+            case CSharpOptions.ActionTypes.MonoCompile:
+            {
+                var aotCompilerPath = Path.Combine(options.PlatformToolsPath, "mono-aot-cross.exe");
+
+                // Setup options
+                var monoAotMode = "full";
+                var monoDebugMode = options.EnableDebugSymbols ? "soft-debug" : "nodebug";
+                var aotCompilerArgs = $"--aot={monoAotMode},verbose,stats,print-skipped,{monoDebugMode} -O=all";
+                if (options.EnableDebugSymbols || options.EnableToolDebug)
+                    aotCompilerArgs = "--debug " + aotCompilerArgs;
+                var envVars = new Dictionary<string, string>();
+                envVars["MONO_PATH"] = options.AssembliesPath + ";" + options.ClassLibraryPath;
+                if (options.EnableToolDebug)
+                {
+                    envVars["MONO_LOG_LEVEL"] = "debug";
+                }
+
+                // Run cross-compiler compiler
+                int result = Utilities.Run(aotCompilerPath, $"{aotCompilerArgs} \"{options.InputFiles[0]}\"", null, options.PlatformToolsPath, Utilities.RunOptions.AppMustExist | Utilities.RunOptions.ConsoleLogOutput, envVars);
+                return result != 0;
+            }
+            }
+            return base.CompileCSharp(ref options);
         }
     }
 }

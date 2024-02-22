@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,28 +6,22 @@
 #include "ModelInstanceEntry.h"
 #include "Config.h"
 #include "Types.h"
-#include "Engine/Level/Types.h"
 #if USE_PRECISE_MESH_INTERSECTS
 #include "CollisionProxy.h"
 #endif
 
-struct GeometryDrawStateData;
 class Lightmap;
-class GPUBuffer;
 
 /// <summary>
 /// Represents part of the model that is made of vertices and can be rendered using custom material and transformation.
 /// </summary>
 API_CLASS(NoSpawn) class FLAXENGINE_API Mesh : public MeshBase
 {
-DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(Mesh, MeshBase);
+    DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(Mesh, MeshBase);
 protected:
-
-    int32 _index;
-    int32 _lodIndex;
     bool _hasLightmapUVs;
-    GPUBuffer* _vertexBuffers[3];
-    GPUBuffer* _indexBuffer;
+    GPUBuffer* _vertexBuffers[3] = {};
+    GPUBuffer* _indexBuffer = nullptr;
 #if USE_PRECISE_MESH_INTERSECTS
     CollisionProxy _collisionProxy;
 #endif
@@ -36,7 +30,6 @@ protected:
     mutable int32 _cachedIndexBufferCount;
 
 public:
-
     Mesh(const Mesh& other)
         : Mesh()
     {
@@ -51,7 +44,6 @@ public:
     ~Mesh();
 
 public:
-
     /// <summary>
     /// Gets the model owning this mesh.
     /// </summary>
@@ -61,25 +53,8 @@ public:
     }
 
     /// <summary>
-    /// Gets the mesh parent LOD index.
-    /// </summary>
-    FORCE_INLINE int32 GetLODIndex() const
-    {
-        return _lodIndex;
-    }
-
-    /// <summary>
-    /// Gets the mesh index.
-    /// </summary>
-    FORCE_INLINE int32 GetIndex() const
-    {
-        return _index;
-    }
-
-    /// <summary>
     /// Gets the index buffer.
     /// </summary>
-    /// <returns>The buffer.</returns>
     FORCE_INLINE GPUBuffer* GetIndexBuffer() const
     {
         return _indexBuffer;
@@ -117,7 +92,6 @@ public:
     }
 
 #if USE_PRECISE_MESH_INTERSECTS
-
     /// <summary>
     /// Gets the collision proxy used by the mesh.
     /// </summary>
@@ -125,11 +99,9 @@ public:
     {
         return _collisionProxy;
     }
-
 #endif
 
 public:
-
     /// <summary>
     /// Updates the model mesh (used by the virtual models created with Init rather than Load).
     /// </summary>
@@ -189,7 +161,7 @@ public:
     /// <param name="uvs">The texture coordinates (per vertex).</param>
     /// <param name="colors">The vertex colors (per vertex).</param>
     /// <returns>True if failed, otherwise false.</returns>
-    bool UpdateMesh(uint32 vertexCount, uint32 triangleCount, Vector3* vertices, uint16* triangles, Vector3* normals = nullptr, Vector3* tangents = nullptr, Vector2* uvs = nullptr, Color32* colors = nullptr);
+    bool UpdateMesh(uint32 vertexCount, uint32 triangleCount, Float3* vertices, uint16* triangles, Float3* normals = nullptr, Float3* tangents = nullptr, Float2* uvs = nullptr, Color32* colors = nullptr);
 
     /// <summary>
     /// Updates the model mesh (used by the virtual models created with Init rather than Load).
@@ -205,10 +177,9 @@ public:
     /// <param name="uvs">The texture coordinates (per vertex).</param>
     /// <param name="colors">The vertex colors (per vertex).</param>
     /// <returns>True if failed, otherwise false.</returns>
-    bool UpdateMesh(uint32 vertexCount, uint32 triangleCount, Vector3* vertices, uint32* triangles, Vector3* normals = nullptr, Vector3* tangents = nullptr, Vector2* uvs = nullptr, Color32* colors = nullptr);
+    bool UpdateMesh(uint32 vertexCount, uint32 triangleCount, Float3* vertices, uint32* triangles, Float3* normals = nullptr, Float3* tangents = nullptr, Float2* uvs = nullptr, Color32* colors = nullptr);
 
 public:
-
     /// <summary>
     /// Updates the model mesh index buffer (used by the virtual models created with Init rather than Load).
     /// </summary>
@@ -241,7 +212,6 @@ public:
     bool UpdateTriangles(uint32 triangleCount, void* ib, bool use16BitIndices);
 
 public:
-
     /// <summary>
     /// Initializes instance of the <see cref="Mesh"/> class.
     /// </summary>
@@ -273,7 +243,6 @@ public:
     void Unload();
 
 public:
-
     /// <summary>
     /// Determines if there is an intersection between the mesh and a ray in given world
     /// </summary>
@@ -282,90 +251,24 @@ public:
     /// <param name="distance">When the method completes and returns true, contains the distance of the intersection (if any valid).</param>
     /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
     /// <returns>True whether the two objects intersected</returns>
-    bool Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal) const;
+    bool Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal) const;
 
     /// <summary>
-    /// Retrieves the eight corners of the bounding box.
+    /// Determines if there is an intersection between the mesh and a ray in given world
     /// </summary>
-    /// <param name="corners">An array of points representing the eight corners of the bounding box.</param>
-    FORCE_INLINE void GetCorners(Vector3 corners[8]) const
-    {
-        _box.GetCorners(corners);
-    }
+    /// <param name="ray">The ray to test</param>
+    /// <param name="transform">The instance transformation.</param>
+    /// <param name="distance">When the method completes and returns true, contains the distance of the intersection (if any valid).</param>
+    /// <param name="normal">When the method completes, contains the intersection surface normal vector (if any valid).</param>
+    /// <returns>True whether the two objects intersected</returns>
+    bool Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal) const;
 
 public:
-
     /// <summary>
     /// Gets the draw call geometry for this mesh. Sets the index and vertex buffers.
     /// </summary>
     /// <param name="drawCall">The draw call.</param>
     void GetDrawCallGeometry(DrawCall& drawCall) const;
-
-    /// <summary>
-    /// Model instance drawing packed data.
-    /// </summary>
-    struct DrawInfo
-    {
-        /// <summary>
-        /// The instance buffer to use during model rendering.
-        /// </summary>
-        ModelInstanceEntries* Buffer;
-
-        /// <summary>
-        /// The world transformation of the model.
-        /// </summary>
-        Matrix* World;
-
-        /// <summary>
-        /// The instance drawing state data container. Used for LOD transition handling and previous world transformation matrix updating. 
-        /// </summary>
-        GeometryDrawStateData* DrawState;
-
-        /// <summary>
-        /// The lightmap.
-        /// </summary>
-        const Lightmap* Lightmap;
-
-        /// <summary>
-        /// The lightmap UVs.
-        /// </summary>
-        const Rectangle* LightmapUVs;
-
-        /// <summary>
-        /// The model instance vertex colors buffers (per-lod all meshes packed in a single allocation, array length equal to model lods count).
-        /// </summary>
-        GPUBuffer** VertexColors;
-
-        /// <summary>
-        /// The object static flags.
-        /// </summary>
-        StaticFlags Flags;
-
-        /// <summary>
-        /// The object draw modes.
-        /// </summary>
-        DrawPass DrawModes;
-
-        /// <summary>
-        /// The bounds of the model (used to select a proper LOD during rendering).
-        /// </summary>
-        BoundingSphere Bounds;
-
-        /// <summary>
-        /// The per-instance random value.
-        /// </summary>
-        float PerInstanceRandom;
-
-        /// <summary>
-        /// The LOD bias value.
-        /// </summary>
-        char LODBias;
-
-        /// <summary>
-        /// The forced LOD to use. Value -1 disables this feature.
-        /// </summary>
-        char ForcedLOD;
-    };
 
     /// <summary>
     /// Draws the mesh. Binds vertex and index buffers and invokes the draw call.
@@ -383,7 +286,8 @@ public:
     /// <param name="receiveDecals">True if rendered geometry can receive decals, otherwise false.</param>
     /// <param name="drawModes">The draw passes to use for rendering this object.</param>
     /// <param name="perInstanceRandom">The random per-instance value (normalized to range 0-1).</param>
-    API_FUNCTION() void Draw(API_PARAM(Ref) const RenderContext& renderContext, MaterialBase* material, API_PARAM(Ref) const Matrix& world, StaticFlags flags = StaticFlags::None, bool receiveDecals = true, DrawPass drawModes = DrawPass::Default, float perInstanceRandom = 0.0f) const;
+    /// <param name="sortOrder">Object sorting key.</param>
+    API_FUNCTION() void Draw(API_PARAM(Ref) const RenderContext& renderContext, MaterialBase* material, API_PARAM(Ref) const Matrix& world, StaticFlags flags = StaticFlags::None, bool receiveDecals = true, DrawPass drawModes = DrawPass::Default, float perInstanceRandom = 0.0f, int16 sortOrder = 0) const;
 
     /// <summary>
     /// Draws the mesh.
@@ -393,20 +297,28 @@ public:
     /// <param name="lodDitherFactor">The LOD transition dither factor.</param>
     void Draw(const RenderContext& renderContext, const DrawInfo& info, float lodDitherFactor) const;
 
-public:
+    /// <summary>
+    /// Draws the mesh.
+    /// </summary>
+    /// <param name="renderContextBatch">The rendering context batch.</param>
+    /// <param name="info">The packed drawing info data.</param>
+    /// <param name="lodDitherFactor">The LOD transition dither factor.</param>
+    void Draw(const RenderContextBatch& renderContextBatch, const DrawInfo& info, float lodDitherFactor) const;
 
+public:
     // [MeshBase]
     bool DownloadDataGPU(MeshBufferType type, BytesContainer& result) const override;
     Task* DownloadDataGPUAsync(MeshBufferType type, BytesContainer& result) const override;
     bool DownloadDataCPU(MeshBufferType type, BytesContainer& result, int32& count) const override;
 
 private:
-
     // Internal bindings
     API_FUNCTION(NoProxy) ScriptingObject* GetParentModel();
-    API_FUNCTION(NoProxy) bool UpdateMeshUInt(int32 vertexCount, int32 triangleCount, MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj, MonoArray* colorsObj);
-    API_FUNCTION(NoProxy) bool UpdateMeshUShort(int32 vertexCount, int32 triangleCount, MonoArray* verticesObj, MonoArray* trianglesObj, MonoArray* normalsObj, MonoArray* tangentsObj, MonoArray* uvObj, MonoArray* colorsObj);
-    API_FUNCTION(NoProxy) bool UpdateTrianglesUInt(int32 triangleCount, MonoArray* trianglesObj);
-    API_FUNCTION(NoProxy) bool UpdateTrianglesUShort(int32 triangleCount, MonoArray* trianglesObj);
-    API_FUNCTION(NoProxy) bool DownloadBuffer(bool forceGpu, MonoArray* resultObj, int32 typeI);
+#if !COMPILE_WITHOUT_CSHARP
+    API_FUNCTION(NoProxy) bool UpdateMeshUInt(int32 vertexCount, int32 triangleCount, MArray* verticesObj, MArray* trianglesObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj, MArray* colorsObj);
+    API_FUNCTION(NoProxy) bool UpdateMeshUShort(int32 vertexCount, int32 triangleCount, MArray* verticesObj, MArray* trianglesObj, MArray* normalsObj, MArray* tangentsObj, MArray* uvObj, MArray* colorsObj);
+    API_FUNCTION(NoProxy) bool UpdateTrianglesUInt(int32 triangleCount, MArray* trianglesObj);
+    API_FUNCTION(NoProxy) bool UpdateTrianglesUShort(int32 triangleCount, MArray* trianglesObj);
+    API_FUNCTION(NoProxy) MArray* DownloadBuffer(bool forceGpu, MTypeObject* resultType, int32 typeI);
+#endif
 };

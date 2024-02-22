@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -29,7 +29,6 @@ DECLARE_ENUM_OPERATORS(FlaxChunkFlags);
 class FLAXENGINE_API FlaxChunk
 {
 public:
-
     /// <summary>
     /// Chunk of data location info
     /// </summary>
@@ -68,7 +67,6 @@ public:
     };
 
 public:
-
     /// <summary>
     /// The chunk location in file.
     /// </summary>
@@ -90,7 +88,6 @@ public:
     BytesContainer Data;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="FlaxChunk"/> class.
     /// </summary>
@@ -106,7 +103,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets this chunk data pointer.
     /// </summary>

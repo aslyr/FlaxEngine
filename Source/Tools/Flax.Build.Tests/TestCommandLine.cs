@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using NUnit.Framework;
 
@@ -12,6 +12,7 @@ namespace Flax.Build.Tests
         [Test, Sequential]
         public void TestParseOptionOnly([Values(
                 "-something",
+                "something",
                 "  \t   \t-\t   \tsomething\t  ",
                 "-something=")]
             string commandLine)
@@ -25,6 +26,11 @@ namespace Flax.Build.Tests
         [Test, Sequential]
         public void TestParseOneValue([Values(
                 "-something=value",
+                "something=value",
+                "-something=\"value\"",
+                "-something=\\\"value\\\"",
+                "\"-something=\"value\"\"",
+                "\"-something=\\\"value\\\"\"",
                 "  \t   \t-\t   \tsomething\t =value  ",
                 "-something=value    ")]
             string commandLine)

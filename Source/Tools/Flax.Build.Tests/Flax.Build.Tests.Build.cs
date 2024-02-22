@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using Flax.Build;
 
@@ -18,11 +18,13 @@ public class FlaxBuildTestsTarget : Target
     {
         base.Init();
 
-        Type = TargetType.DotNet;
+        Type = TargetType.DotNetCore;
         OutputType = TargetOutputType.Library;
         Platforms = new[]
         {
             TargetPlatform.Windows,
+            TargetPlatform.Linux,
+            TargetPlatform.Mac,
         };
         Configurations = new[]
         {

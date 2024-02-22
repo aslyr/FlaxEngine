@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -49,8 +49,10 @@ DECLARE_SCRIPTING_TYPE_NO_SPAWN(Globals);
     // Project content directory path
     API_FIELD(ReadOnly) static String ProjectContentFolder;
 
+#if USE_MONO
     // Mono library folder path
     API_FIELD(ReadOnly) static String MonoPath;
+#endif
 
     // State
 

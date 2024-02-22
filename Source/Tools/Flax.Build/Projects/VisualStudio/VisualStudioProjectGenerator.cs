@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -22,8 +22,15 @@ namespace Flax.Build.Projects.VisualStudio
             public override Guid ProjectTypeGuid => ProjectTypeGuids.Android;
 
             /// <inheritdoc />
-            public override void Generate()
+            public override void Generate(string solutionPath)
             {
+                // Try to reuse the existing project guid from existing files
+                ProjectGuid = GetProjectGuid(Path, Name);
+                if (ProjectGuid == Guid.Empty)
+                    ProjectGuid = GetProjectGuid(solutionPath, Name);
+                if (ProjectGuid == Guid.Empty)
+                    ProjectGuid = Guid.NewGuid();
+
                 var gen = (VisualStudioProjectGenerator)Generator;
                 var projectFileToolVersion = gen.ProjectFileToolVersion;
                 var vcProjectFileContent = new StringBuilder();
@@ -40,7 +47,7 @@ namespace Flax.Build.Projects.VisualStudio
                 vcProjectFileContent.AppendLine("  </ItemGroup>");
                 vcProjectFileContent.AppendLine("  <PropertyGroup Label=\"Globals\">");
                 vcProjectFileContent.AppendLine(string.Format("    <ProjectGuid>{0}</ProjectGuid>", ProjectGuid.ToString("B").ToUpperInvariant()));
-                vcProjectFileContent.AppendLine(string.Format("    <RootNamespace>{0}</RootNamespace>", Name));
+                vcProjectFileContent.AppendLine(string.Format("    <RootNamespace>{0}</RootNamespace>", BaseName));
                 vcProjectFileContent.AppendLine(string.Format("    <MinimumVisualStudioVersion>{0}</MinimumVisualStudioVersion>", projectFileToolVersion));
                 vcProjectFileContent.AppendLine(string.Format("    <AndroidAPILevel>{0}</AndroidAPILevel>", Configuration.AndroidPlatformApi));
                 vcProjectFileContent.AppendLine(string.Format("    <AndroidSupportedAbis>{0}</AndroidSupportedAbis>", "arm64-v8a"));
@@ -120,6 +127,7 @@ namespace Flax.Build.Projects.VisualStudio
                 case VisualStudioVersion.VisualStudio2015: return "14.0";
                 case VisualStudioVersion.VisualStudio2017: return "15.0";
                 case VisualStudioVersion.VisualStudio2019: return "16.0";
+                case VisualStudioVersion.VisualStudio2022: return "17.0";
                 }
 
                 return string.Empty;
@@ -140,9 +148,10 @@ namespace Flax.Build.Projects.VisualStudio
         /// </summary>
         /// <param name="path">The path.</param>
         /// <returns>The project ID.</returns>
-        public static Guid GetProjectGuid(string path)
+        public static Guid GetProjectGuid(string path, string projectName)
         {
-            if (File.Exists(path))
+            // Look up for the guid in VC++-project file
+            if (File.Exists(path) && Path.GetExtension(path).Equals(".vcxproj", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
@@ -160,8 +169,27 @@ namespace Flax.Build.Projects.VisualStudio
                     // Hide errors
                 }
             }
+            if (File.Exists(path) && Path.GetExtension(path).Equals(".sln", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    Regex projectRegex = new Regex(@"Project\(""{(\S+)}""\) = \""(\S+)\"", \""(\S+)\"", \""{(\S+)}\""");
+                    MatchCollection matches = projectRegex.Matches(File.ReadAllText(path));
+                    for (int i = 0; i < matches.Count; i++)
+                    {
+                        if (matches[i].Groups[1].Value.Equals("2150E333-8FDC-42A3-9474-1A3956D46DE8", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (matches[i].Groups[2].Value == projectName)
+                            return Guid.ParseExact(matches[i].Groups[4].Value, "D");
+                    }
+                }
+                catch
+                {
+                    // Hide errors
+                }
+            }
 
-            return Guid.NewGuid();
+            return Guid.Empty;
         }
 
         /// <inheritdoc />
@@ -235,7 +263,21 @@ namespace Flax.Build.Projects.VisualStudio
         /// <inheritdoc />
         public override void GenerateSolution(Solution solution)
         {
-            // Try to extract info from the existing solution file to make random IDs stable
+            // Ensure that the main project is the first one (initially selected by Visual Studio)
+            if (solution.MainProject != null && solution.Projects.Length != 0 && solution.Projects[0] != solution.MainProject)
+            {
+                for (int i = 1; i < solution.Projects.Length; i++)
+                {
+                    if (solution.Projects[i] == solution.MainProject)
+                    {
+                        solution.Projects[i] = solution.Projects[0];
+                        solution.Projects[0] = solution.MainProject;
+                        break;
+                    }
+                }
+            }
+
+            // Try to extract solution folder info from the existing solution file to make random IDs stable
             var solutionId = Guid.NewGuid();
             var folderIds = new Dictionary<string, Guid>();
             if (File.Exists(solution.Path))
@@ -251,16 +293,12 @@ namespace Flax.Build.Projects.VisualStudio
                         solutionId = Guid.ParseExact(value.Substring(15), "B");
                     }
 
-                    var folderIdsMatch = Regex.Match(contents, "Project\\(\"{2150E333-8FDC-42A3-9474-1A3956D46DE8}\"\\) = \"(.*?)\", \"(.*?)\", \"{(.*?)}\"");
-                    if (folderIdsMatch.Success)
+                    var folderIdMatches = new Regex("Project\\(\"{2150E333-8FDC-42A3-9474-1A3956D46DE8}\"\\) = \"(.*?)\", \"(.*?)\", \"{(.*?)}\"").Matches(contents);
+                    foreach (Match match in folderIdMatches)
                     {
-                        foreach (Capture capture in folderIdsMatch.Captures)
-                        {
-                            var value = capture.Value.Substring("Project(\"{2150E333-8FDC-42A3-9474-1A3956D46DE8}\") = \"".Length);
-                            var folder = value.Substring(0, value.IndexOf('\"'));
-                            var folderId = Guid.ParseExact(value.Substring(folder.Length * 2 + "\", \"".Length + "\", \"".Length, 38), "B");
-                            folderIds["Source\\" + folder] = folderId;
-                        }
+                        var folder = match.Groups[2].Value;
+                        var folderId = Guid.ParseExact(match.Groups[3].Value, "D");
+                        folderIds[folder] = folderId;
                     }
                 }
                 catch (Exception ex)
@@ -275,9 +313,15 @@ namespace Flax.Build.Projects.VisualStudio
             var projects = solution.Projects.Cast<VisualStudioProject>().ToArray();
 
             // Header
-            if (Version == VisualStudioVersion.VisualStudio2019)
+            if (Version == VisualStudioVersion.VisualStudio2022)
             {
-                //vcSolutionFileContent.AppendLine();
+                vcSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
+                vcSolutionFileContent.AppendLine("# Visual Studio Version 17");
+                vcSolutionFileContent.AppendLine("VisualStudioVersion = 17.0.31314.256");
+                vcSolutionFileContent.AppendLine("MinimumVisualStudioVersion = 10.0.40219.1");
+            }
+            else if (Version == VisualStudioVersion.VisualStudio2019)
+            {
                 vcSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
                 vcSolutionFileContent.AppendLine("# Visual Studio Version 16");
                 vcSolutionFileContent.AppendLine("VisualStudioVersion = 16.0.28315.86");
@@ -285,7 +329,6 @@ namespace Flax.Build.Projects.VisualStudio
             }
             else if (Version == VisualStudioVersion.VisualStudio2017)
             {
-                //vcSolutionFileContent.AppendLine();
                 vcSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
                 vcSolutionFileContent.AppendLine("# Visual Studio 15");
                 vcSolutionFileContent.AppendLine("VisualStudioVersion = 15.0.25807.0");
@@ -293,7 +336,6 @@ namespace Flax.Build.Projects.VisualStudio
             }
             else if (Version == VisualStudioVersion.VisualStudio2015)
             {
-                //vcSolutionFileContent.AppendLine();
                 vcSolutionFileContent.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
                 vcSolutionFileContent.AppendLine("# Visual Studio 14");
                 vcSolutionFileContent.AppendLine("VisualStudioVersion = 14.0.22310.1");
@@ -358,7 +400,7 @@ namespace Flax.Build.Projects.VisualStudio
                     var lastSplit = folder.LastIndexOf('\\');
                     var name = lastSplit != -1 ? folder.Substring(lastSplit + 1) : folder;
 
-                    vcSolutionFileContent.AppendLine(string.Format("Project(\"{0}\") = \"{1}\", \"{2}\", \"{3}\"", typeGuid, name, name, folderGuid));
+                    vcSolutionFileContent.AppendLine(string.Format("Project(\"{0}\") = \"{1}\", \"{2}\", \"{3}\"", typeGuid, name, folder, folderGuid));
                     vcSolutionFileContent.AppendLine("EndProject");
                 }
             }
@@ -396,6 +438,10 @@ namespace Flax.Build.Projects.VisualStudio
                 {
                     if (project.Configurations == null || project.Configurations.Count == 0)
                         throw new Exception("Missing configurations for project " + project.Name);
+
+                    // Prevent generating default Debug|AnyCPU and Release|AnyCPU configurations from Flax projects
+                    if (project.Name == "BuildScripts" || project.Name == "Flax.Build" || project.Name == "Flax.Build.Tests")
+                        continue;
 
                     foreach (var configuration in project.Configurations)
                     {
@@ -442,7 +488,7 @@ namespace Flax.Build.Projects.VisualStudio
                         {
                             SolutionConfiguration projectConfiguration;
                             bool build = false;
-                            int firstFullMatch = -1, firstPlatformMatch = -1;
+                            int firstFullMatch = -1, firstPlatformMatch = -1, firstEditorMatch = -1;
                             for (int i = 0; i < project.Configurations.Count; i++)
                             {
                                 var e = new SolutionConfiguration(project.Configurations[i]);
@@ -455,18 +501,47 @@ namespace Flax.Build.Projects.VisualStudio
                                 {
                                     firstPlatformMatch = i;
                                 }
+                                if (firstEditorMatch == -1 && e.Configuration == configuration.Configuration)
+                                {
+                                    firstEditorMatch = i;
+                                }
                             }
-                            if (firstFullMatch != -1)
+                            if (project is AndroidProject)
+                            {
+                                // Utility Android deploy project only for exact match
+                                if (firstFullMatch != -1)
+                                    projectConfiguration = configuration;
+                                else
+                                    projectConfiguration = new SolutionConfiguration(project.Configurations[0]);
+                            }
+                            else if (firstFullMatch != -1)
                             {
                                 projectConfiguration = configuration;
-                                build = solution.MainProject == project || (solution.MainProject == null && project.Name == solution.Name);
+
+                                // Always build the main project
+                                build = solution.MainProject == project;
+
+                                // Build C# projects (needed for Rider solution wide analysis)
+                                build |= project.Type == TargetType.DotNetCore;
+
+                                // Always build the project named after solution if main project was not set
+                                build |= solution.MainProject == null && project.Name == solution.Name;
                             }
-                            else if (firstPlatformMatch != -1)
+                            else if (firstPlatformMatch != -1 && !configuration.Name.StartsWith("Editor."))
                             {
+                                // No exact match, pick the first configuration for matching platform
                                 projectConfiguration = new SolutionConfiguration(project.Configurations[firstPlatformMatch]);
+                            }
+                            else if (firstEditorMatch != -1 && configuration.Name.StartsWith("Editor."))
+                            {
+                                // No exact match, pick the matching editor configuration for different platform.
+                                // As an example, Editor configuration for Android projects should be remapped
+                                // to desktop platform in order to provide working Intellisense information.
+                                projectConfiguration = new SolutionConfiguration(project.Configurations[firstEditorMatch]);
                             }
                             else
                             {
+                                // No match
                                 projectConfiguration = new SolutionConfiguration(project.Configurations[0]);
                             }
 
@@ -529,6 +604,138 @@ namespace Flax.Build.Projects.VisualStudio
 
             // Save the file
             Utilities.WriteFileIfChanged(solution.Path, vcSolutionFileContent.ToString());
+
+            // Generate launch profiles for C# projects
+            if (Version >= VisualStudioVersion.VisualStudio2022)
+            {
+                var profiles = new Dictionary<string, string>();
+                var profile = new StringBuilder();
+                var editorPath = Utilities.NormalizePath(Path.Combine(Globals.EngineRoot, Platform.GetEditorBinaryDirectory(), $"Development/FlaxEditor{Utilities.GetPlatformExecutableExt()}")).Replace('\\', '/');
+                var workspacePath = Utilities.NormalizePath(solutionDirectory).Replace('\\', '/');
+                foreach (var project in projects)
+                {
+                    if (project.Type == TargetType.DotNetCore)
+                    {
+                        var path = Path.Combine(Path.GetDirectoryName(project.Path), "Properties/launchSettings.json");
+                        path = Utilities.NormalizePath(path);
+                        if (profiles.ContainsKey(path))
+                            profile.AppendLine(",");
+                        profile.AppendLine($"    \"{project.BaseName}\": {{");
+                        profile.AppendLine("      \"commandName\": \"Executable\",");
+                        profile.AppendLine($"      \"workingDirectory\": \"{workspacePath}\",");
+                        profile.AppendLine($"      \"executablePath\": \"{editorPath}\",");
+                        profile.AppendLine($"      \"commandLineArgs\": \"-project \\\"{workspacePath}\\\"\",");
+                        profile.AppendLine("      \"nativeDebugging\": false");
+                        profile.Append("    }");
+                        if (profiles.ContainsKey(path))
+                            profiles[path] += profile.ToString();
+                        else
+                            profiles.Add(path, profile.ToString());
+                        profile.Clear();
+                    }
+                }
+                foreach (var e in profiles)
+                {
+                    var folder = Path.GetDirectoryName(e.Key);
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+                    profile.Clear();
+                    profile.AppendLine("{");
+                    profile.AppendLine("  \"profiles\": {");
+                    profile.AppendLine(e.Value);
+                    profile.AppendLine("  }");
+                    profile.Append("}");
+                    File.WriteAllText(e.Key, profile.ToString(), Encoding.UTF8);
+                }
+            }
+
+            // Generate Rider-specific configuration files
+            {
+                StringBuilder dotSettingsFileContent = new StringBuilder();
+                string dotSettingsUserFilePath = solution.Path + ".DotSettings.user";
+
+                // Solution settings (user layer)
+                bool useResharperBuild = false; // This needs to be disabled for custom build steps to run properly
+
+                if (File.Exists(dotSettingsUserFilePath))
+                {
+                    foreach (var line in File.ReadAllLines(dotSettingsUserFilePath))
+                    {
+                        if (line.Contains(@"/UseMsbuildSolutionBuilder/@EntryValue"))
+                        {
+                            if (!useResharperBuild)
+                            {
+                                dotSettingsFileContent.Append("\t").Append(@"<s:String x:Key=""/Default/Environment/Hierarchy/Build/SolBuilderDuo/UseMsbuildSolutionBuilder/@EntryValue"">No</s:String>");
+                                if (line.Contains("</wpf:ResourceDictionary>"))
+                                    dotSettingsFileContent.Append("</wpf:ResourceDictionary>\n");
+                                else
+                                    dotSettingsFileContent.Append("\n");
+                            }
+                            continue;
+                        }
+                        dotSettingsFileContent.Append(line).Append("\n");
+                    }
+                }
+                else
+                {
+                    dotSettingsFileContent.Append(@"<wpf:ResourceDictionary xml:space=""preserve"" xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"" xmlns:s=""clr-namespace:System;assembly=mscorlib"" xmlns:ss=""urn:shemas-jetbrains-com:settings-storage-xaml"" xmlns:wpf=""http://schemas.microsoft.com/winfx/2006/xaml/presentation"">").Append("\n");
+                    if (!useResharperBuild)
+                        dotSettingsFileContent.Append("\t").Append(@"<s:String x:Key=""/Default/Environment/Hierarchy/Build/SolBuilderDuo/UseMsbuildSolutionBuilder/@EntryValue"">No</s:String>");
+                    dotSettingsFileContent.Append("</wpf:ResourceDictionary>\n");
+                }
+
+                Utilities.WriteFileIfChanged(dotSettingsUserFilePath, dotSettingsFileContent.ToString());
+            }
+
+            // Custom MSBuild .targets file to prevent building Flax C#-projects directly with MSBuild
+            {
+                var targetsFileContent = new StringBuilder();
+                targetsFileContent.AppendLine("<Project>");
+                targetsFileContent.AppendLine("  <!-- Prevent building projects with MSBuild, let Flax.Build handle the building process -->");
+                targetsFileContent.AppendLine("  <Target Name=\"Build\" Condition=\"'false' == 'true'\" />");
+                targetsFileContent.AppendLine("</Project>");
+
+                Utilities.WriteFileIfChanged(Path.Combine(Globals.Root, "Cache", "Projects", "Flax.Build.CSharp.SkipBuild.targets"), targetsFileContent.ToString());
+            }
+
+            // Override MSBuild build tasks to run Flax.Build in C#-only projects
+            {
+                // Build command for the build tool
+                var buildToolPath = Path.ChangeExtension(typeof(Builder).Assembly.Location, null);
+
+                var targetsFileContent = new StringBuilder();
+                targetsFileContent.AppendLine("<Project>");
+                targetsFileContent.AppendLine("  <!-- Custom Flax.Build scripts for C# projects. -->");
+                targetsFileContent.AppendLine("  <Target Name=\"Build\">");
+                AppendBuildToolCommands(targetsFileContent, "-build");
+                targetsFileContent.AppendLine("  </Target>");
+                targetsFileContent.AppendLine("  <Target Name=\"Rebuild\">");
+                AppendBuildToolCommands(targetsFileContent, "-rebuild");
+                targetsFileContent.AppendLine("  </Target>");
+                targetsFileContent.AppendLine("  <Target Name=\"Clean\">");
+                AppendBuildToolCommands(targetsFileContent, "-clean");
+                targetsFileContent.AppendLine("  </Target>");
+                targetsFileContent.AppendLine("</Project>");
+
+                Utilities.WriteFileIfChanged(Path.Combine(Globals.Root, "Cache", "Projects", "Flax.Build.CSharp.targets"), targetsFileContent.ToString());
+
+                void AppendBuildToolCommands(StringBuilder str, string extraArgs)
+                {
+                    foreach (var configuration in solution.MainProject.Configurations)
+                    {
+                        var cmdLine = string.Format("\"{0}\" -log -mutex -workspace=\"{1}\" -arch={2} -configuration={3} -platform={4} -buildTargets={5}",
+                                                buildToolPath,
+                                                solution.MainProject.WorkspaceRootPath,
+                                                configuration.Architecture,
+                                                configuration.Configuration,
+                                                configuration.Platform,
+                                                configuration.Target);
+                        Configuration.PassArgs(ref cmdLine);
+
+                        str.AppendLine(string.Format("    <Exec Command='{0} {1}' Condition=\"'$(Configuration)|$(Platform)'=='{2}'\"/>", cmdLine, extraArgs, configuration.Name));
+                    }
+                }
+            }
         }
 
         /// <inheritdoc />
@@ -551,7 +758,7 @@ namespace Flax.Build.Projects.VisualStudio
                 targetsSorted.Sort((a, b) => b.Platforms.Length.CompareTo(a.Platforms.Length));
                 var target = targetsSorted.First(x => x.Platforms.Contains(TargetPlatform.Android));
                 project.Type = TargetType.NativeCpp;
-                project.Name = "Android";
+                project.Name = project.BaseName = "Android";
                 project.Targets = new Target[0];
                 project.SearchPaths = new string[0];
                 project.WorkspaceRootPath = rootProject.ProjectFolderPath;

@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Content/BinaryAsset.h"
+#include "Engine/Content/AssetReference.h"
 
 class Font;
 class FontManager;
@@ -19,7 +20,7 @@ API_ENUM() enum class FontHinting : byte
     Default,
 
     /// <summary>
-    /// Force the use of an automatic hinting algorithm (over the font's native hinter).
+    /// Force the use of an automatic hinting algorithm (over the fonts native hinter).
     /// </summary>
     Auto,
 
@@ -34,7 +35,7 @@ API_ENUM() enum class FontHinting : byte
     Monochrome,
 
     /// <summary>
-    /// Do not use hinting. This generally generates 'blurrier' bitmap glyphs when the glyph are rendered in any of the anti-aliased modes.
+    /// Do not use hinting. This generally generates 'blurrier' bitmap glyphs when the glyphs are rendered in any of the anti-aliased modes.
     /// </summary>
     None,
 };
@@ -50,7 +51,7 @@ API_ENUM(Attributes="Flags") enum class FontFlags : byte
     None = 0,
 
     /// <summary>
-    /// Enables using anti-aliasing for font characters. Otherwise font will use monochrome data.
+    /// Enables using anti-aliasing for font characters. Otherwise font will use the monochrome data.
     /// </summary>
     AntiAliasing = 1,
 
@@ -72,7 +73,7 @@ DECLARE_ENUM_OPERATORS(FontFlags);
 /// </summary>
 API_STRUCT() struct FontOptions
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(FontOptions);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(FontOptions);
 
     /// <summary>
     /// The hinting.
@@ -90,17 +91,18 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(FontOptions);
 /// </summary>
 API_CLASS(NoSpawn) class FLAXENGINE_API FontAsset : public BinaryAsset
 {
-DECLARE_BINARY_ASSET_HEADER(FontAsset, 3);
+    DECLARE_BINARY_ASSET_HEADER(FontAsset, 3);
     friend Font;
-private:
 
+private:
     FT_Face _face;
     FontOptions _options;
     BytesContainer _fontFile;
     Array<Font*, InlinedAllocation<32>> _fonts;
+    AssetReference<FontAsset> _virtualBold;
+    AssetReference<FontAsset> _virtualItalic;
 
 public:
-
     /// <summary>
     /// Gets the font family name.
     /// </summary>
@@ -128,43 +130,74 @@ public:
     }
 
     /// <summary>
+    /// Gets the font style flags.
+    /// </summary>
+    API_PROPERTY() FontFlags GetStyle() const;
+
+    /// <summary>
     /// Sets the font options.
     /// </summary>
-    API_PROPERTY() void SetOptions(const FontOptions& value)
-    {
-        _options = value;
-    }
+    API_PROPERTY() void SetOptions(const FontOptions& value);
 
 public:
-
     /// <summary>
     /// Creates the font object of given characters size.
     /// </summary>
     /// <param name="size">The font characters size.</param>
     /// <returns>The created font object.</returns>
-    API_FUNCTION() Font* CreateFont(int32 size);
+    API_FUNCTION() Font* CreateFont(float size);
+
+    /// <summary>
+    /// Gets the font with bold style. Returns itself or creates a new virtual font asset using this font but with bold option enabled.
+    /// </summary>
+    /// <returns>The virtual font or this.</returns>
+    API_FUNCTION() FontAsset* GetBold();
+
+    /// <summary>
+    /// Gets the font with italic style. Returns itself or creates a new virtual font asset using this font but with italic option enabled.
+    /// </summary>
+    /// <returns>The virtual font or this.</returns>
+    API_FUNCTION() FontAsset* GetItalic();
+
+    /// <summary>
+    /// Initializes the font with a custom font file data.
+    /// </summary>
+    /// <param name="fontFile">Raw bytes with font file data.</param>
+    /// <returns>True if cannot init, otherwise false.</returns>
+    API_FUNCTION() bool Init(const BytesContainer& fontFile);
 
 #if USE_EDITOR
-
     /// <summary>
     /// Saves this asset to the file. Supported only in Editor.
     /// </summary>
     /// <param name="path">The custom asset path to use for the saving. Use empty value to save this asset to its own storage location. Can be used to duplicate asset. Must be specified when saving virtual asset.</param>
     /// <returns>True if cannot save data, otherwise false.</returns>
     API_FUNCTION() bool Save(const StringView& path = StringView::Empty);
-
 #endif
+
+    /// <summary>
+    /// Check if the font contains the glyph of a char.
+    /// </summary>
+    /// <param name="c">The char to test.</param>
+    /// <returns>True if the font contains the glyph of the char, otherwise false.</returns>
+    API_FUNCTION() bool ContainsChar(Char c) const;
 
     /// <summary>
     /// Invalidates all cached dynamic font atlases using this font. Can be used to reload font characters after changing font asset options.
     /// </summary>
     API_FUNCTION() void Invalidate();
 
-protected:
+public:
+    // [BinaryAsset]
+    uint64 GetMemoryUsage() const override;
 
+protected:
     // [BinaryAsset]
     bool init(AssetInitData& initData) override;
     LoadResult load() override;
     void unload(bool isReloading) override;
     AssetChunksFlag getChunksToPreload() const override;
+
+private:
+    bool Init();
 };

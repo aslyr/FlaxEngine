@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -51,10 +51,6 @@ namespace FlaxEditor.GUI.Docking
             if (_window == null)
                 return;
 
-            // Check if window is maximized
-            if (_window.IsMaximized)
-                return;
-
             // Create docking hint window
             DockHintWindow.Create(this);
         }
@@ -67,7 +63,7 @@ namespace FlaxEditor.GUI.Docking
         /// <param name="size">Window client area size.</param>
         /// <param name="startPosition">Window start position.</param>
         /// <param name="title">Initial window title.</param>
-        internal static Window CreateFloatWindow(RootControl parent, Vector2 location, Vector2 size, WindowStartPosition startPosition, string title)
+        internal static Window CreateFloatWindow(RootControl parent, Float2 location, Float2 size, WindowStartPosition startPosition, string title)
         {
             // Setup initial window settings
             var settings = CreateWindowSettings.Default;
@@ -75,8 +71,8 @@ namespace FlaxEditor.GUI.Docking
             settings.Title = title;
             settings.Size = size;
             settings.Position = location;
-            settings.MinimumSize = new Vector2(1);
-            settings.MaximumSize = new Vector2(4096);
+            settings.MinimumSize = new Float2(1);
+            settings.MaximumSize = Float2.Zero; // Unlimited size
             settings.Fullscreen = false;
             settings.HasBorder = true;
             settings.SupportsTransparency = false;
@@ -89,7 +85,7 @@ namespace FlaxEditor.GUI.Docking
             settings.IsRegularWindow = true;
             settings.HasSizingFrame = true;
             settings.ShowAfterFirstPaint = false;
-            settings.ShowInTaskbar = false;
+            settings.ShowInTaskbar = true;
             settings.StartPosition = startPosition;
 
             // Create window

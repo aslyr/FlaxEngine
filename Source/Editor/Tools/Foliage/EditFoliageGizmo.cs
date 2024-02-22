@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Gizmo;
@@ -86,6 +86,13 @@ namespace FlaxEditor.Tools.Foliage
         {
             bounds = BoundingBox.Empty;
             navigationDirty = false;
+            var foliage = GizmoMode.SelectedFoliage;
+            var instanceIndex = GizmoMode.SelectedInstanceIndex;
+            if (foliage && instanceIndex >= 0 && instanceIndex < foliage.InstancesCount)
+            {
+                var instance = foliage.GetInstance(instanceIndex);
+                BoundingBox.FromSphere(ref instance.Bounds, out bounds);
+            }
         }
 
         /// <inheritdoc />
@@ -145,7 +152,7 @@ namespace FlaxEditor.Tools.Foliage
 
             // Apply scale
             const float scaleLimit = 99_999_999.0f;
-            trans.Scale = Vector3.Clamp(trans.Scale + scaleDelta, new Vector3(-scaleLimit), new Vector3(scaleLimit));
+            trans.Scale = Float3.Clamp(trans.Scale + scaleDelta, new Float3(-scaleLimit), new Float3(scaleLimit));
 
             // Apply translation
             trans.Translation += translationDelta;
@@ -209,10 +216,9 @@ namespace FlaxEditor.Tools.Foliage
             var model = foliage.GetFoliageType(instance.Type).Model;
             if (model)
             {
-                foliage.GetLocalToWorldMatrix(out var world);
-                instance.Transform.GetWorld(out var matrix);
-                Matrix.Multiply(ref matrix, ref world, out var instanceWorld);
-                model.Draw(ref renderContext, _highlightMaterial, ref instanceWorld, StaticFlags.None, false);
+                var transform = foliage.Transform.LocalToWorld(instance.Transform);
+                renderContext.View.GetWorldMatrix(ref transform, out var world);
+                model.Draw(ref renderContext, _highlightMaterial, ref world, StaticFlags.None, false);
             }
         }
 
@@ -244,10 +250,12 @@ namespace FlaxEditor.Tools.Foliage
             if (Physics.RayCast(Position, Vector3.Down, out var hit, float.MaxValue, uint.MaxValue, false))
             {
                 // Snap
-                StartTransforming();
                 var translationDelta = hit.Point - Position;
                 var rotationDelta = Quaternion.Identity;
                 var scaleDelta = Vector3.Zero;
+                if (translationDelta.IsZero)
+                    return;
+                StartTransforming();
                 OnApplyTransformation(ref translationDelta, ref rotationDelta, ref scaleDelta);
                 EndTransforming();
             }

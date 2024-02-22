@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Flax.Build.Graph;
+using Flax.Build.NativeCpp;
 
 namespace Flax.Build
 {
@@ -142,6 +143,16 @@ namespace Flax.Build
                                 {
                                     Log.Info("Removing: " + targetBuildOptions.IntermediateFolder);
                                     CleanDirectory(intermediateFolder);
+                                    intermediateFolder.Create();
+                                }
+
+                                // Delete all output files
+                                var outputFolder = new DirectoryInfo(targetBuildOptions.OutputFolder);
+                                if (outputFolder.Exists)
+                                {
+                                    Log.Info("Removing: " + targetBuildOptions.OutputFolder);
+                                    CleanDirectory(outputFolder);
+                                    outputFolder.Create();
                                 }
                             }
                         }
@@ -228,6 +239,11 @@ namespace Flax.Build
 
             var rules = GenerateRulesAssembly();
             var project = Globals.Project;
+            if (project == null)
+            {
+                Log.Warning("Missing project");
+                return true;
+            }
 
             using (new ProfileEventScope("BuildTargets"))
             {
@@ -250,6 +266,11 @@ namespace Flax.Build
                 }
                 if (targets.Length == 0)
                     Log.Warning("No targets to build");
+
+                using (new ProfileEventScope("LoadIncludesCache"))
+                {
+                    IncludesCache.LoadCache();
+                }
 
                 // Create task graph for building all targets
                 var graph = new TaskGraph(project.ProjectFolderPath);
@@ -329,6 +350,7 @@ namespace Flax.Build
                                             BuildTargetNativeCppBindingsOnly(rules, graph, target, buildContext, platform, architecture, configuration);
                                             break;
                                         case TargetType.DotNet:
+                                        case TargetType.DotNetCore:
                                             BuildTargetDotNet(rules, graph, target, platform, configuration);
                                             break;
                                         default: throw new ArgumentOutOfRangeException();
@@ -349,6 +371,7 @@ namespace Flax.Build
                                         BuildTargetNativeCpp(rules, graph, target, buildContext, toolchain, configuration);
                                         break;
                                     case TargetType.DotNet:
+                                    case TargetType.DotNetCore:
                                         BuildTargetDotNet(rules, graph, target, toolchain.Platform, configuration);
                                         break;
                                     default: throw new ArgumentOutOfRangeException();
@@ -386,6 +409,11 @@ namespace Flax.Build
                     {
                         graph.SaveCache();
                     }
+                }
+
+                using (new ProfileEventScope("SaveIncludesCache"))
+                {
+                    IncludesCache.SaveCache();
                 }
 
                 foreach (var target in targets)

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -84,7 +84,7 @@ namespace FlaxEditor.GUI.Input
             var range = _max - _min;
             if (Mathf.IsOne(_slideSpeed) && range > Mathf.Epsilon * 200.0f && range < 1000000.0f)
             {
-                _slideSpeed = range * 0.01f;
+                _slideSpeed = range * 0.001f;
             }
         }
 
@@ -140,15 +140,7 @@ namespace FlaxEditor.GUI.Input
         /// <inheritdoc />
         protected sealed override void UpdateText()
         {
-            string text;
-            if (float.IsPositiveInfinity(_value) || _value == float.MaxValue)
-                text = "Infinity";
-            else if (float.IsNegativeInfinity(_value) || _value == float.MinValue)
-                text = "-Infinity";
-            else
-                text = _value.ToString(CultureInfo.InvariantCulture);
-
-            SetText(text);
+            SetText(Utilities.Utils.FormatFloat(_value));
         }
 
         /// <inheritdoc />
@@ -157,7 +149,7 @@ namespace FlaxEditor.GUI.Input
             try
             {
                 var value = ShuntingYard.Parse(Text);
-                Value = (float)Math.Round(value, 5);
+                Value = (float)value;
             }
             catch (Exception ex)
             {

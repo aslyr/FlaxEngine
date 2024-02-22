@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "TextRender.h"
 #include "Engine/Core/Math/OrientedBoundingBox.h"
@@ -30,7 +30,6 @@ TextRender::TextRender(const SpawnParams& params)
     , _vb1(0, sizeof(VB1ElementType))
     , _vb2(0, sizeof(VB2ElementType))
 {
-    _world = Matrix::Identity;
     _color = Color::White;
     _localBox = BoundingBox(Vector3::Zero);
     _layoutOptions.Bounds = Rectangle(-100, -100, 200, 200);
@@ -74,14 +73,14 @@ void TextRender::SetColor(const Color& value)
     }
 }
 
-int32 TextRender::GetFontSize() const
+float TextRender::GetFontSize() const
 {
     return _size;
 }
 
-void TextRender::SetFontSize(int32 value)
+void TextRender::SetFontSize(float value)
 {
-    value = Math::Clamp(value, 1, 1024);
+    value = Math::Clamp(value, 1.0f, 1024.0f);
     if (_size != value)
     {
         _size = value;
@@ -106,7 +105,7 @@ void TextRender::UpdateLayout()
     _vb1.Clear();
     _vb2.Clear();
     _localBox = BoundingBox(Vector3::Zero);
-    BoundingBox::Transform(_localBox, _world, _box);
+    BoundingBox::Transform(_localBox, _transform, _box);
     BoundingSphere::FromBox(_box, _sphere);
 #if USE_PRECISE_MESH_INTERSECTS
     _collisionProxy.Clear();
@@ -153,7 +152,7 @@ void TextRender::UpdateLayout()
 
     // Prepare
     FontTextureAtlas* fontAtlas = nullptr;
-    Vector2 invAtlasSize = Vector2::One;
+    Float2 invAtlasSize = Float2::One;
     FontCharacterEntry previous;
     int32 kerning;
 
@@ -183,7 +182,7 @@ void TextRender::UpdateLayout()
     for (int32 lineIndex = 0; lineIndex < lines.Count(); lineIndex++)
     {
         const FontLineCache& line = lines[lineIndex];
-        Vector2 pointer = line.Location;
+        Float2 pointer = line.Location;
 
         // Render all characters from the line
         for (int32 charIndex = line.FirstCharIndex; charIndex <= line.LastCharIndex; charIndex++)
@@ -240,7 +239,7 @@ void TextRender::UpdateLayout()
                 const bool isWhitespace = StringUtils::IsWhitespace(c);
                 if (!isWhitespace && previous.IsValid)
                 {
-                    kerning = font->GetKerning(previous.Character, entry.Character);
+                    kerning = entry.Font->GetKerning(previous.Character, entry.Character);
                 }
                 else
                 {
@@ -259,12 +258,12 @@ void TextRender::UpdateLayout()
                     Rectangle charRect(x, y, entry.UVSize.X * scale, entry.UVSize.Y * scale);
                     charRect.Offset(_layoutOptions.Bounds.Location);
 
-                    Vector2 upperLeftUV = entry.UV * invAtlasSize;
-                    Vector2 rightBottomUV = (entry.UV + entry.UVSize) * invAtlasSize;
+                    Float2 upperLeftUV = entry.UV * invAtlasSize;
+                    Float2 rightBottomUV = (entry.UV + entry.UVSize) * invAtlasSize;
 
                     // Calculate bitangent sign
-                    Vector3 normal = Vector3::UnitZ;
-                    Vector3 tangent = Vector3::UnitX;
+                    Float3 normal = Float3::UnitZ;
+                    Float3 tangent = Float3::UnitX;
                     byte sign = 0;
 
                     // Write vertices
@@ -272,7 +271,7 @@ void TextRender::UpdateLayout()
                     VB1ElementType vb1;
                     VB2ElementType vb2;
 #define WRITE_VB(pos, uv) \
-					vb0.Position = Vector3(-pos, 0.0f); \
+					vb0.Position = Float3(-pos, 0.0f); \
 					box.Merge(vb0.Position); \
 					_vb0.Write(vb0); \
 					vb1.TexCoord = Half2(uv); \
@@ -284,9 +283,9 @@ void TextRender::UpdateLayout()
 					_vb2.Write(vb2)
                     //
                     WRITE_VB(charRect.GetBottomRight(), rightBottomUV);
-                    WRITE_VB(charRect.GetBottomLeft(), Vector2(upperLeftUV.X, rightBottomUV.Y));
+                    WRITE_VB(charRect.GetBottomLeft(), Float2(upperLeftUV.X, rightBottomUV.Y));
                     WRITE_VB(charRect.GetUpperLeft(), upperLeftUV);
-                    WRITE_VB(charRect.GetUpperRight(), Vector2(rightBottomUV.X, upperLeftUV.Y));
+                    WRITE_VB(charRect.GetUpperRight(), Float2(rightBottomUV.X, upperLeftUV.Y));
                     //
 #undef WRITE_VB
 
@@ -317,7 +316,7 @@ void TextRender::UpdateLayout()
 #if USE_PRECISE_MESH_INTERSECTS
     // Setup collision proxy for detailed collision detection for triangles
     const int32 totalIndicesCount = _ib.Data.Count() / sizeof(uint16);
-    _collisionProxy.Init(_vb0.Data.Count() / sizeof(Vector3), totalIndicesCount / 3, (Vector3*)_vb0.Data.Get(), (uint16*)_ib.Data.Get());
+    _collisionProxy.Init(_vb0.Data.Count() / sizeof(Float3), totalIndicesCount / 3, (Float3*)_vb0.Data.Get(), (uint16*)_ib.Data.Get());
 #endif
 
     // Update text bounds (from build vertex positions)
@@ -327,10 +326,10 @@ void TextRender::UpdateLayout()
         box = BoundingBox(_transform.Translation);
     }
     _localBox = box;
-    BoundingBox::Transform(_localBox, _world, _box);
+    BoundingBox::Transform(_localBox, _transform, _box);
     BoundingSphere::FromBox(_box, _sphere);
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
 bool TextRender::HasContentLoaded() const
@@ -340,22 +339,19 @@ bool TextRender::HasContentLoaded() const
 
 void TextRender::Draw(RenderContext& renderContext)
 {
+    if (renderContext.View.Pass == DrawPass::GlobalSDF)
+        return; // TODO: Text rendering to Global SDF
+    if (renderContext.View.Pass == DrawPass::GlobalSurfaceAtlas)
+        return; // TODO: Text rendering to Global Surface Atlas
     if (_isDirty)
-    {
         UpdateLayout();
-    }
+    Matrix world;
+    renderContext.View.GetWorldMatrix(_transform, world);
+    GEOMETRY_DRAW_STATE_EVENT_BEGIN(_drawState, world);
 
-    GEOMETRY_DRAW_STATE_EVENT_BEGIN(_drawState, _world);
-
-    const DrawPass drawModes = (DrawPass)(DrawModes & renderContext.View.Pass & (int32)renderContext.View.GetShadowsDrawPassMask(ShadowsMode));
+    const DrawPass drawModes = DrawModes & renderContext.View.Pass & renderContext.View.GetShadowsDrawPassMask(ShadowsMode);
     if (_vb0.Data.Count() > 0 && drawModes != DrawPass::None)
     {
-#if USE_EDITOR
-        // Disable motion blur effects in editor without play mode enabled to hide minor artifacts on objects moving
-        if (!Editor::IsPlayMode)
-            _drawState.PrevWorld = _world;
-#endif
-
         // Flush buffers
         if (_buffersDirty)
         {
@@ -368,41 +364,37 @@ void TextRender::Draw(RenderContext& renderContext)
 
         // Setup draw call
         DrawCall drawCall;
-        drawCall.World = _world;
+        drawCall.World = world;
         drawCall.ObjectPosition = drawCall.World.GetTranslation();
+        drawCall.ObjectRadius = _sphere.Radius;
         drawCall.Surface.GeometrySize = _localBox.GetSize();
         drawCall.Surface.PrevWorld = _drawState.PrevWorld;
         drawCall.Surface.Lightmap = nullptr;
         drawCall.Surface.LightmapUVsArea = Rectangle::Empty;
         drawCall.Surface.Skinning = nullptr;
         drawCall.Surface.LODDitherFactor = 0.0f;
-        drawCall.WorldDeterminantSign = Math::FloatSelect(_world.RotDeterminant(), 1, -1);
+        drawCall.WorldDeterminantSign = Math::FloatSelect(world.RotDeterminant(), 1, -1);
         drawCall.PerInstanceRandom = GetPerInstanceRandom();
         drawCall.Geometry.IndexBuffer = _ib.GetBuffer();
         drawCall.Geometry.VertexBuffers[0] = _vb0.GetBuffer();
         drawCall.Geometry.VertexBuffers[1] = _vb1.GetBuffer();
         drawCall.Geometry.VertexBuffers[2] = _vb2.GetBuffer();
-        drawCall.Geometry.VertexBuffersOffsets[0] = 0;
-        drawCall.Geometry.VertexBuffersOffsets[1] = 0;
-        drawCall.Geometry.VertexBuffersOffsets[2] = 0;
         drawCall.InstanceCount = 1;
 
         // Submit draw calls
         for (const auto& e : _drawChunks)
         {
+            const DrawPass chunkDrawModes = drawModes & e.Material->GetDrawModes();
+            if (chunkDrawModes == DrawPass::None)
+                continue;
             drawCall.Draw.IndicesCount = e.IndicesCount;
             drawCall.Draw.StartIndex = e.StartIndex;
             drawCall.Material = e.Material;
-            renderContext.List->AddDrawCall(drawModes, GetStaticFlags(), drawCall, true);
+            renderContext.List->AddDrawCall(renderContext, chunkDrawModes, GetStaticFlags(), drawCall, true, SortOrder);
         }
     }
 
-    GEOMETRY_DRAW_STATE_EVENT_END(_drawState, _world);
-}
-
-void TextRender::DrawGeneric(RenderContext& renderContext)
-{
-    Draw(renderContext);
+    GEOMETRY_DRAW_STATE_EVENT_END(_drawState, world);
 }
 
 #if USE_EDITOR
@@ -414,7 +406,7 @@ void TextRender::OnDebugDrawSelected()
     // Draw text bounds and layout bounds
     DEBUG_DRAW_WIRE_BOX(_box, Color::Orange, 0, true);
     OrientedBoundingBox layoutBox(Vector3(-_layoutOptions.Bounds.GetUpperLeft(), 0), Vector3(-_layoutOptions.Bounds.GetBottomRight(), 0));
-    layoutBox.Transform(_world);
+    layoutBox.Transform(_transform);
     DEBUG_DRAW_WIRE_BOX(layoutBox, Color::BlueViolet, 0, true);
 
     // Base
@@ -426,15 +418,15 @@ void TextRender::OnDebugDrawSelected()
 void TextRender::OnLayerChanged()
 {
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
-bool TextRender::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool TextRender::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
 #if USE_PRECISE_MESH_INTERSECTS
     if (_box.Intersects(ray))
     {
-        return _collisionProxy.Intersects(ray, _world, distance, normal);
+        return _collisionProxy.Intersects(ray, _transform, distance, normal);
     }
     return false;
 #else
@@ -456,6 +448,7 @@ void TextRender::Serialize(SerializeStream& stream, const void* otherObj)
     SERIALIZE(Font);
     SERIALIZE(ShadowsMode);
     SERIALIZE(DrawModes);
+    SERIALIZE(SortOrder);
     SERIALIZE_MEMBER(Bounds, _layoutOptions.Bounds);
     SERIALIZE_MEMBER(HAlignment, _layoutOptions.HorizontalAlignment);
     SERIALIZE_MEMBER(VAlignment, _layoutOptions.VerticalAlignment);
@@ -476,12 +469,20 @@ void TextRender::Deserialize(DeserializeStream& stream, ISerializeModifier* modi
     DESERIALIZE(Font);
     DESERIALIZE(ShadowsMode);
     DESERIALIZE(DrawModes);
+    DESERIALIZE(SortOrder);
     DESERIALIZE_MEMBER(Bounds, _layoutOptions.Bounds);
     DESERIALIZE_MEMBER(HAlignment, _layoutOptions.HorizontalAlignment);
     DESERIALIZE_MEMBER(VAlignment, _layoutOptions.VerticalAlignment);
     DESERIALIZE_MEMBER(Wrapping, _layoutOptions.TextWrapping);
     DESERIALIZE_MEMBER(Scale, _layoutOptions.Scale);
     DESERIALIZE_MEMBER(GapScale, _layoutOptions.BaseLinesGapScale);
+
+    // [Deprecated on 07.02.2022, expires on 07.02.2024]
+    if (modifier->EngineBuild <= 6330)
+        DrawModes |= DrawPass::GlobalSDF;
+    // [Deprecated on 27.04.2022, expires on 27.04.2024]
+    if (modifier->EngineBuild <= 6331)
+        DrawModes |= DrawPass::GlobalSurfaceAtlas;
 
     _isDirty = true;
 }
@@ -495,7 +496,7 @@ void TextRender::OnEnable()
     {
         UpdateLayout();
     }
-    _sceneRenderingKey = GetSceneRendering()->AddGeometry(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 }
 
 void TextRender::OnDisable()
@@ -505,7 +506,7 @@ void TextRender::OnDisable()
         _isLocalized = false;
         Localization::LocalizationChanged.Unbind<TextRender, &TextRender::UpdateLayout>(this);
     }
-    GetSceneRendering()->RemoveGeometry(this, _sceneRenderingKey);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
 
     // Base
     Actor::OnDisable();
@@ -516,9 +517,8 @@ void TextRender::OnTransformChanged()
     // Base
     Actor::OnTransformChanged();
 
-    _transform.GetWorld(_world);
-    BoundingBox::Transform(_localBox, _world, _box);
+    BoundingBox::Transform(_localBox, _transform, _box);
     BoundingSphere::FromBox(_box, _sphere);
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }

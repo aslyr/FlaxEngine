@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -212,18 +212,20 @@ namespace RenderToolsDX
         if (errorCode == DXGI_ERROR_DEVICE_REMOVED || errorCode == DXGI_ERROR_DEVICE_RESET || errorCode == DXGI_ERROR_DRIVER_INTERNAL_ERROR)
         {
             HRESULT reason = S_OK;
+            const RendererType rendererType = GPUDevice::Instance ? GPUDevice::Instance->GetRendererType() : RendererType::Unknown;
+            void* nativePtr = GPUDevice::Instance ? GPUDevice::Instance->GetNativePtr() : nullptr;
 #if GRAPHICS_API_DIRECTX12
-            if (GPUDevice::Instance->GetRendererType() == RendererType::DirectX12)
+            if (rendererType == RendererType::DirectX12 && nativePtr)
             {
-                reason = ((ID3D12Device*)GPUDevice::Instance->GetNativePtr())->GetDeviceRemovedReason();
+                reason = ((ID3D12Device*)nativePtr)->GetDeviceRemovedReason();
             }
 #endif
 #if GRAPHICS_API_DIRECTX11
-            if (GPUDevice::Instance->GetRendererType() == RendererType::DirectX11 ||
-                GPUDevice::Instance->GetRendererType() == RendererType::DirectX10_1 ||
-                GPUDevice::Instance->GetRendererType() == RendererType::DirectX10)
+            if ((rendererType == RendererType::DirectX11 ||
+                rendererType == RendererType::DirectX10_1 ||
+                rendererType == RendererType::DirectX10) && nativePtr)
             {
-                reason = ((ID3D11Device*)GPUDevice::Instance->GetNativePtr())->GetDeviceRemovedReason();
+                reason = ((ID3D11Device*)nativePtr)->GetDeviceRemovedReason();
             }
 #endif
             const Char* reasonStr = nullptr;
@@ -270,15 +272,15 @@ namespace RenderToolsDX
 #if GPU_ENABLE_ASSERTION
 
 // DirectX results validation
-#define VALIDATE_DIRECTX_RESULT(x) { HRESULT result = x; if (FAILED(result)) RenderToolsDX::ValidateD3DResult(result, __FILE__, __LINE__); }
+#define VALIDATE_DIRECTX_CALL(x) { HRESULT result = x; if (FAILED(result)) RenderToolsDX::ValidateD3DResult(result, __FILE__, __LINE__); }
 #define LOG_DIRECTX_RESULT(result) if (FAILED(result)) RenderToolsDX::LogD3DResult(result, __FILE__, __LINE__)
-#define LOG_DIRECTX_RESULT_WITH_RETURN(result) if (FAILED(result)) { RenderToolsDX::LogD3DResult(result, __FILE__, __LINE__); return true; }
+#define LOG_DIRECTX_RESULT_WITH_RETURN(result, returnValue) if (FAILED(result)) { RenderToolsDX::LogD3DResult(result, __FILE__, __LINE__); return returnValue; }
 
 #else
 
-#define VALIDATE_DIRECTX_RESULT(x) x
+#define VALIDATE_DIRECTX_CALL(x) x
 #define LOG_DIRECTX_RESULT(result) if(FAILED(result)) RenderToolsDX::LogD3DResult(result)
-#define LOG_DIRECTX_RESULT_WITH_RETURN(result) if(FAILED(result)) { RenderToolsDX::LogD3DResult(result); return true; }
+#define LOG_DIRECTX_RESULT_WITH_RETURN(result, returnValue) if(FAILED(result)) { RenderToolsDX::LogD3DResult(result); return returnValue; }
 
 #endif
 
@@ -387,8 +389,9 @@ inline void SetDebugObjectName(T* resource, const Char* data, UINT size)
     if (data && size > 0)
         resource->SetName(data);
 #else
-    char* ansi = (char*)Allocator::Allocate(size);
+    char* ansi = (char*)Allocator::Allocate(size + 1);
     StringUtils::ConvertUTF162ANSI(data, ansi, size);
+    ansi[size] ='\0';
     SetDebugObjectName(resource, ansi, size);
     Allocator::Free(ansi);
 #endif

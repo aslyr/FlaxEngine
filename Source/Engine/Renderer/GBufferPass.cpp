@@ -1,25 +1,36 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "GBufferPass.h"
 #include "RenderList.h"
+#if USE_EDITOR
 #include "Engine/Renderer/Editor/VertexColors.h"
 #include "Engine/Renderer/Editor/LightmapUVsDensity.h"
+#include "Engine/Renderer/Editor/LODPreview.h"
+#include "Engine/Renderer/Editor/MaterialComplexity.h"
+#endif
 #include "Engine/Core/Collections/Sorting.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/RenderBuffers.h"
+#include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Content/Assets/Shader.h"
 #include "Engine/Content/Content.h"
 #include "Engine/Content/Assets/Model.h"
 #include "Engine/Level/Actors/Decal.h"
+#include "Engine/Engine/Engine.h"
 
 PACK_STRUCT(struct GBufferPassData{
     GBufferData GBuffer;
-    Vector3 Dummy0;
+    Float3 Dummy0;
     int32 ViewMode;
     });
+
+#if USE_EDITOR
+Dictionary<GPUBuffer*, const ModelLOD*> GBufferPass::IndexBufferToModelLOD;
+CriticalSection GBufferPass::Locker;
+#endif
 
 String GBufferPass::ToString() const
 {
@@ -87,35 +98,77 @@ void GBufferPass::Dispose()
     _skyModel = nullptr;
     _boxModel = nullptr;
 #if USE_EDITOR
-    SAFE_DELETE(_lightmapUVsDensityMaterialShader);
-    SAFE_DELETE(_vertexColorsMaterialShader);
+    SAFE_DELETE(_lightmapUVsDensity);
+    SAFE_DELETE(_vertexColors);
+    SAFE_DELETE(_lodPreview);
+    SAFE_DELETE(_materialComplexity);
+    IndexBufferToModelLOD.SetCapacity(0);
 #endif
 }
 
-void GBufferPass::Fill(RenderContext& renderContext, GPUTextureView* lightBuffer)
+#if USE_EDITOR
+
+void DebugOverrideDrawCallsMaterial(const RenderContext& renderContext, IMaterial* material)
+{
+    if (!material->IsReady())
+        return;
+    PROFILE_CPU();
+    IMaterial::InstancingHandler handler;
+    const bool canUseInstancing = material->CanUseInstancing(handler);
+    const auto drawModes = material->GetDrawModes();
+    if (EnumHasAnyFlags(drawModes, DrawPass::GBuffer))
+    {
+        auto& drawCallsList = renderContext.List->DrawCallsLists[(int32)DrawCallsListType::GBuffer];
+        for (int32 i : drawCallsList.Indices)
+        {
+            auto& drawCall = renderContext.List->DrawCalls.Get()[i];
+            if (drawCall.Material->IsSurface())
+            {
+                drawCall.Material = material;
+            }
+        }
+        drawCallsList.CanUseInstancing &= canUseInstancing;
+    }
+    if (EnumHasAnyFlags(drawModes, DrawPass::GBuffer))
+    {
+        auto& drawCallsList = renderContext.List->DrawCallsLists[(int32)DrawCallsListType::GBufferNoDecals];
+        for (int32 i : drawCallsList.Indices)
+        {
+            auto& drawCall = renderContext.List->DrawCalls.Get()[i];
+            if (drawCall.Material->IsSurface())
+            {
+                drawCall.Material = material;
+            }
+        }
+        drawCallsList.CanUseInstancing &= canUseInstancing;
+    }
+}
+
+#endif
+
+void GBufferPass::Fill(RenderContext& renderContext, GPUTexture* lightBuffer)
 {
     PROFILE_GPU_CPU("GBuffer");
 
     // Cache data
     auto device = GPUDevice::Instance;
     auto context = device->GetMainContext();
-    auto& view = renderContext.View;
     GPUTextureView* targetBuffers[5] =
     {
-        lightBuffer,
+        lightBuffer->View(),
         renderContext.Buffers->GBuffer0->View(),
         renderContext.Buffers->GBuffer1->View(),
         renderContext.Buffers->GBuffer2->View(),
         renderContext.Buffers->GBuffer3->View(),
     };
-    view.Pass = DrawPass::GBuffer;
+    renderContext.View.Pass = DrawPass::GBuffer;
 
     // Clear GBuffer
     {
-        PROFILE_GPU_CPU("Clear");
+        PROFILE_GPU_CPU_NAMED("Clear");
 
         context->ClearDepth(*renderContext.Buffers->DepthBuffer);
-        context->Clear(lightBuffer, Color::Transparent);
+        context->Clear(lightBuffer->View(), Color::Transparent);
         context->Clear(renderContext.Buffers->GBuffer0->View(), Color::Transparent);
         context->Clear(renderContext.Buffers->GBuffer1->View(), Color::Transparent);
         context->Clear(renderContext.Buffers->GBuffer2->View(), Color(1, 0, 0, 0));
@@ -130,52 +183,20 @@ void GBufferPass::Fill(RenderContext& renderContext, GPUTextureView* lightBuffer
     }
 
 #if USE_EDITOR
-    // Override draw calls material to use material debug shader
-    if (renderContext.View.Mode == ViewMode::LightmapUVsDensity)
+    // Special debug drawing
+    if (renderContext.View.Mode == ViewMode::MaterialComplexity)
     {
-        if (!_lightmapUVsDensityMaterialShader)
-            _lightmapUVsDensityMaterialShader = New<LightmapUVsDensityMaterialShader>();
-        if (_lightmapUVsDensityMaterialShader->IsReady())
+        // Initialize background with complexity of the sky (uniform)
+        if (renderContext.List->Sky)
         {
-            auto& drawCallsList = renderContext.List->DrawCallsLists[(int32)DrawCallsListType::GBuffer];
-            for (int32 i : drawCallsList.Indices)
-            {
-                auto& drawCall = renderContext.List->DrawCalls[i];
-                if (drawCall.Material->IsSurface())
-                {
-                    drawCall.Material = _lightmapUVsDensityMaterialShader;
-                }
-            }
-            IMaterial::InstancingHandler handler;
-            if (!_lightmapUVsDensityMaterialShader->CanUseInstancing(handler))
-            {
-                drawCallsList.CanUseInstancing = false;
-            }
+            renderContext.List->Sky->ApplySky(context, renderContext, Matrix::Identity);
+            GPUPipelineState* materialPs = context->GetState();
+            const float complexity = (float)Math::Min(materialPs->Complexity, MATERIAL_COMPLEXITY_LIMIT) / MATERIAL_COMPLEXITY_LIMIT;
+            context->Clear(lightBuffer->View(), Color(complexity, complexity, complexity, 1.0f));
+            renderContext.List->Sky = nullptr;
         }
     }
-    else if (renderContext.View.Mode == ViewMode::VertexColors)
-    {
-        if (!_vertexColorsMaterialShader)
-            _vertexColorsMaterialShader = New<VertexColorsMaterialShader>();
-        if (_vertexColorsMaterialShader->IsReady())
-        {
-            auto& drawCallsList = renderContext.List->DrawCallsLists[(int32)DrawCallsListType::GBuffer];
-            for (int32 i : drawCallsList.Indices)
-            {
-                auto& drawCall = renderContext.List->DrawCalls[i];
-                if (drawCall.Material->IsSurface())
-                {
-                    drawCall.Material = _vertexColorsMaterialShader;
-                }
-            }
-            IMaterial::InstancingHandler handler;
-            if (!_vertexColorsMaterialShader->CanUseInstancing(handler))
-            {
-                drawCallsList.CanUseInstancing = false;
-            }
-        }
-    }
-    if (renderContext.View.Mode == ViewMode::PhysicsColliders)
+    else if (renderContext.View.Mode == ViewMode::PhysicsColliders)
     {
         context->ResetRenderTarget();
         return;
@@ -187,30 +208,21 @@ void GBufferPass::Fill(RenderContext& renderContext, GPUTextureView* lightBuffer
     renderContext.List->ExecuteDrawCalls(renderContext, DrawCallsListType::GBuffer);
 
     // Draw decals
-    DrawDecals(renderContext, lightBuffer);
+    DrawDecals(renderContext, lightBuffer->View());
 
     // Draw objects that cannot get decals
     context->SetRenderTarget(*renderContext.Buffers->DepthBuffer, ToSpan(targetBuffers, ARRAY_COUNT(targetBuffers)));
     renderContext.List->ExecuteDrawCalls(renderContext, DrawCallsListType::GBufferNoDecals);
 
+    GPUTexture* nullTexture = nullptr;
+    renderContext.List->RunCustomPostFxPass(context, renderContext, PostProcessEffectLocation::AfterGBufferPass, lightBuffer, nullTexture);
+
     // Draw sky
-    if (renderContext.List->Sky && _skyModel && _skyModel->CanBeRendered())
+    if (renderContext.List->Sky && _skyModel && _skyModel->CanBeRendered() && EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::Sky))
     {
-        PROFILE_GPU_CPU("Sky");
-
-        // Cache data
-        auto model = _skyModel.Get();
-        auto box = model->GetBox();
-
-        // Calculate sphere model transform to cover far plane
-        Matrix m1, m2;
-        Matrix::Scaling(view.Far / (box.GetSize().Y * 0.5f) * 0.95f, m1); // Scale to fit whole view frustum
-        Matrix::CreateWorld(view.Position, Vector3::Up, Vector3::Backward, m2); // Rotate sphere model
-        m1 *= m2;
-
-        // Draw sky
-        renderContext.List->Sky->ApplySky(context, renderContext, m1);
-        model->Render(context);
+        PROFILE_GPU_CPU_NAMED("Sky");
+        context->SetRenderTarget(*renderContext.Buffers->DepthBuffer, ToSpan(targetBuffers, ARRAY_COUNT(targetBuffers)));
+        DrawSky(renderContext, context);
     }
 
     context->ResetRenderTarget();
@@ -224,7 +236,7 @@ bool SortDecal(Decal* const& a, Decal* const& b)
 void GBufferPass::RenderDebug(RenderContext& renderContext)
 {
     // Check if has resources loaded
-    if (setupResources())
+    if (checkIfSkipPass())
         return;
 
     // Cache data
@@ -254,6 +266,111 @@ void GBufferPass::RenderDebug(RenderContext& renderContext)
     // Cleanup
     context->ResetSR();
 }
+
+// Custom render buffer for realtime skybox capturing (eg. used by GI).
+class SkyboxCustomBuffer : public RenderBuffers::CustomBuffer
+{
+public:
+    uint64 LastCaptureFrame = 0;
+    GPUTexture* Skybox = nullptr;
+
+    ~SkyboxCustomBuffer()
+    {
+        RenderTargetPool::Release(Skybox);
+    }
+};
+
+GPUTextureView* GBufferPass::RenderSkybox(RenderContext& renderContext, GPUContext* context)
+{
+    GPUTextureView* result = nullptr;
+    if (renderContext.List->Sky && _skyModel && _skyModel->CanBeRendered() && EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::Sky))
+    {
+        // Initialize skybox texture
+        auto& skyboxData = *renderContext.Buffers->GetCustomBuffer<SkyboxCustomBuffer>(TEXT("Skybox"));
+        skyboxData.LastFrameUsed = Engine::FrameCount;
+        bool dirty = false;
+        const int32 resolution = 16;
+        if (!skyboxData.Skybox)
+        {
+            const auto desc = GPUTextureDescription::NewCube(resolution, PixelFormat::R11G11B10_Float);
+            skyboxData.Skybox = RenderTargetPool::Get(desc);
+            if (!skyboxData.Skybox)
+                return nullptr;
+            RENDER_TARGET_POOL_SET_NAME(skyboxData.Skybox, "GBuffer.Skybox");
+            dirty = true;
+        }
+
+        // Redraw sky from time-to-time (dynamic skies can be animated, static skies can have textures streamed)
+        const uint32 redrawFramesCount = renderContext.List->Sky->IsDynamicSky() ? 4 : 240;
+        if (Engine::FrameCount - skyboxData.LastCaptureFrame >= redrawFramesCount)
+            dirty = true;
+
+        if (dirty)
+        {
+            PROFILE_GPU_CPU("Skybox");
+            skyboxData.LastCaptureFrame = Engine::FrameCount;
+            const RenderView originalView = renderContext.View;
+            renderContext.View.Pass = DrawPass::GBuffer;
+            renderContext.View.SetUpCube(10.0f, 10000.0f, originalView.Position);
+            for (int32 faceIndex = 0; faceIndex < 6; faceIndex++)
+            {
+                renderContext.View.SetFace(faceIndex);
+                context->SetRenderTarget(skyboxData.Skybox->View(faceIndex));
+                context->SetViewportAndScissors(resolution, resolution);
+                DrawSky(renderContext, context);
+            }
+            renderContext.View = originalView;
+            context->ResetRenderTarget();
+        }
+
+        result = skyboxData.Skybox->ViewArray();
+    }
+    return result;
+}
+
+#if USE_EDITOR
+
+void GBufferPass::PreOverrideDrawCalls(RenderContext& renderContext)
+{
+    // Clear cache before scene drawing
+    IndexBufferToModelLOD.Clear();
+}
+
+void GBufferPass::OverrideDrawCalls(RenderContext& renderContext)
+{
+    // Override draw calls material to use material debug shader
+    if (renderContext.View.Mode == ViewMode::LightmapUVsDensity)
+    {
+        if (!_lightmapUVsDensity)
+            _lightmapUVsDensity = New<LightmapUVsDensityMaterialShader>();
+        DebugOverrideDrawCallsMaterial(renderContext, _lightmapUVsDensity);
+    }
+    else if (renderContext.View.Mode == ViewMode::VertexColors)
+    {
+        if (!_vertexColors)
+            _vertexColors = New<VertexColorsMaterialShader>();
+        DebugOverrideDrawCallsMaterial(renderContext, _vertexColors);
+    }
+    else if (renderContext.View.Mode == ViewMode::LODPreview)
+    {
+        if (!_lodPreview)
+            _lodPreview = New<LODPreviewMaterialShader>();
+        DebugOverrideDrawCallsMaterial(renderContext, _lodPreview);
+    }
+    else if (renderContext.View.Mode == ViewMode::MaterialComplexity)
+    {
+        if (!_materialComplexity)
+            _materialComplexity = New<MaterialComplexityMaterialShader>();
+        _materialComplexity->DebugOverrideDrawCallsMaterial(renderContext);
+    }
+}
+
+void GBufferPass::DrawMaterialComplexity(RenderContext& renderContext, GPUContext* context, GPUTextureView* lightBuffer)
+{
+    _materialComplexity->Draw(renderContext, context, lightBuffer);
+}
+
+#endif
 
 bool GBufferPass::IsDebugView(ViewMode mode)
 {
@@ -292,19 +409,35 @@ void GBufferPass::SetInputs(const RenderView& view, GBufferData& gBuffer)
     Matrix::Transpose(view.IP, gBuffer.InvProjectionMatrix);
 }
 
+void GBufferPass::DrawSky(RenderContext& renderContext, GPUContext* context)
+{
+    // Cache data
+    auto model = _skyModel.Get();
+    auto box = model->GetBox();
+
+    // Calculate sphere model transform to cover far plane
+    Matrix m1, m2;
+    Matrix::Scaling(renderContext.View.Far / ((float)box.GetSize().Y * 0.5f) * 0.95f, m1); // Scale to fit whole view frustum
+    Matrix::CreateWorld(renderContext.View.Position, Float3::Up, Float3::Backward, m2); // Rotate sphere model
+    m1 *= m2;
+
+    // Draw sky
+    renderContext.List->Sky->ApplySky(context, renderContext, m1);
+    model->Render(context);
+}
+
 void GBufferPass::DrawDecals(RenderContext& renderContext, GPUTextureView* lightBuffer)
 {
     // Skip if no decals to render
     auto& decals = renderContext.List->Decals;
-    if (decals.IsEmpty() || _boxModel == nullptr || !_boxModel->CanBeRendered())
+    if (decals.IsEmpty() || _boxModel == nullptr || !_boxModel->CanBeRendered() || EnumHasNoneFlags(renderContext.View.Flags, ViewFlags::Decals))
         return;
 
     PROFILE_GPU_CPU("Decals");
 
     // Cache data
     auto device = GPUDevice::Instance;
-    auto gpuContext = device->GetMainContext();
-    auto& view = renderContext.View;
+    auto context = device->GetMainContext();
     auto model = _boxModel.Get();
     auto buffers = renderContext.Buffers;
 
@@ -317,7 +450,8 @@ void GBufferPass::DrawDecals(RenderContext& renderContext, GPUTextureView* light
 
     // Prepare
     DrawCall drawCall;
-    MaterialBase::BindParameters bindParams(gpuContext, renderContext, drawCall);
+    MaterialBase::BindParameters bindParams(context, renderContext, drawCall);
+    bindParams.BindViewData();
     drawCall.Material = nullptr;
     drawCall.WorldDeterminantSign = 1.0f;
 
@@ -326,10 +460,13 @@ void GBufferPass::DrawDecals(RenderContext& renderContext, GPUTextureView* light
     {
         const auto decal = decals[i];
         ASSERT(decal && decal->Material);
-        decal->GetWorld(&drawCall.World);
+        Transform transform = decal->GetTransform();
+        transform.Scale *= decal->GetSize();
+        renderContext.View.GetWorldMatrix(transform, drawCall.World);
         drawCall.ObjectPosition = drawCall.World.GetTranslation();
+        drawCall.ObjectRadius = decal->GetSphere().Radius;
 
-        gpuContext->ResetRenderTarget();
+        context->ResetRenderTarget();
 
         // Bind output
         const MaterialInfo& info = decal->Material->GetInfo();
@@ -341,38 +478,38 @@ void GBufferPass::DrawDecals(RenderContext& renderContext, GPUTextureView* light
             int32 count = 2;
             targetBuffers[0] = buffers->GBuffer0->View();
             targetBuffers[1] = buffers->GBuffer2->View();
-            if (info.UsageFlags & MaterialUsageFlags::UseEmissive)
+            if (EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseEmissive))
             {
                 count++;
                 targetBuffers[2] = lightBuffer;
 
-                if (info.UsageFlags & MaterialUsageFlags::UseNormal)
+                if (EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseNormal))
                 {
                     count++;
                     targetBuffers[3] = buffers->GBuffer1->View();
                 }
             }
-            else if (info.UsageFlags & MaterialUsageFlags::UseNormal)
+            else if (EnumHasAnyFlags(info.UsageFlags, MaterialUsageFlags::UseNormal))
             {
                 count++;
                 targetBuffers[2] = buffers->GBuffer1->View();
             }
-            gpuContext->SetRenderTarget(nullptr, ToSpan(targetBuffers, count));
+            context->SetRenderTarget(nullptr, ToSpan(targetBuffers, count));
             break;
         }
         case MaterialDecalBlendingMode::Stain:
         {
-            gpuContext->SetRenderTarget(buffers->GBuffer0->View());
+            context->SetRenderTarget(buffers->GBuffer0->View());
             break;
         }
         case MaterialDecalBlendingMode::Normal:
         {
-            gpuContext->SetRenderTarget(buffers->GBuffer1->View());
+            context->SetRenderTarget(buffers->GBuffer1->View());
             break;
         }
         case MaterialDecalBlendingMode::Emissive:
         {
-            gpuContext->SetRenderTarget(lightBuffer);
+            context->SetRenderTarget(lightBuffer);
             break;
         }
         }
@@ -380,8 +517,8 @@ void GBufferPass::DrawDecals(RenderContext& renderContext, GPUTextureView* light
         // Draw decal
         drawCall.PerInstanceRandom = decal->GetPerInstanceRandom();
         decal->Material->Bind(bindParams);
-        model->Render(gpuContext);
+        model->Render(context);
     }
 
-    gpuContext->ResetSR();
+    context->ResetSR();
 }

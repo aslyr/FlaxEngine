@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_WINDOWS
 
@@ -6,9 +6,11 @@
 #include "Engine/Platform/Window.h"
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Platform/CreateWindowSettings.h"
+#include "Engine/Platform/CreateProcessSettings.h"
 #include "Engine/Platform/WindowsManager.h"
 #include "Engine/Platform/MemoryStats.h"
 #include "Engine/Platform/BatteryInfo.h"
+#include "Engine/Platform/Base/PlatformUtils.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Collections/Dictionary.h"
@@ -19,14 +21,17 @@
 #include "../Win32/IncludeWindowsHeaders.h"
 #include <VersionHelpers.h>
 #include <ShellAPI.h>
-#include <timeapi.h>
 #include <Psapi.h>
 #include <objbase.h>
 #include <cstdio>
+#undef ShellExecute
 #if CRASH_LOG_ENABLE
 #include <dbghelp.h>
 #endif
 #include "resource.h"
+
+#define CLR_EXCEPTION 0xE0434352
+#define VCPP_EXCEPTION 0xE06D7363
 
 const Char* WindowsPlatform::ApplicationWindowClass = TEXT("FlaxWindow");
 void* WindowsPlatform::Instance = nullptr;
@@ -55,9 +60,9 @@ void DbgHelpUnlock()
 
 namespace
 {
-    String UserLocale, ComputerName, UserName, WindowsName;
+    String UserLocale, ComputerName, WindowsName;
     HANDLE EngineMutex = nullptr;
-    Rectangle VirtualScreenBounds = Rectangle(0.0f, 0.0f, 0.0f, 0.0f);
+    Rectangle VirtualScreenBounds(0.0f, 0.0f, 0.0f, 0.0f);
     int32 VersionMajor = 0;
     int32 VersionMinor = 0;
     int32 VersionBuild = 0;
@@ -176,8 +181,12 @@ void GetWindowsVersion(String& windowsName, int32& versionMajor, int32& versionM
             VersionMajor = 6;
             VersionMinor = 2;
         }
-
-        if (VersionMajor == 0 && VersionMinor == 0)
+        else if (VersionMajor >= 10 && VersionBuild >= 22000)
+        {
+            // Windows 11
+            windowsName.Replace(TEXT("10"), TEXT("11"));
+        }
+        else if (VersionMajor == 0 && VersionMinor == 0)
         {
             String windowsVersion;
             GetStringRegKey(hKey, TEXT("CurrentVersion"), windowsVersion, TEXT(""));
@@ -266,6 +275,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 LONG CALLBACK SehExceptionHandler(EXCEPTION_POINTERS* ep)
 {
+    if (ep->ExceptionRecord->ExceptionCode == CLR_EXCEPTION)
+    {
+        // Pass CLR exceptions back to runtime
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
     // Skip if engine already crashed
     if (Globals::FatalErrorOccurred)
         return EXCEPTION_CONTINUE_SEARCH;
@@ -301,10 +316,13 @@ LONG CALLBACK SehExceptionHandler(EXCEPTION_POINTERS* ep)
         errorMsg += String::Format(TEXT("{:#x}"), (uint32)ep->ExceptionRecord->ExceptionCode);
     }
 
-    // Pause if debugging
+    // Log exception and return to the crash location when using debugger
     if (Platform::IsDebuggerPresent())
     {
-        PLATFORM_DEBUG_BREAK;
+        LOG_STR(Error, errorMsg);
+        const String stackTrace = Platform::GetStackTrace(0, 60, ep);
+        LOG_STR(Error, stackTrace);
+        return EXCEPTION_CONTINUE_SEARCH;
     }
 
     // Crash engine
@@ -433,6 +451,7 @@ DialogResult MessageBox::Show(Window* parent, const StringView& text, const Stri
     default:
         break;
     }
+    flags |= MB_TASKMODAL;
 
     // Show dialog
     int result = MessageBoxW(parent ? static_cast<HWND>(parent->GetNativePtr()) : nullptr, String(text).GetText(), String(caption).GetText(), flags);
@@ -595,7 +614,7 @@ bool WindowsPlatform::Init()
 {
     if (Win32Platform::Init())
         return true;
-   
+
     // Init console output (engine is linked with /SUBSYSTEM:WINDOWS so it lacks of proper console output on Windows)
     if (CommandLine::Options.Std)
     {
@@ -625,10 +644,18 @@ bool WindowsPlatform::Init()
         return true;
     }
 
-    // Set lowest possible timer resolution for previous Windows versions
-    if (VersionMajor < 10 || (VersionMajor == 10 && VersionBuild < 17134))
+    // Set the lowest possible timer resolution
+    const HMODULE ntdll = LoadLibraryW(L"ntdll.dll");
+    if (ntdll)
     {
-        timeBeginPeriod(1);
+        typedef LONG (WIN_API_CALLCONV *NtSetTimerResolution)(ULONG DesiredResolution, unsigned char SetResolution, ULONG* CurrentResolution);
+        const NtSetTimerResolution ntSetTimerResolution = (NtSetTimerResolution)GetProcAddress(ntdll, "NtSetTimerResolution");
+        if (ntSetTimerResolution)
+        {
+            ULONG currentResolution;
+            ntSetTimerResolution(1, TRUE, &currentResolution);
+        }
+        ::FreeLibrary(ntdll);
     }
 
     DWORD tmp;
@@ -647,10 +674,12 @@ bool WindowsPlatform::Init()
     }
 
     // Get user name string
+    String userName;
     if (GetUserNameW(buffer, &tmp))
     {
-        UserName = String(buffer);
+        userName = String(buffer);
     }
+    OnPlatformUserAdd(New<User>(userName));
 
     WindowsInput::Init();
 
@@ -794,11 +823,6 @@ String WindowsPlatform::GetComputerName()
     return ComputerName;
 }
 
-String WindowsPlatform::GetUserName()
-{
-    return UserName;
-}
-
 bool WindowsPlatform::GetHasFocus()
 {
     DWORD foregroundProcess;
@@ -816,14 +840,26 @@ void WindowsPlatform::OpenUrl(const StringView& url)
     ::ShellExecuteW(nullptr, TEXT("open"), *url, nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+Float2 WindowsPlatform::GetMousePosition()
+{
+    POINT cursorPos;
+    GetCursorPos(&cursorPos);
+    return Float2((float)cursorPos.x, (float)cursorPos.y);
+}
+
+void WindowsPlatform::SetMousePosition(const Float2& pos)
+{
+    ::SetCursorPos((int)pos.X, (int)pos.Y);
+}
+
 struct GetMonitorBoundsData
 {
-    Vector2 Pos;
+    Float2 Pos;
     Rectangle Result;
 
-    GetMonitorBoundsData(const Vector2& pos)
+    GetMonitorBoundsData(const Float2& pos)
         : Pos(pos)
-        , Result(Vector2::Zero, WindowsPlatform::GetDesktopSize())
+        , Result(Float2::Zero, WindowsPlatform::GetDesktopSize())
     {
     }
 };
@@ -844,16 +880,16 @@ BOOL CALLBACK EnumMonitorSize(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMoni
     return TRUE;
 }
 
-Rectangle WindowsPlatform::GetMonitorBounds(const Vector2& screenPos)
+Rectangle WindowsPlatform::GetMonitorBounds(const Float2& screenPos)
 {
     GetMonitorBoundsData data(screenPos);
     EnumDisplayMonitors(nullptr, nullptr, EnumMonitorSize, reinterpret_cast<LPARAM>(&data));
     return data.Result;
 }
 
-Vector2 WindowsPlatform::GetDesktopSize()
+Float2 WindowsPlatform::GetDesktopSize()
 {
-    return Vector2(
+    return Float2(
         static_cast<float>(GetSystemMetrics(SM_CXSCREEN)),
         static_cast<float>(GetSystemMetrics(SM_CYSCREEN))
     );
@@ -909,7 +945,7 @@ bool WindowsPlatform::GetEnvironmentVariable(const String& name, String& value)
     DWORD result = GetEnvironmentVariableW(*name, buffer, bufferSize);
     if (result == 0)
     {
-        LOG_WIN32_LAST_ERROR;
+        //LOG_WIN32_LAST_ERROR;
         return true;
     }
     if (bufferSize < result)
@@ -939,54 +975,12 @@ bool WindowsPlatform::SetEnvironmentVariable(const String& name, const String& v
     return false;
 }
 
-int32 WindowsPlatform::StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow, bool waitForEnd)
-{
-    // Info
-    LOG(Info, "Command: {0} {1}", filename, args);
-    if (workingDir.HasChars())
-    {
-        LOG(Info, "Working directory: {0}", workingDir);
-    }
-
-    String filenameString(filename);
-
-    SHELLEXECUTEINFOW shExecInfo = { 0 };
-    shExecInfo.cbSize = sizeof(SHELLEXECUTEINFOW);
-    shExecInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
-    shExecInfo.lpFile = filenameString.GetText();
-    shExecInfo.lpParameters = args.HasChars() ? args.Get() : nullptr;
-    shExecInfo.lpDirectory = workingDir.HasChars() ? workingDir.Get() : nullptr;
-    shExecInfo.nShow = hiddenWindow ? SW_HIDE : SW_SHOW;
-    if (ShellExecuteExW(&shExecInfo) == FALSE)
-    {
-        LOG(Warning, "Cannot start process '{0}' with arguments '{2}'. Error code: {1:x}", filename, (int64)GetLastError(), args);
-        return 1;
-    }
-
-    int32 result = 0;
-    if (waitForEnd)
-    {
-        WaitForSingleObject(shExecInfo.hProcess, INFINITE);
-        DWORD exitCode;
-        if (GetExitCodeProcess(shExecInfo.hProcess, &exitCode) != 0)
-            result = exitCode;
-        CloseHandle(shExecInfo.hProcess);
-    }
-
-    return result;
-}
-
-int32 WindowsPlatform::RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow)
-{
-    return RunProcess(cmdLine, workingDir, Dictionary<String, String>(), hiddenWindow);
-}
-
 bool IsProcRunning(HANDLE handle)
 {
     return WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
 }
 
-void ReadPipe(HANDLE pipe, Array<char>& rawData, Array<Char>& logData, LogType logType)
+void ReadPipe(HANDLE pipe, Array<char>& rawData, Array<Char>& logData, LogType logType, CreateProcessSettings& settings)
 {
     // Check if any data is ready to read
     DWORD bytesAvailable = 0;
@@ -1008,165 +1002,185 @@ void ReadPipe(HANDLE pipe, Array<char>& rawData, Array<Char>& logData, LogType l
             // Log contents
             logData.Clear();
             logData.Resize(rawData.Count() + 1);
-            StringUtils::ConvertANSI2UTF16(rawData.Get(), logData.Get(), rawData.Count());
+            int32 tmp;
+            StringUtils::ConvertANSI2UTF16(rawData.Get(), logData.Get(), rawData.Count(), tmp);
             logData.Last() = '\0';
-            Log::Logger::Write(logType, StringView(logData.Get(), rawData.Count()));
+            if (settings.LogOutput)
+                Log::Logger::Write(logType, StringView(logData.Get(), rawData.Count()));
+            if (settings.SaveOutput)
+                settings.Output.Add(logData.Get(), rawData.Count());
         }
     }
 }
 
-int32 WindowsPlatform::RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String>& environment, bool hiddenWindow)
+int32 WindowsPlatform::CreateProcess(CreateProcessSettings& settings)
 {
-    const bool captureStdOut = true;
-
-    // Info
-    LOG(Info, "Command: {0}", cmdLine);
-    if (workingDir.HasChars())
+    LOG(Info, "Command: {0} {1}", settings.FileName, settings.Arguments);
+    if (settings.WorkingDirectory.HasChars())
     {
-        LOG(Info, "Working directory: {0}", workingDir);
+        LOG(Info, "Working directory: {0}", settings.WorkingDirectory);
     }
+    const bool captureStdOut = settings.LogOutput || settings.SaveOutput;
 
-    int32 result = -1;
-
-    STARTUPINFOEX startupInfoEx;
-    ZeroMemory(&startupInfoEx, sizeof(startupInfoEx));
-    startupInfoEx.StartupInfo.cb = sizeof(startupInfoEx);
-    if (hiddenWindow)
+    int32 result = 0;
+    if (settings.ShellExecute)
     {
-        startupInfoEx.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
-        startupInfoEx.StartupInfo.wShowWindow |= SW_HIDE | SW_SHOWNOACTIVATE;
-    }
-
-    DWORD dwCreationFlags = NORMAL_PRIORITY_CLASS | DETACHED_PROCESS;
-    if (hiddenWindow)
-        dwCreationFlags |= CREATE_NO_WINDOW;
-
-    Char* environmentStr = nullptr;
-    if (environment.HasItems())
-    {
-        dwCreationFlags |= CREATE_UNICODE_ENVIRONMENT;
-
-        int32 totalLength = 1;
-        for (auto& e : environment)
-            totalLength += e.Key.Length() + e.Value.Length() + 2;
-
-        environmentStr = (Char*)Allocator::Allocate(totalLength * sizeof(Char));
-
-        Char* env = environmentStr;
-        for (auto& e : environment)
+        SHELLEXECUTEINFOW shExecInfo = { 0 };
+        shExecInfo.cbSize = sizeof(SHELLEXECUTEINFOW);
+        shExecInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+        shExecInfo.lpFile = settings.FileName.GetText();
+        shExecInfo.lpParameters = settings.Arguments.HasChars() ? settings.Arguments.Get() : nullptr;
+        shExecInfo.lpDirectory = settings.WorkingDirectory.HasChars() ? settings.WorkingDirectory.Get() : nullptr;
+        shExecInfo.nShow = settings.HiddenWindow ? SW_HIDE : SW_SHOW;
+        if (ShellExecuteExW(&shExecInfo) == FALSE)
         {
-            auto& key = e.Key;
-            auto& value = e.Value;
-            Platform::MemoryCopy(env, key.Get(), key.Length() * sizeof(Char));
-            env += key.Length();
-            *env++ = '=';
-            Platform::MemoryCopy(env, value.Get(), value.Length() * sizeof(Char));
-            env += value.Length();
-            *env++ = 0;
+            result = 1;
+            LOG(Warning, "Cannot start process. Error code: 0x{0:x}", (uint64)GetLastError());
         }
-        *env++ = 0;
-        ASSERT((uint64)env - (uint64)environmentStr == (uint64)(totalLength * sizeof(Char)));
-    }
-
-    HANDLE stdOutRead = nullptr;
-    HANDLE stdErrRead = nullptr;
-    Array<byte> attributeList;
-
-    if (captureStdOut)
-    {
-        dwCreationFlags |= EXTENDED_STARTUPINFO_PRESENT;
-        startupInfoEx.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
-
-        SECURITY_ATTRIBUTES securityAttributes;
-        securityAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
-        securityAttributes.bInheritHandle = TRUE;
-        securityAttributes.lpSecurityDescriptor = nullptr;
-
-        if (!CreatePipe(&stdOutRead, &startupInfoEx.StartupInfo.hStdOutput, &securityAttributes, 0) ||
-            !CreatePipe(&stdErrRead, &startupInfoEx.StartupInfo.hStdError, &securityAttributes, 0))
+        else if (settings.WaitForEnd)
         {
-            LOG(Warning, "CreatePipe failed");
-            return 1;
+            WaitForSingleObject(shExecInfo.hProcess, INFINITE);
+            DWORD exitCode;
+            if (GetExitCodeProcess(shExecInfo.hProcess, &exitCode) != 0)
+                result = exitCode;
+            CloseHandle(shExecInfo.hProcess);
+        }
+    }
+    else
+    {
+        result = -1;
+        const String cmdLine = settings.FileName + TEXT(" ") + settings.Arguments;
+
+        STARTUPINFOEX startupInfoEx;
+        ZeroMemory(&startupInfoEx, sizeof(startupInfoEx));
+        startupInfoEx.StartupInfo.cb = sizeof(startupInfoEx);
+        if (settings.HiddenWindow)
+        {
+            startupInfoEx.StartupInfo.dwFlags |= STARTF_USESHOWWINDOW;
+            startupInfoEx.StartupInfo.wShowWindow |= SW_HIDE | SW_SHOWNOACTIVATE;
         }
 
-        SIZE_T bufferSize = 0;
-        if (!InitializeProcThreadAttributeList(nullptr, 1, 0, &bufferSize) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        DWORD dwCreationFlags = NORMAL_PRIORITY_CLASS | DETACHED_PROCESS;
+        if (settings.HiddenWindow)
+            dwCreationFlags |= CREATE_NO_WINDOW;
+
+        Char* environmentStr = nullptr;
+        if (settings.Environment.HasItems())
         {
-            attributeList.Resize((int32)bufferSize);
-            startupInfoEx.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)attributeList.Get();
-            if (!InitializeProcThreadAttributeList(startupInfoEx.lpAttributeList, 1, 0, &bufferSize))
+            dwCreationFlags |= CREATE_UNICODE_ENVIRONMENT;
+
+            int32 totalLength = 1;
+            for (auto& e : settings.Environment)
+                totalLength += e.Key.Length() + e.Value.Length() + 2;
+
+            environmentStr = (Char*)Allocator::Allocate(totalLength * sizeof(Char));
+
+            Char* env = environmentStr;
+            for (auto& e : settings.Environment)
             {
-                LOG(Warning, "InitializeProcThreadAttributeList failed");
+                auto& key = e.Key;
+                auto& value = e.Value;
+                Platform::MemoryCopy(env, key.Get(), key.Length() * sizeof(Char));
+                env += key.Length();
+                *env++ = '=';
+                Platform::MemoryCopy(env, value.Get(), value.Length() * sizeof(Char));
+                env += value.Length();
+                *env++ = 0;
+            }
+            *env++ = 0;
+            ASSERT((uint64)env - (uint64)environmentStr == (uint64)(totalLength * sizeof(Char)));
+        }
+
+        HANDLE stdOutRead = nullptr;
+        HANDLE stdErrRead = nullptr;
+
+        if (captureStdOut)
+        {
+            dwCreationFlags |= EXTENDED_STARTUPINFO_PRESENT;
+            startupInfoEx.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+            SECURITY_ATTRIBUTES securityAttributes;
+            securityAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+            securityAttributes.bInheritHandle = TRUE;
+            securityAttributes.lpSecurityDescriptor = nullptr;
+
+            if (!CreatePipe(&stdOutRead, &startupInfoEx.StartupInfo.hStdOutput, &securityAttributes, 0) ||
+                !CreatePipe(&stdErrRead, &startupInfoEx.StartupInfo.hStdError, &securityAttributes, 0))
+            {
+                LOG(Warning, "CreatePipe failed");
+                return 1;
+            }
+
+            SIZE_T bufferSize = 0;
+            if (!InitializeProcThreadAttributeList(nullptr, 1, 0, &bufferSize) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+            {
+                startupInfoEx.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)Allocator::Allocate(bufferSize);
+                if (!InitializeProcThreadAttributeList(startupInfoEx.lpAttributeList, 1, 0, &bufferSize))
+                {
+                    LOG(Warning, "InitializeProcThreadAttributeList failed");
+                    goto ERROR_EXIT;
+                }
+            }
+
+            HANDLE inheritHandles[2] = { startupInfoEx.StartupInfo.hStdOutput, startupInfoEx.StartupInfo.hStdError };
+            if (!UpdateProcThreadAttribute(startupInfoEx.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritHandles, sizeof(inheritHandles), nullptr, nullptr))
+            {
+                LOG(Warning, "UpdateProcThreadAttribute failed");
                 goto ERROR_EXIT;
             }
         }
 
-        HANDLE inheritHandles[2] = { startupInfoEx.StartupInfo.hStdOutput, startupInfoEx.StartupInfo.hStdError };
-        if (!UpdateProcThreadAttribute(startupInfoEx.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritHandles, sizeof(inheritHandles), nullptr, nullptr))
+        // Create the process
+        PROCESS_INFORMATION procInfo;
+        if (!CreateProcessW(nullptr, const_cast<LPWSTR>(cmdLine.GetText()), nullptr, nullptr, TRUE, dwCreationFlags, (LPVOID)environmentStr, settings.WorkingDirectory.HasChars() ? settings.WorkingDirectory.Get() : nullptr, &startupInfoEx.StartupInfo, &procInfo))
         {
-            LOG(Warning, "UpdateProcThreadAttribute failed");
+            LOG(Warning, "Cannot start process. Error code: 0x{0:x}", (uint64)GetLastError());
             goto ERROR_EXIT;
         }
-    }
 
-    // Create the process
-    PROCESS_INFORMATION procInfo;
-    if (!CreateProcessW(nullptr, const_cast<LPWSTR>(String(cmdLine).GetText()), nullptr, nullptr, TRUE, dwCreationFlags, (LPVOID)environmentStr, workingDir.HasChars() ? workingDir.Get() : nullptr, &startupInfoEx.StartupInfo, &procInfo))
-    {
-        LOG(Warning, "Cannot start process '{0}'. Error code: 0x{1:x}", cmdLine, static_cast<int64>(GetLastError()));
-        goto ERROR_EXIT;
-    }
-
-    if (environmentStr)
-        Allocator::Free(environmentStr);
-
-    if (stdOutRead != nullptr)
-    {
-        // Keep reading std output and std error streams until process is running
-        Array<char> rawData;
-        Array<Char> logData;
-        do
+        if (stdOutRead != nullptr)
         {
-            ReadPipe(stdOutRead, rawData, logData, LogType::Info);
-            ReadPipe(stdErrRead, rawData, logData, LogType::Error);
-            Sleep(1);
-        } while (IsProcRunning(procInfo.hProcess));
-        ReadPipe(stdOutRead, rawData, logData, LogType::Info);
-        ReadPipe(stdErrRead, rawData, logData, LogType::Error);
-    }
-    else
-    {
-        WaitForSingleObject(procInfo.hProcess, INFINITE);
-    }
+            // Keep reading std output and std error streams until process is running
+            Array<char> rawData;
+            Array<Char> logData;
+            do
+            {
+                ReadPipe(stdOutRead, rawData, logData, LogType::Info, settings);
+                ReadPipe(stdErrRead, rawData, logData, LogType::Error, settings);
+                Sleep(1);
+            } while (IsProcRunning(procInfo.hProcess));
+            ReadPipe(stdOutRead, rawData, logData, LogType::Info, settings);
+            ReadPipe(stdErrRead, rawData, logData, LogType::Error, settings);
+        }
+        else
+        {
+            WaitForSingleObject(procInfo.hProcess, INFINITE);
+        }
 
-    DWORD exitCode;
-    if (GetExitCodeProcess(procInfo.hProcess, &exitCode) != 0)
-        result = exitCode;
+        DWORD exitCode;
+        if (GetExitCodeProcess(procInfo.hProcess, &exitCode) != 0)
+            result = exitCode;
 
-    CloseHandle(procInfo.hProcess);
-    CloseHandle(procInfo.hThread);
+        CloseHandle(procInfo.hProcess);
+        CloseHandle(procInfo.hThread);
 
-    // Cleanup
-ERROR_EXIT:
-    if (startupInfoEx.StartupInfo.hStdOutput != nullptr)
-    {
-        CloseHandle(startupInfoEx.StartupInfo.hStdOutput);
-    }
-    if (startupInfoEx.StartupInfo.hStdError != nullptr)
-    {
-        CloseHandle(startupInfoEx.StartupInfo.hStdError);
-    }
-    if (stdOutRead != nullptr)
-    {
-        CloseHandle(stdOutRead);
-    }
-    if (stdErrRead != nullptr)
-    {
-        CloseHandle(stdErrRead);
-    }
-    if (startupInfoEx.lpAttributeList != nullptr)
-    {
-        DeleteProcThreadAttributeList(startupInfoEx.lpAttributeList);
+        // Cleanup
+    ERROR_EXIT:
+        if (startupInfoEx.StartupInfo.hStdOutput != nullptr)
+            CloseHandle(startupInfoEx.StartupInfo.hStdOutput);
+        if (startupInfoEx.StartupInfo.hStdError != nullptr)
+            CloseHandle(startupInfoEx.StartupInfo.hStdError);
+        if (stdOutRead != nullptr)
+            CloseHandle(stdOutRead);
+        if (stdErrRead != nullptr)
+            CloseHandle(stdErrRead);
+        if (startupInfoEx.lpAttributeList != nullptr)
+        {
+            DeleteProcThreadAttributeList(startupInfoEx.lpAttributeList);
+            Allocator::Free(startupInfoEx.lpAttributeList);
+        }
+        if (environmentStr)
+            Allocator::Free(environmentStr);
     }
 
     return result;
@@ -1187,11 +1201,8 @@ void* WindowsPlatform::LoadLibrary(const Char* filename)
         folder = StringView::Empty;
     if (folder.HasChars())
     {
-        Char& end = ((Char*)folder.Get())[folder.Length()];
-        const Char c = end;
-        end = 0;
-        SetDllDirectoryW(*folder);
-        end = c;
+        const String folderNullTerminated(folder);
+        AddDllDirectory(folderNullTerminated.Get());
     }
 
     // Avoiding windows dialog boxes if missing
@@ -1199,7 +1210,10 @@ void* WindowsPlatform::LoadLibrary(const Char* filename)
     DWORD prevErrorMode = 0;
     const BOOL hasErrorMode = SetThreadErrorMode(errorMode, &prevErrorMode);
 
-    // Load the DLL
+    // Ensure that dll is properly searched
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
+
+    // Load the library
     void* handle = ::LoadLibraryW(filename);
     if (!handle)
     {
@@ -1210,10 +1224,6 @@ void* WindowsPlatform::LoadLibrary(const Char* filename)
     {
         SetThreadErrorMode(prevErrorMode, nullptr);
     }
-    if (folder.HasChars())
-    {
-        SetDllDirectoryW(nullptr);
-    }
 
 #if CRASH_LOG_ENABLE
     // Refresh modules info during next stack trace collecting to have valid debug symbols information
@@ -1221,6 +1231,7 @@ void* WindowsPlatform::LoadLibrary(const Char* filename)
     if (folder.HasChars() && !SymbolsPath.Contains(folder))
     {
         SymbolsPath.Add(folder);
+        SymbolsPath.Last().Replace('/', '\\');
         OnSymbolsPathModified();
     }
     DbgHelpUnlock();
@@ -1229,10 +1240,11 @@ void* WindowsPlatform::LoadLibrary(const Char* filename)
     return handle;
 }
 
+#if CRASH_LOG_ENABLE
+
 Array<PlatformBase::StackFrame> WindowsPlatform::GetStackFrames(int32 skipCount, int32 maxDepth, void* context)
 {
     Array<StackFrame> result;
-#if CRASH_LOG_ENABLE
     DbgHelpLock();
 
     // Initialize
@@ -1358,11 +1370,8 @@ Array<PlatformBase::StackFrame> WindowsPlatform::GetStackFrames(int32 skipCount,
     }
 
     DbgHelpUnlock();
-#endif
     return result;
 }
-
-#if CRASH_LOG_ENABLE
 
 void WindowsPlatform::CollectCrashData(const String& crashDataFolder, void* context)
 {

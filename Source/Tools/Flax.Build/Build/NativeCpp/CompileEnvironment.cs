@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -27,10 +27,41 @@ namespace Flax.Build.NativeCpp
     }
 
     /// <summary>
+    /// The compilation optimization hint.
+    /// </summary>
+    public enum CppVersion
+    {
+        /// <summary>
+        /// C++14
+        /// </summary>
+        Cpp14,
+
+        /// <summary>
+        /// C++17
+        /// </summary>
+        Cpp17,
+
+        /// <summary>
+        /// C++20
+        /// </summary>
+        Cpp20,
+
+        /// <summary>
+        /// The latest version supported by the compiler.
+        /// </summary>
+        Latest,
+    }
+
+    /// <summary>
     /// The C++ compilation environment required to build source files in the native modules.
     /// </summary>
     public class CompileEnvironment : ICloneable
     {
+        /// <summary>
+        /// C++ standard version to use for compilation.
+        /// </summary>
+        public CppVersion CppVersion = CppVersion.Cpp14;
+
         /// <summary>
         /// Selects a predefined set of options that affect the size and speed of generated code.
         /// </summary>
@@ -119,18 +150,24 @@ namespace Flax.Build.NativeCpp
         /// <summary>
         /// The collection of defines with preprocessing symbol for a source files.
         /// </summary>
-        public readonly List<string> PreprocessorDefinitions = new List<string>();
+        public readonly HashSet<string> PreprocessorDefinitions = new HashSet<string>();
 
         /// <summary>
         /// The additional paths to add to the list of directories searched for include files.
         /// </summary>
         public readonly List<string> IncludePaths = new List<string>();
 
+        /// <summary>
+        /// The collection of custom arguments to pass to the compilator.
+        /// </summary>
+        public readonly HashSet<string> CustomArgs = new HashSet<string>();
+
         /// <inheritdoc />
         public object Clone()
         {
             var clone = new CompileEnvironment
             {
+                CppVersion = CppVersion,
                 FavorSizeOrSpeed = FavorSizeOrSpeed,
                 EnableExceptions = EnableExceptions,
                 RuntimeTypeInfo = RuntimeTypeInfo,
@@ -151,6 +188,7 @@ namespace Flax.Build.NativeCpp
             };
             clone.PreprocessorDefinitions.AddRange(PreprocessorDefinitions);
             clone.IncludePaths.AddRange(IncludePaths);
+            clone.CustomArgs.AddRange(CustomArgs);
             return clone;
         }
     }

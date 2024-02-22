@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #if PLATFORM_ANDROID
 
 #include "Engine/Platform/Unix/UnixPlatform.h"
+#include <pthread.h>
 
 struct android_app;
 
@@ -83,7 +84,10 @@ public:
     static int32 GetCacheLineSize();
     static MemoryStats GetMemoryStats();
     static ProcessMemoryStats GetProcessMemoryStats();
-    static uint64 GetCurrentThreadID();
+    static uint64 GetCurrentThreadID()
+    {
+        return static_cast<uint64>(pthread_self());
+    }
     static void SetThreadPriority(ThreadPriority priority);
     static void SetThreadAffinityMask(uint64 affinityMask);
     static void Sleep(int32 milliseconds);
@@ -110,27 +114,25 @@ public:
     static ScreenOrientationType GetScreenOrientationType();
     static String GetUserLocaleName();
     static String GetComputerName();
-    static String GetUserName();
     static bool GetHasFocus();
     static bool GetIsPaused();
     static bool CanOpenUrl(const StringView& url);
     static void OpenUrl(const StringView& url);
-    static Vector2 GetMousePosition();
-    static void SetMousePosition(const Vector2& pos);
-	static Rectangle GetMonitorBounds(const Vector2& screenPos);
-	static Vector2 GetDesktopSize();
-	static Rectangle GetVirtualDesktopBounds();
-	static String GetMainDirectory();
-	static String GetExecutableFilePath();
-	static Guid GetUniqueDeviceId();
+    static Float2 GetMousePosition();
+    static void SetMousePosition(const Float2& pos);
+    static Float2 GetDesktopSize();
+    static String GetMainDirectory();
+    static String GetExecutableFilePath();
+    static Guid GetUniqueDeviceId();
     static String GetWorkingDirectory();
-	static bool SetWorkingDirectory(const String& path);
+    static bool SetWorkingDirectory(const String& path);
     static Window* CreateWindow(const CreateWindowSettings& settings);
     static bool GetEnvironmentVariable(const String& name, String& value);
     static bool SetEnvironmentVariable(const String& name, const String& value);
     static void* LoadLibrary(const Char* filename);
     static void FreeLibrary(void* handle);
     static void* GetProcAddress(void* handle, const char* symbol);
+    static Array<StackFrame, HeapAllocation> GetStackFrames(int32 skipCount = 0, int32 maxDepth = 60, void* context = nullptr);
 };
 
 #endif

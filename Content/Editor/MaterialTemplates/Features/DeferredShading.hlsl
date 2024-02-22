@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 @0// Deferred Shading: Defines
 @1// Deferred Shading: Includes
@@ -25,7 +25,7 @@ void PS_GBuffer(
 #endif
 	)
 {
-	Light = 0;
+	Light = float4(0, 0, 0, 1);
 	
 #if USE_DITHERED_LOD_TRANSITION
 	// LOD masking
@@ -40,7 +40,7 @@ void PS_GBuffer(
 #if MATERIAL_MASKED
 	clip(material.Mask - MATERIAL_MASK_THRESHOLD);
 #endif
-	
+
 #if USE_LIGHTMAP
 	float3 diffuseColor = GetDiffuseColor(material.Color, material.Metalness);
 	float3 specularColor = GetSpecularColor(material.Color, material.Specular, material.Metalness);

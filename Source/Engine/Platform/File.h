@@ -1,19 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
-#if PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS || PLATFORM_UWP || PLATFORM_XBOX_ONE || PLATFORM_XBOX_SCARLETT
 #include "Win32/Win32File.h"
-#elif PLATFORM_UWP
-#include "Win32/Win32File.h"
-#elif PLATFORM_LINUX
+#elif PLATFORM_LINUX || PLATFORM_PS4 || PLATFORM_PS5 || PLATFORM_MAC
 #include "Unix/UnixFile.h"
-#elif PLATFORM_PS4
-#include "Unix/UnixFile.h"
-#elif PLATFORM_XBOX_ONE
-#include "Win32/Win32File.h"
-#elif PLATFORM_XBOX_SCARLETT
-#include "Win32/Win32File.h"
+#elif PLATFORM_IOS
+#include "iOS/iOSFile.h"
 #elif PLATFORM_ANDROID
 #include "Android/AndroidFile.h"
 #elif PLATFORM_SWITCH

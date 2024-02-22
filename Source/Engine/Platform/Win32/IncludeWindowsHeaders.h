@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -55,6 +55,7 @@
 #undef MessageBox
 #undef GetCommandLine
 #undef CreateWindow
+#undef CreateProcess
 #undef SetWindowText
 #undef DrawText
 #undef CreateFont

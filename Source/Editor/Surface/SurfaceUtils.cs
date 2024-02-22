@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -10,6 +10,7 @@ using FlaxEditor.CustomEditors;
 using FlaxEditor.CustomEditors.Elements;
 using FlaxEditor.Scripting;
 using FlaxEditor.Utilities;
+using FlaxEngine.Utilities;
 using FlaxEngine;
 
 namespace FlaxEditor.Surface
@@ -92,7 +93,9 @@ namespace FlaxEditor.Surface
             case MaterialParameterType.GPUTexture: return typeof(GPUTexture);
             case MaterialParameterType.Matrix: return typeof(Matrix);
             case MaterialParameterType.ChannelMask: return typeof(ChannelMask);
+            case MaterialParameterType.GameplayGlobal: return typeof(GameplayGlobals);
             case MaterialParameterType.TextureGroupSampler: return typeof(int);
+            case MaterialParameterType.GlobalSDF: return typeof(object);
             default: throw new ArgumentOutOfRangeException(nameof(type), type, null);
             }
         }
@@ -284,7 +287,7 @@ namespace FlaxEditor.Surface
 
         internal static void DisplayGraphParameters(LayoutElementsContainer layout, GraphParameterData[] data, GetGraphParameterDelegate getter, SetGraphParameterDelegate setter, ValueContainer values, GetGraphParameterDelegate defaultValueGetter = null, CustomPropertySpawnDelegate propertySpawn = null)
         {
-            GroupElement lastGroup = null;
+            CustomEditors.Editors.GenericEditor.OnGroupsBegin();
             for (int i = 0; i < data.Length; i++)
             {
                 ref var e = ref data[i];
@@ -292,23 +295,11 @@ namespace FlaxEditor.Surface
                     continue;
                 var tag = e.Tag;
                 var parameter = e.Parameter;
-                LayoutElementsContainer itemLayout;
 
                 // Editor Display
-                if (e.Display?.Group != null)
-                {
-                    if (lastGroup == null || lastGroup.Panel.HeaderText != e.Display.Group)
-                    {
-                        lastGroup = layout.Group(e.Display.Group);
-                        lastGroup.Panel.Open(false);
-                    }
-                    itemLayout = lastGroup;
-                }
-                else
-                {
-                    lastGroup = null;
-                    itemLayout = layout;
-                }
+                var itemLayout = CustomEditors.Editors.GenericEditor.OnGroup(layout, e.Display);
+                if (itemLayout is GroupElement groupElement)
+                    groupElement.Panel.Open(false);
 
                 // Space
                 if (e.Space != null)
@@ -316,7 +307,7 @@ namespace FlaxEditor.Surface
 
                 // Header
                 if (e.Header != null)
-                    itemLayout.Header(e.Header.Text);
+                    itemLayout.Header(e.Header);
 
                 // Values container
                 var valueType = new ScriptType(e.Type);
@@ -343,6 +334,7 @@ namespace FlaxEditor.Surface
                 else
                     propertySpawn(itemLayout, valueContainer, ref e);
             }
+            CustomEditors.Editors.GenericEditor.OnGroupsEnd();
         }
 
         internal static string GetMethodDisplayName(string methodName)
@@ -414,8 +406,15 @@ namespace FlaxEditor.Surface
 
         internal static bool IsValidVisualScriptType(ScriptType scriptType)
         {
-            if (scriptType.IsGenericType || !scriptType.IsPublic || scriptType.HasAttribute(typeof(HideInEditorAttribute), true))
+            if (!scriptType.IsPublic ||
+                scriptType.HasAttribute(typeof(HideInEditorAttribute), true) ||
+                scriptType.HasAttribute(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), false))
                 return false;
+            if (scriptType.IsGenericType)
+            {
+                // Only Dictionary generic type is valid
+                return scriptType.GetGenericTypeDefinition() == typeof(Dictionary<,>);
+            }
             var managedType = TypeUtils.GetType(scriptType);
             return !TypeUtils.IsDelegate(managedType);
         }
@@ -430,17 +429,14 @@ namespace FlaxEditor.Surface
 
         internal static string GetVisualScriptTypeDescription(ScriptType type)
         {
+            if (type == ScriptType.Null)
+                return "null";
             var sb = new StringBuilder();
             if (type.IsStatic)
                 sb.Append("static ");
             else if (type.IsAbstract)
                 sb.Append("abstract ");
-            sb.Append(type.TypeName);
-
-            var attributes = type.GetAttributes(false);
-            var tooltipAttribute = (TooltipAttribute)attributes.FirstOrDefault(x => x is TooltipAttribute);
-            if (tooltipAttribute != null)
-                sb.Append("\n").Append(tooltipAttribute.Text);
+            sb.Append(Editor.Instance.CodeDocs.GetTooltip(type));
             return sb.ToString();
         }
 
@@ -500,12 +496,60 @@ namespace FlaxEditor.Surface
             }
 
             // Tooltip
-            var attributes = member.GetAttributes();
-            var tooltipAttribute = (TooltipAttribute)attributes.FirstOrDefault(x => x is TooltipAttribute);
-            if (tooltipAttribute != null)
-                sb.Append("\n").Append(tooltipAttribute.Text);
+            var tooltip = Editor.Instance.CodeDocs.GetTooltip(member);
+            if (!string.IsNullOrEmpty(tooltip))
+                sb.Append("\n").Append(tooltip);
 
             return sb.ToString();
+        }
+
+        internal static Double4 GetDouble4(object v, float w = 0.0f)
+        {
+            var value = new Double4(0, 0, 0, w);
+            if (v is Vector2 vec2)
+                value = new Double4(vec2, 0.0f, w);
+            else if (v is Vector3 vec3)
+                value = new Double4(vec3, w);
+            else if (v is Vector4 vec4)
+                value = vec4;
+            else if (v is Float2 float2)
+                value = new Double4(float2, 0.0, w);
+            else if (v is Float3 float3)
+                value = new Double4(float3, w);
+            else if (v is Float4 float4)
+                value = float4;
+            else if (v is Double2 double2)
+                value = new Double4(double2, 0.0, w);
+            else if (v is Double3 double3)
+                value = new Double4(double3, w);
+            else if (v is Double4 double4)
+                value = double4;
+            else if (v is Color col)
+                value = new Double4(col.R, col.G, col.B, col.A);
+            else if (v is float f)
+                value = new Double4(f);
+            else if (v is int i)
+                value = new Double4(i);
+            return value;
+        }
+
+        private static bool AreScriptTypesEqualInner(ScriptType left, ScriptType right)
+        {
+            // Special case for Vector types that use typedefs and might overlap
+            if (left.Type == typeof(Vector2) && (right.Type == typeof(Float2) || right.Type == typeof(Double2)))
+                return true;
+            if (left.Type == typeof(Vector3) && (right.Type == typeof(Float3) || right.Type == typeof(Double3)))
+                return true;
+            if (left.Type == typeof(Vector4) && (right.Type == typeof(Float4) || right.Type == typeof(Double4)))
+                return true;
+            return false;
+        }
+
+        internal static bool AreScriptTypesEqual(ScriptType left, ScriptType right)
+        {
+            if (left == right)
+                return true;
+            return AreScriptTypesEqualInner(left, right) || AreScriptTypesEqualInner(right, left);
         }
     }
 }

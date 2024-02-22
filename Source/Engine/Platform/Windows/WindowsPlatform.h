@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -68,23 +68,22 @@ public:
     static int32 GetDpi();
     static String GetUserLocaleName();
     static String GetComputerName();
-    static String GetUserName();
     static bool GetHasFocus();
     static bool CanOpenUrl(const StringView& url);
     static void OpenUrl(const StringView& url);
-    static Rectangle GetMonitorBounds(const Vector2& screenPos);
-    static Vector2 GetDesktopSize();
+    static Float2 GetMousePosition();
+    static void SetMousePosition(const Float2& pos);
+    static Rectangle GetMonitorBounds(const Float2& screenPos);
+    static Float2 GetDesktopSize();
     static Rectangle GetVirtualDesktopBounds();
     static void GetEnvironmentVariables(Dictionary<String, String, HeapAllocation>& result);
     static bool GetEnvironmentVariable(const String& name, String& value);
     static bool SetEnvironmentVariable(const String& name, const String& value);
-    static int32 StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow = false, bool waitForEnd = false);
-    static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow = true);
-    static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String, HeapAllocation>& environment, bool hiddenWindow = true);
+    static int32 CreateProcess(CreateProcessSettings& settings);
     static Window* CreateWindow(const CreateWindowSettings& settings);
     static void* LoadLibrary(const Char* filename);
-    static Array<StackFrame, HeapAllocation> GetStackFrames(int32 skipCount = 0, int32 maxDepth = 60, void* context = nullptr);
 #if CRASH_LOG_ENABLE
+    static Array<StackFrame, HeapAllocation> GetStackFrames(int32 skipCount = 0, int32 maxDepth = 60, void* context = nullptr);
     static void CollectCrashData(const String& crashDataFolder, void* context = nullptr);
 #endif
 };

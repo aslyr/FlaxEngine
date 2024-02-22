@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -103,8 +103,8 @@ namespace ShadowsOfMordor
         /// </summary>
         struct HemisphereData
         {
-            Vector3 Position;
-            Vector3 Normal;
+            Float3 Position;
+            Float3 Normal;
 
             int16 TexelX;
             int16 TexelY;

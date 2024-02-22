@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "GPUContext.h"
 #include "GPUDevice.h"
@@ -6,7 +6,7 @@
 #include "Textures/GPUTexture.h"
 
 GPUContext::GPUContext(GPUDevice* device)
-    : PersistentScriptingObject(ScriptingObjectSpawnParams(Guid::New(), TypeInitializer))
+    : ScriptingObject(ScriptingObjectSpawnParams(Guid::New(), TypeInitializer))
     , _device(device)
 {
 }
@@ -62,4 +62,12 @@ void GPUContext::Draw(GPUTextureView* rt)
     BindSR(0, rt);
     SetState(_device->GetCopyLinearPS());
     DrawFullscreenTriangle();
+}
+
+void GPUContext::SetResourceState(GPUResource* resource, uint64 state, int32 subresource)
+{
+}
+
+void GPUContext::ForceRebindDescriptors()
+{
 }

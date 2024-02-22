@@ -1,9 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ExponentialHeightFog.h"
 #include "DirectionalLight.h"
 #include "Engine/Core/Math/Color.h"
 #include "Engine/Content/Content.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Renderer/RenderList.h"
 #include "Engine/Serialization/Serialization.h"
 #include "Engine/Graphics/RenderView.h"
@@ -16,6 +17,9 @@
 ExponentialHeightFog::ExponentialHeightFog(const SpawnParams& params)
     : Actor(params)
 {
+    _drawNoCulling = 1;
+    _drawCategory = SceneRendering::PreRender;
+
     // Load shader
     _shader = Content::LoadAsyncInternal<Shader>(TEXT("Shaders/Fog"));
     if (_shader == nullptr)
@@ -31,7 +35,11 @@ void ExponentialHeightFog::Draw(RenderContext& renderContext)
 {
     // Render only when shader is valid and fog can be rendered
     // Do not render exponential fog in orthographic views
-    if ((renderContext.View.Flags & ViewFlags::Fog) != 0 && _shader && _shader->IsLoaded() && renderContext.View.IsPerspectiveProjection())
+    if (EnumHasAnyFlags(renderContext.View.Flags, ViewFlags::Fog)
+        && EnumHasAnyFlags(renderContext.View.Pass, DrawPass::GBuffer)
+        && _shader
+        && _shader->IsLoaded()
+        && renderContext.View.IsPerspectiveProjection())
     {
         // Prepare
         if (_psFog.States[0] == nullptr)
@@ -116,14 +124,14 @@ bool ExponentialHeightFog::HasContentLoaded() const
     return _shader && _shader->IsLoaded();
 }
 
-bool ExponentialHeightFog::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool ExponentialHeightFog::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     return false;
 }
 
 void ExponentialHeightFog::GetVolumetricFogOptions(VolumetricFogOptions& result) const
 {
-    const float height = GetPosition().Y;
+    const float height = (float)GetPosition().Y;
     const float density = FogDensity / 1000.0f;
     const float heightFalloff = FogHeightFalloff / 1000.0f;
 
@@ -133,18 +141,18 @@ void ExponentialHeightFog::GetVolumetricFogOptions(VolumetricFogOptions& result)
     result.Emissive = VolumetricFogEmissive * (1.0f / 100.0f);
     result.ExtinctionScale = VolumetricFogExtinctionScale;
     result.Distance = VolumetricFogDistance;
-    result.FogParameters = Vector4(density, height, heightFalloff, 0.0f);
+    result.FogParameters = Float4(density, height, heightFalloff, 0.0f);
 }
 
 void ExponentialHeightFog::GetExponentialHeightFogData(const RenderView& view, ExponentialHeightFogData& result) const
 {
-    const float height = GetPosition().Y;
+    const float height = (float)GetPosition().Y;
     const float density = FogDensity / 1000.0f;
     const float heightFalloff = FogHeightFalloff / 1000.0f;
     const float viewHeight = view.Position.Y;
     const bool useDirectionalLightInscattering = DirectionalInscatteringLight != nullptr;
 
-    result.FogInscatteringColor = FogInscatteringColor.ToVector3();
+    result.FogInscatteringColor = FogInscatteringColor.ToFloat3();
     result.FogMinOpacity = 1.0f - FogMaxOpacity;
     result.FogDensity = density;
     result.FogHeight = height;
@@ -156,14 +164,14 @@ void ExponentialHeightFog::GetExponentialHeightFogData(const RenderView& view, E
     if (useDirectionalLightInscattering)
     {
         result.InscatteringLightDirection = -DirectionalInscatteringLight->GetDirection();
-        result.DirectionalInscatteringColor = DirectionalInscatteringColor.ToVector3();
+        result.DirectionalInscatteringColor = DirectionalInscatteringColor.ToFloat3();
         result.DirectionalInscatteringExponent = Math::Clamp(DirectionalInscatteringExponent, 0.000001f, 1000.0f);
         result.DirectionalInscatteringStartDistance = Math::Min(DirectionalInscatteringStartDistance, view.Far - 1.0f);
     }
     else
     {
-        result.InscatteringLightDirection = Vector3::Zero;
-        result.DirectionalInscatteringColor = Vector3::Zero;
+        result.InscatteringLightDirection = Float3::Zero;
+        result.DirectionalInscatteringColor = Float3::Zero;
         result.DirectionalInscatteringExponent = 4.0f;
         result.DirectionalInscatteringStartDistance = 0.0f;
     }
@@ -203,7 +211,7 @@ void ExponentialHeightFog::DrawFog(GPUContext* context, RenderContext& renderCon
 
 void ExponentialHeightFog::OnEnable()
 {
-    GetSceneRendering()->AddCommonNoCulling(this);
+    GetSceneRendering()->AddActor(this, _sceneRenderingKey);
 #if USE_EDITOR
     GetSceneRendering()->AddViewportIcon(this);
 #endif
@@ -217,7 +225,7 @@ void ExponentialHeightFog::OnDisable()
 #if USE_EDITOR
     GetSceneRendering()->RemoveViewportIcon(this);
 #endif
-    GetSceneRendering()->RemoveCommonNoCulling(this);
+    GetSceneRendering()->RemoveActor(this, _sceneRenderingKey);
 
     // Base
     Actor::OnDisable();

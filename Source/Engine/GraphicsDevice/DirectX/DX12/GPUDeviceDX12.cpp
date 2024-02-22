@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -14,7 +14,6 @@
 #include "Engine/Engine/Engine.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Graphics/RenderTask.h"
-#include "Engine/Graphics/Async/GPUTasksExecutor.h"
 #include "Engine/GraphicsDevice/DirectX/RenderToolsDX.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Core/Log.h"
@@ -78,7 +77,7 @@ GPUDevice* GPUDeviceDX12::Create()
 #endif
 #ifdef __ID3D12DeviceRemovedExtendedDataSettings_FWD_DEFINED__
     ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dredSettings;
-    VALIDATE_DIRECTX_RESULT(D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings)));
+    VALIDATE_DIRECTX_CALL(D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings)));
     if (dredSettings)
     {
         // Turn on AutoBreadcrumbs and Page Fault reporting
@@ -90,7 +89,15 @@ GPUDevice* GPUDeviceDX12::Create()
 
     // Create DXGI factory (CreateDXGIFactory2 is supported on Windows 8.1 or newer)
     IDXGIFactory4* dxgiFactory;
-    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+    IDXGIFactory6* dxgiFactory6;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory6));
+    if (hr == S_OK)
+        dxgiFactory = dxgiFactory6;
+    else
+    {
+        dxgiFactory6 = nullptr;
+        hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+    }
     if (hr != S_OK)
     {
         LOG(Error, "Cannot create DXGI adapter. Error code: {0:x}.", hr);
@@ -98,6 +105,7 @@ GPUDevice* GPUDeviceDX12::Create()
     }
 
     // Enumerate the DXGIFactory's adapters
+    int32 selectedAdapterIndex = -1;
     Array<GPUAdapterDX> adapters;
     IDXGIAdapter* tempAdapter;
     for (uint32 index = 0; dxgiFactory->EnumAdapters(index, &tempAdapter) != DXGI_ERROR_NOT_FOUND; index++)
@@ -108,7 +116,7 @@ GPUDevice* GPUDeviceDX12::Create()
         {
             adapter.Index = index;
             adapter.MaxFeatureLevel = D3D_FEATURE_LEVEL_12_0;
-            VALIDATE_DIRECTX_RESULT(tempAdapter->GetDesc(&adapter.Description));
+            VALIDATE_DIRECTX_CALL(tempAdapter->GetDesc(&adapter.Description));
             uint32 outputs = RenderToolsDX::CountAdapterOutputs(tempAdapter);
 
             // Send that info to the log
@@ -119,8 +127,39 @@ GPUDevice* GPUDeviceDX12::Create()
         }
     }
 
+    // Find the best performing adapter and prefer using it instead of the first device
+    const auto gpuPreference = DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE;
+    if (dxgiFactory6 != nullptr && selectedAdapterIndex == -1)
+    {
+        if (dxgiFactory6->EnumAdapterByGpuPreference(0, gpuPreference, IID_PPV_ARGS(&tempAdapter)) != DXGI_ERROR_NOT_FOUND)
+        {
+            GPUAdapterDX adapter;
+            if (tempAdapter && CheckDX12Support(tempAdapter))
+            {
+                DXGI_ADAPTER_DESC desc;
+                VALIDATE_DIRECTX_CALL(tempAdapter->GetDesc(&desc));
+                for (int i = 0; i < adapters.Count(); i++)
+                {
+                    if (adapters[i].Description.AdapterLuid.LowPart == desc.AdapterLuid.LowPart &&
+                        adapters[i].Description.AdapterLuid.HighPart == desc.AdapterLuid.HighPart)
+                    {
+                        selectedAdapterIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Select the adapter to use
-    GPUAdapterDX selectedAdapter = adapters[0];
+    if (selectedAdapterIndex < 0)
+        selectedAdapterIndex = 0;
+    if (adapters.Count() == 0 || selectedAdapterIndex >= adapters.Count())
+    {
+        LOG(Error, "Failed to find valid DirectX adapter!");
+        return nullptr;
+    }
+    GPUAdapterDX selectedAdapter = adapters[selectedAdapterIndex];
     uint32 vendorId = 0;
     if (CommandLine::Options.NVIDIA)
         vendorId = GPU_VENDOR_ID_NVIDIA;
@@ -215,7 +254,7 @@ bool GPUDeviceDX12::Init()
 #if PLATFORM_XBOX_SCARLETT
     params.DisableDXR = TRUE;
 #endif
-    VALIDATE_DIRECTX_RESULT(D3D12XboxCreateDevice(nullptr, &params, IID_GRAPHICS_PPV_ARGS(&_device)));
+    VALIDATE_DIRECTX_CALL(D3D12XboxCreateDevice(nullptr, &params, IID_GRAPHICS_PPV_ARGS(&_device)));
 
     // Setup adapter
     D3D12XBOX_GPU_HARDWARE_CONFIGURATION hwConfig = {};
@@ -251,8 +290,8 @@ bool GPUDeviceDX12::Init()
     updateFrameEvents();
 
 #if PLATFORM_GDK
-    GDKPlatform::OnSuspend.Bind<GPUDeviceDX12, &GPUDeviceDX12::OnSuspend>(this);
-    GDKPlatform::OnResume.Bind<GPUDeviceDX12, &GPUDeviceDX12::OnResume>(this);
+    GDKPlatform::Suspended.Bind<GPUDeviceDX12, &GPUDeviceDX12::OnSuspended>(this);
+    GDKPlatform::Resumed.Bind<GPUDeviceDX12, &GPUDeviceDX12::OnResumed>(this);
 #endif
 #else
     // Get DXGI adapter
@@ -264,26 +303,28 @@ bool GPUDeviceDX12::Init()
         return true;
     }
     UpdateOutputs(adapter);
+
+    ComPtr<IDXGIFactory5> factory5;
+    _factoryDXGI->QueryInterface(IID_PPV_ARGS(&factory5));
+    if (factory5)
     {
-        ComPtr<IDXGIFactory5> factory5;
-        _factoryDXGI->QueryInterface(IID_PPV_ARGS(&factory5));
-        if (factory5)
-        {
-            BOOL allowTearing;
-            if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))) && allowTearing)
-            {
-                AllowTearing = true;
-            }
-        }
+        BOOL allowTearing;
+        if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))
+            && allowTearing
+#if PLATFORM_WINDOWS
+            && GetModuleHandleA("renderdoc.dll") == nullptr // Disable tearing with RenderDoc (prevents crashing)
+#endif
+        )
+            AllowTearing = true;
     }
 
     // Create DirectX device
-    VALIDATE_DIRECTX_RESULT(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&_device)));
+    VALIDATE_DIRECTX_CALL(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&_device)));
 
     // Debug Layer
 #if GPU_ENABLE_DIAGNOSTICS
     ComPtr<ID3D12InfoQueue> infoQueue;
-    VALIDATE_DIRECTX_RESULT(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
+    VALIDATE_DIRECTX_CALL(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
     if (infoQueue)
     {
         D3D12_INFO_QUEUE_FILTER filter;
@@ -322,11 +363,11 @@ bool GPUDeviceDX12::Init()
 
     // Spawn some info about the hardware
     D3D12_FEATURE_DATA_D3D12_OPTIONS options;
-    VALIDATE_DIRECTX_RESULT(_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options)));
-    LOG(Info, "Tiled Resources Tier: {0}", options.TiledResourcesTier);
-    LOG(Info, "Resource Binding Tier: {0}", options.ResourceBindingTier);
-    LOG(Info, "Conservative Rasterization Tier: {0}", options.ConservativeRasterizationTier);
-    LOG(Info, "Resource Heap Tier: {0}", options.ResourceHeapTier);
+    VALIDATE_DIRECTX_CALL(_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options)));
+    LOG(Info, "Tiled Resources Tier: {0}", (int32)options.TiledResourcesTier);
+    LOG(Info, "Resource Binding Tier: {0}", (int32)options.ResourceBindingTier);
+    LOG(Info, "Conservative Rasterization Tier: {0}", (int32)options.ConservativeRasterizationTier);
+    LOG(Info, "Resource Heap Tier: {0}", (int32)options.ResourceHeapTier);
 
     // Init device limits
     {
@@ -340,6 +381,7 @@ bool GPUDeviceDX12::Init()
         limits.HasAppendConsumeBuffers = true;
         limits.HasSeparateRenderTargetBlendState = true;
         limits.HasDepthAsSRV = true;
+        limits.HasDepthClip = true;
         limits.HasReadOnlyDepth = true;
         limits.HasMultisampleDepthAsSRV = true;
         limits.HasTypedUAVLoad = options.TypedUAVLoadAdditionalFormats != 0;
@@ -461,8 +503,7 @@ bool GPUDeviceDX12::Init()
     // TODO: maybe create set of different root signatures? for UAVs, for compute, for simple drawing, for post fx?
     {
         // Descriptor tables
-        D3D12_DESCRIPTOR_RANGE r[3];
-        // TODO: separate ranges for pixel/vertex visibility and one shared for all?
+        D3D12_DESCRIPTOR_RANGE r[3]; // SRV+UAV+Sampler
         {
             D3D12_DESCRIPTOR_RANGE& range = r[0];
             range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -489,37 +530,35 @@ bool GPUDeviceDX12::Init()
         }
 
         // Root parameters
-        D3D12_ROOT_PARAMETER rootParameters[5];
+        D3D12_ROOT_PARAMETER rootParameters[GPU_MAX_CB_BINDED + 3];
+        for (int32 i = 0; i < GPU_MAX_CB_BINDED; i++)
         {
-            D3D12_ROOT_PARAMETER& rootParam = rootParameters[0];
+            // CB
+            D3D12_ROOT_PARAMETER& rootParam = rootParameters[DX12_ROOT_SIGNATURE_CB + i];
             rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
             rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-            rootParam.Descriptor.ShaderRegister = 0;
+            rootParam.Descriptor.ShaderRegister = i;
             rootParam.Descriptor.RegisterSpace = 0;
         }
         {
-            D3D12_ROOT_PARAMETER& rootParam = rootParameters[1];
-            rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-            rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-            rootParam.Descriptor.ShaderRegister = 1;
-            rootParam.Descriptor.RegisterSpace = 0;
-        }
-        {
-            D3D12_ROOT_PARAMETER& rootParam = rootParameters[2];
+            // SRVs
+            D3D12_ROOT_PARAMETER& rootParam = rootParameters[DX12_ROOT_SIGNATURE_SR];
             rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             rootParam.DescriptorTable.NumDescriptorRanges = 1;
             rootParam.DescriptorTable.pDescriptorRanges = &r[0];
         }
         {
-            D3D12_ROOT_PARAMETER& rootParam = rootParameters[3];
+            // UAVs
+            D3D12_ROOT_PARAMETER& rootParam = rootParameters[DX12_ROOT_SIGNATURE_UA];
             rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             rootParam.DescriptorTable.NumDescriptorRanges = 1;
             rootParam.DescriptorTable.pDescriptorRanges = &r[1];
         }
         {
-            D3D12_ROOT_PARAMETER& rootParam = rootParameters[4];
+            // Samplers
+            D3D12_ROOT_PARAMETER& rootParam = rootParameters[DX12_ROOT_SIGNATURE_SAMPLER];
             rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
             rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
             rootParam.DescriptorTable.NumDescriptorRanges = 1;
@@ -624,10 +663,10 @@ bool GPUDeviceDX12::Init()
         // Serialize
         ComPtr<ID3DBlob> signature;
         ComPtr<ID3DBlob> error;
-        VALIDATE_DIRECTX_RESULT(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
+        VALIDATE_DIRECTX_CALL(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
 
         // Create
-        VALIDATE_DIRECTX_RESULT(_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&_rootSignature)));
+        VALIDATE_DIRECTX_CALL(_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&_rootSignature)));
     }
 
     // Upload buffer
@@ -796,6 +835,11 @@ GPUSwapChain* GPUDeviceDX12::CreateSwapChain(Window* window)
     return New<GPUSwapChainDX12>(this, window);
 }
 
+GPUConstantBuffer* GPUDeviceDX12::CreateConstantBuffer(uint32 size, const StringView& name)
+{
+    return New<GPUConstantBufferDX12>(this, size, name);
+}
+
 void GPUDeviceDX12::AddResourceToLateRelease(IGraphicsUnknown* resource, uint32 safeFrameCount)
 {
     if (resource == nullptr)
@@ -838,12 +882,12 @@ void GPUDeviceDX12::updateRes2Dispose()
 
 #if PLATFORM_XBOX_SCARLETT || PLATFORM_XBOX_ONE
 
-void GPUDeviceDX12::OnSuspend()
+void GPUDeviceDX12::OnSuspended()
 {
     _commandQueue->GetCommandQueue()->SuspendX(0);
 }
 
-void GPUDeviceDX12::OnResume()
+void GPUDeviceDX12::OnResumed()
 {
     _commandQueue->GetCommandQueue()->ResumeX();
 
@@ -853,14 +897,14 @@ void GPUDeviceDX12::OnResume()
 void GPUDeviceDX12::updateFrameEvents()
 {
     ComPtr<IDXGIDevice1> dxgiDevice;
-    VALIDATE_DIRECTX_RESULT(_device->QueryInterface(IID_GRAPHICS_PPV_ARGS(&dxgiDevice)));
+    VALIDATE_DIRECTX_CALL(_device->QueryInterface(IID_GRAPHICS_PPV_ARGS(&dxgiDevice)));
     ComPtr<IDXGIAdapter> dxgiAdapter;
-    VALIDATE_DIRECTX_RESULT(dxgiDevice->GetAdapter(dxgiAdapter.GetAddressOf()));
+    VALIDATE_DIRECTX_CALL(dxgiDevice->GetAdapter(dxgiAdapter.GetAddressOf()));
     dxgiAdapter->GetDesc(&_adapter->Description);
     ComPtr<IDXGIOutput> dxgiOutput;
-    VALIDATE_DIRECTX_RESULT(dxgiAdapter->EnumOutputs(0, dxgiOutput.GetAddressOf()));
-    VALIDATE_DIRECTX_RESULT(_device->SetFrameIntervalX(dxgiOutput.Get(), D3D12XBOX_FRAME_INTERVAL_60_HZ, DX12_BACK_BUFFER_COUNT - 1u, D3D12XBOX_FRAME_INTERVAL_FLAG_NONE));
-    VALIDATE_DIRECTX_RESULT(_device->ScheduleFrameEventX(D3D12XBOX_FRAME_EVENT_ORIGIN, 0U, nullptr, D3D12XBOX_SCHEDULE_FRAME_EVENT_FLAG_NONE));
+    VALIDATE_DIRECTX_CALL(dxgiAdapter->EnumOutputs(0, dxgiOutput.GetAddressOf()));
+    VALIDATE_DIRECTX_CALL(_device->SetFrameIntervalX(dxgiOutput.Get(), D3D12XBOX_FRAME_INTERVAL_60_HZ, DX12_BACK_BUFFER_COUNT - 1u, D3D12XBOX_FRAME_INTERVAL_FLAG_NONE));
+    VALIDATE_DIRECTX_CALL(_device->ScheduleFrameEventX(D3D12XBOX_FRAME_EVENT_ORIGIN, 0U, nullptr, D3D12XBOX_SCHEDULE_FRAME_EVENT_FLAG_NONE));
 }
 
 #endif

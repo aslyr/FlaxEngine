@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "RawDataAsset.h"
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
@@ -63,6 +63,16 @@ bool RawDataAsset::Save(const StringView& path)
 }
 
 #endif
+
+uint64 RawDataAsset::GetMemoryUsage() const
+{
+    Locker.Lock();
+    uint64 result = BinaryAsset::GetMemoryUsage();
+    result += sizeof(RawDataAsset) - sizeof(BinaryAsset);
+    result += Data.Count();
+    Locker.Unlock();
+    return result;
+}
 
 Asset::LoadResult RawDataAsset::load()
 {

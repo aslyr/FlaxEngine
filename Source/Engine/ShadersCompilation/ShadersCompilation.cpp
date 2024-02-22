@@ -1,30 +1,38 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_SHADER_COMPILER
 
 #include "ShadersCompilation.h"
 #include "ShaderCompilationContext.h"
 #include "ShaderDebugDataExporter.h"
+#include "Config.h"
+#include "Parser/ShaderProcessing.h"
+#include "Parser/ShaderMeta.h"
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Threading/Threading.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Math.h"
 #include "Engine/Core/Types/TimeSpan.h"
-#include "Parser/ShaderProcessing.h"
+#include "Engine/Graphics/Config.h"
 #include "Engine/Graphics/RenderTools.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Serialization/MemoryReadStream.h"
 #include "Engine/Content/Asset.h"
+#include "Engine/Content/Content.h"
+#include "Engine/Content/Assets/Shader.h"
+#include "Engine/Content/Assets/Material.h"
+#include "Engine/Particles/ParticleEmitter.h"
 #if USE_EDITOR
 #define COMPILE_WITH_ASSETS_IMPORTER 1 // Hack to use shaders importing in this module
 #include "Engine/ContentImporters/AssetsImportingManager.h"
 #include "Engine/Platform/FileSystemWatcher.h"
 #include "Engine/Platform/FileSystem.h"
+#include "Engine/Platform/File.h"
+#include "Engine/Engine/Globals.h"
 #include "Editor/Editor.h"
 #include "Editor/ProjectInfo.h"
 #endif
-
 #if COMPILE_WITH_D3D_SHADER_COMPILER
 #include "DirectX/ShaderCompilerD3D.h"
 #endif
@@ -37,12 +45,58 @@
 #if COMPILE_WITH_PS4_SHADER_COMPILER
 #include "Platforms/PS4/Engine/ShaderCompilerPS4/ShaderCompilerPS4.h"
 #endif
+#if COMPILE_WITH_PS5_SHADER_COMPILER
+#include "Platforms/PS5/Engine/ShaderCompilerPS5/ShaderCompilerPS5.h"
+#endif
 
 namespace ShadersCompilationImpl
 {
     CriticalSection Locker;
     Array<ShaderCompiler*> Compilers;
     Array<ShaderCompiler*> ReadyCompilers;
+
+#if USE_EDITOR
+    const ProjectInfo* FindProjectByName(const ProjectInfo* project, HashSet<const ProjectInfo*>& projects, const StringView& projectName)
+    {
+        if (!project || projects.Contains(project))
+            return nullptr;
+        projects.Add(project);
+
+        // Check the project name
+        if (project->Name == projectName)
+            return project;
+
+        // Search referenced projects
+        for (const auto& reference : project->References)
+        {
+            const ProjectInfo* result = FindProjectByName(reference.Project, projects, projectName);
+            if (result)
+                return result;
+        }
+        return nullptr;
+    }
+
+    const ProjectInfo* FindProjectByPath(const ProjectInfo* project, HashSet<const ProjectInfo*>& projects, const StringView& projectPath)
+    {
+        if (!project || projects.Contains(project))
+            return nullptr;
+        projects.Add(project);
+
+        // Search referenced projects (depth first to handle plugin projects first)
+        for (const auto& reference : project->References)
+        {
+            const ProjectInfo* result = FindProjectByPath(reference.Project, projects, projectPath);
+            if (result)
+                return result;
+        }
+
+        // Check the project path
+        if (projectPath.StartsWith(project->ProjectFolderPath))
+            return project;
+
+        return nullptr;
+    }
+#endif
 }
 
 using namespace ShadersCompilationImpl;
@@ -50,7 +104,6 @@ using namespace ShadersCompilationImpl;
 class ShadersCompilationService : public EngineService
 {
 public:
-
     ShadersCompilationService()
         : EngineService(TEXT("Shaders Compilation Service"), -100)
     {
@@ -134,9 +187,22 @@ bool ShadersCompilation::Compile(ShaderCompilationOptions& options)
 #endif
     }
 
-    // Print info if succeed
-    if (result == false)
+    if (result)
     {
+#if USE_EDITOR
+        // Output shader source to easily investigate errors (eg. for generated shaders like materials or particles)
+        const String outputSourceFolder = Globals::ProjectCacheFolder / TEXT("/Shaders/Source");
+        const String outputSourcePath = outputSourceFolder / options.TargetName + TEXT(".hlsl");
+        if (!FileSystem::DirectoryExists(outputSourceFolder))
+            FileSystem::CreateDirectory(outputSourceFolder);
+        File::WriteAllBytes(outputSourcePath, (const byte*)options.Source, options.SourceLength);
+        LOG(Error, "Shader compilation '{0}' failed (profile: {1})", options.TargetName, ::ToString(options.Profile));
+        LOG(Error, "Source: {0}", outputSourcePath);
+#endif
+    }
+    else
+    {
+        // Success
         const DateTime endTime = DateTime::NowUTC();
         LOG(Info, "Shader compilation '{0}' succeed in {1} ms (profile: {2})", options.TargetName, Math::CeilToInt(static_cast<float>((endTime - startTime).GetTotalMilliseconds())), ::ToString(options.Profile));
     }
@@ -151,7 +217,6 @@ ShaderCompiler* ShadersCompilation::CreateCompiler(ShaderProfile profile)
     switch (profile)
     {
 #if COMPILE_WITH_D3D_SHADER_COMPILER
-        // Direct 3D
     case ShaderProfile::DirectX_SM4:
     case ShaderProfile::DirectX_SM5:
         result = New<ShaderCompilerD3D>(profile);
@@ -163,15 +228,18 @@ ShaderCompiler* ShadersCompilation::CreateCompiler(ShaderProfile profile)
         break;
 #endif
 #if COMPILE_WITH_VK_SHADER_COMPILER
-        // Vulkan
     case ShaderProfile::Vulkan_SM5:
         result = New<ShaderCompilerVulkan>(profile);
         break;
 #endif
 #if COMPILE_WITH_PS4_SHADER_COMPILER
-        // PS4
     case ShaderProfile::PS4:
         result = New<ShaderCompilerPS4>();
+        break;
+#endif
+#if COMPILE_WITH_PS5_SHADER_COMPILER
+    case ShaderProfile::PS5:
+        result = New<ShaderCompilerPS5>();
         break;
 #endif
     default:
@@ -242,6 +310,7 @@ namespace
         if (action == FileSystemAction::Delete)
             return;
 
+        // Get list of assets using this shader file
         Array<Asset*> toReload;
         {
             ScopeLock lock(ShaderIncludesMapLocker);
@@ -250,6 +319,16 @@ namespace
             if (file == ShaderIncludesMap.End())
                 return;
             toReload = file->Value;
+        }
+
+        // Add any shaders that failed to load (eg. due to error in included header)
+        for (Asset* asset : Content::GetAssets())
+        {
+            if (asset->LastLoadFailed() && !toReload.Contains(asset))
+            {
+                if (asset->Is<Shader>() || asset->Is<Material>() || asset->Is<ParticleEmitter>())
+                    toReload.Add(asset);
+            }
         }
 
         LOG(Info, "Shader include \'{0}\' has been modified.", path);
@@ -279,7 +358,7 @@ void ShadersCompilation::RegisterForShaderReloads(Asset* asset, const String& in
     {
         // Create a directory watcher to track the included file changes
         const String directory = StringUtils::GetDirectoryName(includedPath);
-        if (!ShaderIncludesWatcher.ContainsKey(directory))
+        if (FileSystem::DirectoryExists(directory) && !ShaderIncludesWatcher.ContainsKey(directory))
         {
             auto watcher = New<FileSystemWatcher>(directory, false);
             watcher->OnEvent.Bind<OnShaderIncludesWatcherEvent>();
@@ -324,9 +403,87 @@ void ShadersCompilation::ExtractShaderIncludes(byte* shaderCache, int32 shaderCa
     {
         String& include = includes.AddOne();
         stream.ReadString(&include, 11);
+        include  = ShadersCompilation::ResolveShaderPath(include);
         DateTime lastEditTime;
-        stream.Read(&lastEditTime);
+        stream.Read(lastEditTime);
     }
+}
+
+String ShadersCompilation::ResolveShaderPath(StringView path)
+{
+    // Skip to the last root start './' but preserve the leading one
+    for (int32 i = path.Length() - 2; i >= 2; i--)
+    {
+        if (StringUtils::Compare(path.Get() + i, TEXT("./"), 2) == 0)
+        {
+            path = path.Substring(i);
+            break;
+        }
+    }
+
+    // Find the included file path
+    String result;
+#if USE_EDITOR
+    if (path.StartsWith(StringView(TEXT("./"), 2)))
+    {
+        int32 projectNameEnd = -1;
+        for (int32 i = 2; i < path.Length(); i++)
+        {
+            if (path[i] == '/')
+            {
+                projectNameEnd = i;
+                break;
+            }
+        }
+        if (projectNameEnd == -1)
+            return String::Empty; // Invalid project path
+        StringView projectName = path.Substring(2, projectNameEnd - 2);
+        if (projectName.StartsWith(StringView(TEXT("FlaxPlatforms"))))
+        {
+            // Hard-coded redirect to platform-specific includes
+            result = Globals::StartupFolder / TEXT("Source/Platforms");
+        }
+        else
+        {
+            HashSet<const ProjectInfo*> projects;
+            const ProjectInfo* project = FindProjectByName(Editor::Project, projects, StringView(projectName.Get(), projectNameEnd - 2));
+            if (project)
+                result = project->ProjectFolderPath / TEXT("/Source/Shaders/");
+            else
+                return String::Empty;
+        }
+        result /= path.Substring(projectNameEnd + 1);
+    }
+#else
+    if (path.StartsWith(StringView(TEXT("./Flax/"), 7)))
+    {
+        // Engine project relative shader path
+        result = Globals::StartupFolder / TEXT("Source/Shaders") / path.Substring(6);
+    }
+#endif
+    else
+    {
+        // Absolute shader path
+        result = path;
+    }
+
+    return result;
+}
+
+String ShadersCompilation::CompactShaderPath(StringView path)
+{
+#if USE_EDITOR
+    // Try to use file path relative to the project shader sources folder 
+    HashSet<const ProjectInfo*> projects;
+    const ProjectInfo* project = FindProjectByPath(Editor::Project, projects, path);
+    if (project)
+    {
+        String projectSourcesPath = project->ProjectFolderPath / TEXT("/Source/Shaders/");
+        if (path.StartsWith(projectSourcesPath))
+            return String::Format(TEXT("./{}/{}"), project->Name, path.Substring(projectSourcesPath.Length()));
+    }
+#endif
+    return String(path);
 }
 
 #if USE_EDITOR
@@ -452,6 +609,32 @@ void ShadersCompilationService::Dispose()
     ShaderIncludesMap.Clear();
     ShaderIncludesWatcher.ClearDelete();
     ShaderIncludesMapLocker.Unlock();
+}
+
+void ShaderCompilationContext::OnError(const char* message)
+{
+    LOG(Error, "Failed to compile '{0}'. {1}", Options->TargetName, String(message));
+}
+
+void ShaderCompilationContext::OnCollectDebugInfo(ShaderFunctionMeta& meta, int32 permutationIndex, const char* data, const int32 dataLength)
+{
+#ifdef GPU_USE_SHADERS_DEBUG_LAYER
+
+    // Cache data
+    meta.Permutations[permutationIndex].DebugData.Set(data, dataLength);
+
+#endif
+}
+
+ShaderCompilationContext::ShaderCompilationContext(const ShaderCompilationOptions* options, ShaderMeta* meta)
+    : Options(options)
+    , Meta(meta)
+    , Output(options->Output)
+{
+    // Convert target name to ANSI text (with limited length)
+    const int32 ansiNameLen = Math::Min<int32>(ARRAY_COUNT(TargetNameAnsi) - 1, options->TargetName.Length());
+    StringUtils::ConvertUTF162ANSI(*options->TargetName, TargetNameAnsi, ansiNameLen);
+    TargetNameAnsi[ansiNameLen] = 0;
 }
 
 #endif

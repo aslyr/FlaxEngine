@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,7 +13,6 @@
 class FLAXENGINE_API TextureMipData
 {
 public:
-
     uint32 RowPitch;
     uint32 DepthPitch;
     uint32 Lines;
@@ -24,6 +23,9 @@ public:
     TextureMipData(TextureMipData&& other) noexcept;
     TextureMipData& operator=(const TextureMipData& other);
     TextureMipData& operator=(TextureMipData&& other) noexcept;
+
+    bool GetPixels(Array<Color32>& pixels, int32 width, int32 height, PixelFormat format) const;
+    bool GetPixels(Array<Color>& pixels, int32 width, int32 height, PixelFormat format) const;
 
     template<typename T>
     T& Get(int32 x, int32 y)
@@ -44,7 +46,6 @@ public:
 class FLAXENGINE_API TextureData
 {
 public:
-
     /// <summary>
     /// Single entry of the texture array. Contains collection of mip maps.
     /// </summary>
@@ -57,7 +58,6 @@ public:
     };
 
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -73,7 +73,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Top level texture width (in pixels).
     /// </summary>
@@ -100,7 +99,6 @@ public:
     Array<ArrayEntry, InlinedAllocation<6>> Items;
 
 public:
-
     /// <summary>
     /// Gather texture data
     /// </summary>

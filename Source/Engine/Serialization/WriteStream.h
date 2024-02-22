@@ -1,14 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
-#include "Engine/Core/Collections/Array.h"
-#include "Engine/Core/Formatting.h"
 #include "Stream.h"
-
-struct CommonValue;
-struct Variant;
-struct VariantType;
+#include "Engine/Core/Templates.h"
 
 /// <summary>
 /// Base class for all data write streams
@@ -16,16 +11,6 @@ struct VariantType;
 class FLAXENGINE_API WriteStream : public Stream
 {
 public:
-
-    /// <summary>
-    /// Virtual destructor
-    /// </summary>
-    virtual ~WriteStream()
-    {
-    }
-
-public:
-
     /// <summary>
     /// Writes bytes to the stream
     /// </summary>
@@ -34,121 +19,105 @@ public:
     virtual void WriteBytes(const void* data, uint32 bytes) = 0;
 
 public:
-
-    template<typename T>
-    FORCE_INLINE void Write(const T* data)
-    {
-        WriteBytes((const void*)data, sizeof(T));
-    }
-
-    template<typename T>
-    FORCE_INLINE void Write(const T* data, int32 count)
-    {
-        WriteBytes((const void*)data, sizeof(T) * count);
-    }
-
-public:
-
     // Writes byte to the stream
     // @param data Data to write
     FORCE_INLINE void WriteByte(byte data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(byte));
     }
 
     // Writes bool to the stream
     // @param data Data to write
     FORCE_INLINE void WriteBool(bool data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(bool));
     }
 
     // Writes char to the stream
     // @param data Data to write
     FORCE_INLINE void WriteChar(char data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(char));
     }
 
     // Writes Char to the stream
     // @param data Data to write
     FORCE_INLINE void WriteChar(Char data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(Char));
     }
 
     // Writes uint8 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteUint8(uint8 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(uint8));
     }
 
     // Writes int8 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteInt8(int8 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(int8));
     }
 
     // Writes uint16 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteUint16(uint16 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(uint16));
     }
 
     // Writes int16 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteInt16(int16 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(int16));
     }
 
     // Writes uint32 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteUint32(uint32 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(uint32));
     }
 
     // Writes int32 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteInt32(int32 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(int32));
     }
 
     // Writes int64 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteInt64(int64 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(int64));
     }
 
     // Writes uint64 to the stream
     // @param data Data to write
     FORCE_INLINE void WriteUint64(uint64 data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(uint64));
     }
 
     // Writes float to the stream
     // @param data Data to write
     FORCE_INLINE void WriteFloat(float data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(float));
     }
 
     // Writes double to the stream
     // @param data Data to write
     FORCE_INLINE void WriteDouble(double data)
     {
-        Write(&data);
+        WriteBytes(&data, sizeof(double));
     }
 
 public:
-
     // Writes text to the stream
     // @param data Text to write
     // @param length Text length
@@ -165,24 +134,6 @@ public:
         WriteBytes((const void*)text, sizeof(Char) * length);
     }
 
-    template<typename... Args>
-    void WriteTextFormatted(const char* format, const Args& ... args)
-    {
-        fmt_flax::allocator_ansi allocator;
-        fmt_flax::memory_buffer_ansi buffer(allocator);
-        fmt_flax::format(buffer, format, args...);
-        WriteText(buffer.data(), (int32)buffer.size());
-    }
-
-    template<typename... Args>
-    void WriteTextFormatted(const Char* format, const Args& ... args)
-    {
-        fmt_flax::allocator allocator;
-        fmt_flax::memory_buffer buffer(allocator);
-        fmt_flax::format(buffer, format, args...);
-        WriteText(buffer.data(), (int32)buffer.size());
-    }
-
     // Write UTF BOM character sequence
     void WriteBOM()
     {
@@ -194,55 +145,153 @@ public:
     // Writes text to the stream
     // @param data Text to write
     void WriteText(const StringView& text);
+    void WriteText(const StringAnsiView& text);
 
+public:
+    void Write(const StringView& data);
+    void Write(const StringView& data, int16 lock);
+    void Write(const StringAnsiView& data);
+    void Write(const StringAnsiView& data, int8 lock);
+    void Write(const CommonValue& data);
+    void Write(const VariantType& data);
+    void Write(const Variant& data);
+
+    template<typename T>
+    FORCE_INLINE typename TEnableIf<TAnd<TIsPODType<T>, TNot<TIsPointer<T>>>::Value>::Type Write(const T& data)
+    {
+        WriteBytes((const void*)&data, sizeof(T));
+    }
+
+    template<typename T>
+    typename TEnableIf<TIsBaseOf<ScriptingObject, T>::Value>::Type Write(const T* data)
+    {
+        uint32 id[4] = { 0 };
+        if (data)
+            memcpy(id, &data->GetID(), sizeof(id));
+        WriteBytes(id, sizeof(id));
+    }
+
+    template<typename T>
+    FORCE_INLINE void Write(const ScriptingObjectReference<T>& v)
+    {
+        Write(v.Get());
+    }
+    template<typename T>
+    FORCE_INLINE void Write(const SoftObjectReference<T>& v)
+    {
+        Write(v.Get());
+    }
+    template<typename T>
+    FORCE_INLINE void Write(const AssetReference<T>& v)
+    {
+        Write(v.Get());
+    }
+    template<typename T>
+    FORCE_INLINE void Write(const WeakAssetReference<T>& v)
+    {
+        Write(v.Get());
+    }
+    template<typename T>
+    FORCE_INLINE void Write(const SoftAssetReference<T>& v)
+    {
+        Write(v.Get());
+    }
+
+    template<typename T, typename AllocationType = HeapAllocation>
+    void Write(const Array<T, AllocationType>& data)
+    {
+        const int32 size = data.Count();
+        WriteInt32(size);
+        if (size > 0)
+        {
+            if (TIsPODType<T>::Value && !TIsPointer<T>::Value)
+                WriteBytes(data.Get(), size * sizeof(T));
+            else
+            {
+                for (int32 i = 0; i < size; i++)
+                    Write(data[i]);
+            }
+        }
+    }
+
+    template<typename KeyType, typename ValueType, typename AllocationType = HeapAllocation>
+    void Write(const Dictionary<KeyType, ValueType, AllocationType>& data)
+    {
+        const int32 count = data.Count();
+        WriteInt32(count);
+        for (const auto& e : data)
+        {
+            Write(e.Key);
+            Write(e.Value);
+        }
+    }
+
+    /// <summary>
+    /// Serializes object to Json and writes it as a raw data (ver+length+bytes).
+    /// </summary>
+    /// <remarks>Writes version number, data length and actual data bytes to the stream.</remarks>
+    /// <param name="obj">The object to serialize.</param>
+    /// <param name="otherObj">The instance of the object to compare with and serialize only the modified properties. If null, then serialize all properties.</param>
+    void WriteJson(ISerializable* obj, const void* otherObj = nullptr);
+
+public:
     // Writes String to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     void WriteString(const StringView& data);
 
     // Writes String to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     // @param lock Characters pass in the stream
     void WriteString(const StringView& data, int16 lock);
 
     // Writes Ansi String to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     void WriteStringAnsi(const StringAnsiView& data);
 
     // Writes Ansi String to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     // @param lock Characters pass in the stream
-    void WriteStringAnsi(const StringAnsiView& data, int16 lock);
-
-public:
+    void WriteStringAnsi(const StringAnsiView& data, int8 lock);
 
     // Writes CommonValue to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     void WriteCommonValue(const CommonValue& data);
 
     // Writes VariantType to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     void WriteVariantType(const VariantType& data);
 
     // Writes Variant to the stream
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     // @param data Data to write
     void WriteVariant(const Variant& data);
 
     /// <summary>
     /// Write data array
+    /// [Deprecated on 11.10.2022, expires on 11.10.2024]
     /// </summary>
     /// <param name="data">Array to write</param>
-    template<typename T>
-    void WriteArray(const Array<T>& data)
+    template<typename T, typename AllocationType = HeapAllocation>
+    FORCE_INLINE void WriteArray(const Array<T, AllocationType>& data)
     {
-        static_assert(TIsPODType<T>::Value, "Only POD types are valid for WriteArray.");
-        const int32 size = data.Count();
-        WriteInt32(size);
-        if (size > 0)
-            WriteBytes(data.Get(), size * sizeof(T));
+        Write(data);
     }
 
 public:
+    // Serialization of math types with float or double depending on the context (must match deserialization)
+    // Set useDouble=true to explicitly use 64-bit precision for serialized data
+    void WriteBoundingBox(const BoundingBox& box, bool useDouble = false);
+    void WriteBoundingSphere(const BoundingSphere& sphere, bool useDouble = false);
+    void WriteTransform(const Transform& transform, bool useDouble = false);
+    void WriteRay(const Ray& ray, bool useDouble = false);
 
+public:
     // [Stream]
     bool CanWrite() override
     {

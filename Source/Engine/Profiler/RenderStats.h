@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,7 @@
 /// </summary>
 API_STRUCT() struct RenderStatsData
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(RenderStatsData);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(RenderStatsData);
 
     /// <summary>
     /// The draw calls count.

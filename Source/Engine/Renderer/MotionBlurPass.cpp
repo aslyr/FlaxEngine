@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MotionBlurPass.h"
 #include "GBufferPass.h"
@@ -21,15 +21,15 @@ PACK_STRUCT(struct Data {
     GBufferData GBuffer;
     Matrix CurrentVP;
     Matrix PreviousVP;
-    Vector4 TemporalAAJitter;
+    Float4 TemporalAAJitter;
 
     float VelocityScale;
     float Dummy0;
     int32 MaxBlurSamples;
     uint32 VariableTileLoopCount;
 
-    Vector2 Input0SizeInv;
-    Vector2 Input2SizeInv;
+    Float2 Input0SizeInv;
+    Float2 Input2SizeInv;
     });
 
 MotionBlurPass::MotionBlurPass()
@@ -61,12 +61,12 @@ bool MotionBlurPass::Init()
 #endif
 
     // Prepare formats for the buffers
-    auto format = MOTION_VECTORS_PIXEL_FORMAT;
-    if (FORMAT_FEATURES_ARE_NOT_SUPPORTED(GPUDevice::Instance->GetFormatFeatures(format).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
+    auto format = PixelFormat::R16G16_Float;
+    if (EnumHasNoneFlags(GPUDevice::Instance->GetFormatFeatures(format).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
     {
-        if (FORMAT_FEATURES_ARE_NOT_SUPPORTED(GPUDevice::Instance->GetFormatFeatures(PixelFormat::R32G32_Float).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
+        if (EnumHasNoneFlags(GPUDevice::Instance->GetFormatFeatures(PixelFormat::R32G32_Float).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
             format = PixelFormat::R32G32_Float;
-        else if (FORMAT_FEATURES_ARE_NOT_SUPPORTED(GPUDevice::Instance->GetFormatFeatures(PixelFormat::R16G16B16A16_Float).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
+        else if (EnumHasNoneFlags(GPUDevice::Instance->GetFormatFeatures(PixelFormat::R16G16B16A16_Float).Support, FormatSupport::RenderTarget | FormatSupport::ShaderSample | FormatSupport::Texture2D))
             format = PixelFormat::R16G16B16A16_Float;
         else
             format = PixelFormat::R32G32B32A32_Float;
@@ -162,7 +162,7 @@ void MotionBlurPass::RenderMotionVectors(RenderContext& renderContext)
     const int32 motionVectorsHeight = screenHeight / static_cast<int32>(settings.MotionVectorsResolution);
 
     // Ensure to have valid data
-    if (!Renderer::NeedMotionVectors(renderContext) || checkIfSkipPass())
+    if (!renderContext.List->Setup.UseMotionVectors || checkIfSkipPass())
     {
         // Skip pass (just clear motion vectors if texture is allocated)
         if (motionVectors->IsAllocated())
@@ -213,7 +213,7 @@ void MotionBlurPass::RenderMotionVectors(RenderContext& renderContext)
     // Render camera motion vectors (background)
     if (!data.TemporalAAJitter.IsZero() || data.CurrentVP != data.PreviousVP)
     {
-        PROFILE_GPU_CPU("Camera Motion Vectors");
+        PROFILE_GPU("Camera Motion Vectors");
         context->SetRenderTarget(motionVectors->View());
         context->SetState(_psCameraMotionVectors);
         context->DrawFullscreenTriangle();
@@ -229,7 +229,6 @@ void MotionBlurPass::RenderMotionVectors(RenderContext& renderContext)
     context->SetRenderTarget(depthBuffer->View(), motionVectors->View());
     renderContext.View.Pass = DrawPass::MotionVectors;
     // TODO: maybe update material PerFrame data because render viewport can be other size than ScreenSize from render buffers
-    renderContext.List->SortDrawCalls(renderContext, false, DrawCallsListType::MotionVectors);
     renderContext.List->ExecuteDrawCalls(renderContext, DrawCallsListType::MotionVectors);
 
     // Cleanup
@@ -245,7 +244,7 @@ void MotionBlurPass::RenderDebug(RenderContext& renderContext, GPUTextureView* f
 {
     auto context = GPUDevice::Instance->GetMainContext();
     const auto motionVectors = renderContext.Buffers->MotionVectors;
-    if (!motionVectors->IsAllocated() || setupResources())
+    if (!motionVectors || !motionVectors->IsAllocated() || checkIfSkipPass())
     {
         context->Draw(frame);
         return;
@@ -259,18 +258,18 @@ void MotionBlurPass::RenderDebug(RenderContext& renderContext, GPUTextureView* f
     context->ResetSR();
 }
 
-void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GPUTexture*& output)
+void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& frame, GPUTexture*& tmp)
 {
     const bool isCameraCut = renderContext.Task->IsCameraCut;
     const auto motionVectors = renderContext.Buffers->MotionVectors;
     ASSERT(motionVectors);
     auto context = GPUDevice::Instance->GetMainContext();
     MotionBlurSettings& settings = renderContext.List->Settings.MotionBlur;
-    const int32 screenWidth = renderContext.Buffers->GetWidth();
-    const int32 screenHeight = renderContext.Buffers->GetHeight();
+    const int32 screenWidth = frame->Width();
+    const int32 screenHeight = frame->Height();
     const int32 motionVectorsWidth = screenWidth / static_cast<int32>(settings.MotionVectorsResolution);
     const int32 motionVectorsHeight = screenHeight / static_cast<int32>(settings.MotionVectorsResolution);
-    if ((renderContext.View.Flags & ViewFlags::MotionBlur) == 0 ||
+    if ((renderContext.View.Flags & ViewFlags::MotionBlur) == ViewFlags::None ||
         !_hasValidResources ||
         isCameraCut ||
         screenWidth < 16 ||
@@ -297,7 +296,7 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     data.VelocityScale = settings.Scale * 0.5f * timeScale; // 2x samples in loop
     data.MaxBlurSamples = Math::Clamp(settings.SampleCount / 2, 1, 64); // 2x samples in loop
     data.VariableTileLoopCount = tileSize / 8;
-    data.Input0SizeInv = Vector2(1.0f / (float)motionVectorsWidth, 1.0f / (float)motionVectorsWidth);
+    data.Input0SizeInv = Float2(1.0f / (float)motionVectorsWidth, 1.0f / (float)motionVectorsWidth);
     const auto cb = _shader->GetShader()->GetCB(0);
     context->UpdateCB(cb, &data);
     context->BindCB(0, cb);
@@ -305,6 +304,7 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     // Downscale motion vectors texture down to 1/2 (with max velocity calculation 2x2 kernel)
     auto rtDesc = GPUTextureDescription::New2D(motionVectorsWidth / 2, motionVectorsHeight / 2, _motionVectorsFormat);
     const auto vMaxBuffer2 = RenderTargetPool::Get(rtDesc);
+    RENDER_TARGET_POOL_SET_NAME(vMaxBuffer2, "MotionBlur.VMax2");
     context->SetRenderTarget(vMaxBuffer2->View());
     context->SetViewportAndScissors((float)rtDesc.Width, (float)rtDesc.Height);
     context->BindSR(0, motionVectors->View());
@@ -315,11 +315,12 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     rtDesc.Width /= 2;
     rtDesc.Height /= 2;
     const auto vMaxBuffer4 = RenderTargetPool::Get(rtDesc);
+    RENDER_TARGET_POOL_SET_NAME(vMaxBuffer4, "MotionBlur.VMax4");
     context->ResetRenderTarget();
     context->SetRenderTarget(vMaxBuffer4->View());
     context->SetViewportAndScissors((float)rtDesc.Width, (float)rtDesc.Height);
     context->BindSR(0, vMaxBuffer2->View());
-    data.Input0SizeInv = Vector2(1.0f / (float)vMaxBuffer2->Width(), 1.0f / (float)vMaxBuffer2->Height());
+    data.Input0SizeInv = Float2(1.0f / (float)vMaxBuffer2->Width(), 1.0f / (float)vMaxBuffer2->Height());
     context->UpdateCB(cb, &data);
     context->SetState(_psTileMax);
     context->DrawFullscreenTriangle();
@@ -329,11 +330,12 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     rtDesc.Width /= 2;
     rtDesc.Height /= 2;
     const auto vMaxBuffer8 = RenderTargetPool::Get(rtDesc);
+    RENDER_TARGET_POOL_SET_NAME(vMaxBuffer8, "MotionBlur.VMax8");
     context->ResetRenderTarget();
     context->SetRenderTarget(vMaxBuffer8->View());
     context->SetViewportAndScissors((float)rtDesc.Width, (float)rtDesc.Height);
     context->BindSR(0, vMaxBuffer4->View());
-    data.Input0SizeInv = Vector2(1.0f / (float)vMaxBuffer4->Width(), 1.0f / (float)vMaxBuffer4->Height());
+    data.Input0SizeInv = Float2(1.0f / (float)vMaxBuffer4->Width(), 1.0f / (float)vMaxBuffer4->Height());
     context->UpdateCB(cb, &data);
     context->SetState(_psTileMax);
     context->DrawFullscreenTriangle();
@@ -343,11 +345,12 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     rtDesc.Width = Math::Max(motionVectorsWidth / tileSize, 1);
     rtDesc.Height = Math::Max(motionVectorsHeight / tileSize, 1);
     auto vMaxBuffer = RenderTargetPool::Get(rtDesc);
+    RENDER_TARGET_POOL_SET_NAME(vMaxBuffer, "MotionBlur.VMax");
     context->ResetRenderTarget();
     context->SetRenderTarget(vMaxBuffer->View());
     context->SetViewportAndScissors((float)rtDesc.Width, (float)rtDesc.Height);
     context->BindSR(0, vMaxBuffer8->View());
-    data.Input0SizeInv = Vector2(1.0f / (float)vMaxBuffer8->Width(), 1.0f / (float)vMaxBuffer8->Height());
+    data.Input0SizeInv = Float2(1.0f / (float)vMaxBuffer8->Width(), 1.0f / (float)vMaxBuffer8->Height());
     context->UpdateCB(cb, &data);
     context->SetState(_psTileMaxVariable);
     context->DrawFullscreenTriangle();
@@ -356,6 +359,7 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     // Extract maximum velocities for the tiles based on their neighbors
     context->ResetRenderTarget();
     auto vMaxNeighborBuffer = RenderTargetPool::Get(rtDesc);
+    RENDER_TARGET_POOL_SET_NAME(vMaxBuffer, "MotionBlur.VMaxNeighbor");
     context->SetRenderTarget(vMaxNeighborBuffer->View());
     context->BindSR(0, vMaxBuffer->View());
     context->SetState(_psNeighborMax);
@@ -364,14 +368,14 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
 
     // Render motion blur
     context->ResetRenderTarget();
-    context->SetRenderTarget(*output);
+    context->SetRenderTarget(*tmp);
     context->SetViewportAndScissors((float)screenWidth, (float)screenHeight);
-    context->BindSR(0, input->View());
+    context->BindSR(0, frame->View());
     context->BindSR(1, motionVectors->View());
     context->BindSR(2, vMaxNeighborBuffer->View());
     context->BindSR(3, renderContext.Buffers->DepthBuffer->View());
-    data.Input0SizeInv = Vector2(1.0f / (float)input->Width(), 1.0f / (float)input->Height());
-    data.Input2SizeInv = Vector2(1.0f / (float)renderContext.Buffers->DepthBuffer->Width(), 1.0f / (float)renderContext.Buffers->DepthBuffer->Height());
+    data.Input0SizeInv = Float2(1.0f / (float)screenWidth, 1.0f / (float)screenHeight);
+    data.Input2SizeInv = Float2(1.0f / (float)renderContext.Buffers->DepthBuffer->Width(), 1.0f / (float)renderContext.Buffers->DepthBuffer->Height());
     context->UpdateCB(cb, &data);
     context->SetState(_psMotionBlur);
     context->DrawFullscreenTriangle();
@@ -380,5 +384,5 @@ void MotionBlurPass::Render(RenderContext& renderContext, GPUTexture*& input, GP
     RenderTargetPool::Release(vMaxNeighborBuffer);
     context->ResetSR();
     context->ResetRenderTarget();
-    Swap(output, input);
+    Swap(frame, tmp);
 }

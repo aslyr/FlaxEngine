@@ -1,7 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using FlaxEditor.Content.GUI;
 using FlaxEditor.GUI.Drag;
 using FlaxEngine;
@@ -183,7 +185,7 @@ namespace FlaxEditor.Content
         private ContentFolder _parentFolder;
 
         private bool _isMouseDown;
-        private Vector2 _mouseDownStartPos;
+        private Float2 _mouseDownStartPos;
         private readonly List<IContentItemOwner> _references = new List<IContentItemOwner>(4);
 
         private SpriteHandle _thumbnail;
@@ -222,7 +224,7 @@ namespace FlaxEditor.Content
         /// <summary>
         /// Gets a value indicating whether this item can be dragged and dropped.
         /// </summary>
-        public virtual bool CanDrag => true;
+        public virtual bool CanDrag => Root != null;
 
         /// <summary>
         /// Gets a value indicating whether this <see cref="ContentItem"/> exists on drive.
@@ -271,18 +273,12 @@ namespace FlaxEditor.Content
         /// <summary>
         /// Gets the asset name relative to the project root folder (without asset file extension)
         /// </summary>
-        public string NamePath
-        {
-            get
-            {
-                string result = Path;
-                if (result.StartsWith(Globals.ProjectFolder))
-                {
-                    result = result.Substring(Globals.ProjectFolder.Length + 1);
-                }
-                return StringUtils.GetPathWithoutExtension(result);
-            }
-        }
+        public string NamePath => FlaxEditor.Utilities.Utils.GetAssetNamePath(Path);
+
+        /// <summary>
+        /// Gets the content item type description (for UI).
+        /// </summary>
+        public abstract string TypeDescription { get; }
 
         /// <summary>
         /// Gets the default name of the content item thumbnail. Returns null if not used.
@@ -327,8 +323,6 @@ namespace FlaxEditor.Content
         /// <param name="value">The new path.</param>
         internal virtual void UpdatePath(string value)
         {
-            Assert.AreNotEqual(Path, value);
-
             // Set path
             Path = StringUtils.NormalizePath(value);
             FileName = System.IO.Path.GetFileName(value);
@@ -366,9 +360,31 @@ namespace FlaxEditor.Content
         /// <summary>
         /// Updates the tooltip text text.
         /// </summary>
-        protected virtual void UpdateTooltipText()
+        public virtual void UpdateTooltipText()
         {
-            TooltipText = "Path: " + Path;
+            var sb = new StringBuilder();
+            OnBuildTooltipText(sb);
+            if (sb.Length != 0 && sb[sb.Length - 1] == '\n')
+            {
+                // Remove new-line from end
+                int sub = 1;
+                if (sb.Length != 1 && sb[sb.Length - 2] == '\r')
+                    sub = 2;
+                sb.Length -= sub;
+            }
+            TooltipText = sb.ToString();
+        }
+
+        /// <summary>
+        /// Called when building tooltip text.
+        /// </summary>
+        /// <param name="sb">The output string builder.</param>
+        protected virtual void OnBuildTooltipText(StringBuilder sb)
+        {
+            sb.Append("Type: ").Append(TypeDescription).AppendLine();
+            if (File.Exists(Path))
+                sb.Append("Size: ").Append(Utilities.Utils.FormatBytesCount((int)new FileInfo(Path).Length)).AppendLine();
+            sb.Append("Path: ").Append(Utilities.Utils.GetAssetNamePathWithExt(Path)).AppendLine();
         }
 
         /// <summary>
@@ -423,6 +439,9 @@ namespace FlaxEditor.Content
         {
             get
             {
+                // Skip when hidden
+                if (!Visible)
+                    return Rectangle.Empty;
                 var view = Parent as ContentView;
                 var size = Size;
                 switch (view?.ViewType ?? ContentViewType.Tiles)
@@ -451,6 +470,30 @@ namespace FlaxEditor.Content
         {
             // Draw shadow
             if (DrawShadow)
+            {
+                const float thumbnailInShadowSize = 50.0f;
+                var shadowRect = rectangle.MakeExpanded((DefaultThumbnailSize - thumbnailInShadowSize) * rectangle.Width / DefaultThumbnailSize * 1.3f);
+                if (!_shadowIcon.IsValid)
+                    _shadowIcon = Editor.Instance.Icons.AssetShadow128;
+                Render2D.DrawSprite(_shadowIcon, shadowRect);
+            }
+
+            // Draw thumbnail
+            if (_thumbnail.IsValid)
+                Render2D.DrawSprite(_thumbnail, rectangle);
+            else
+                Render2D.FillRectangle(rectangle, Color.Black);
+        }
+
+        /// <summary>
+        /// Draws the item thumbnail.
+        /// </summary>
+        /// <param name="rectangle">The thumbnail rectangle.</param>
+        /// /// <param name="shadow">Whether or not to draw the shadow. Overrides DrawShadow.</param>
+        public void DrawThumbnail(ref Rectangle rectangle, bool shadow)
+        {
+            // Draw shadow
+            if (shadow)
             {
                 const float thumbnailInShadowSize = 50.0f;
                 var shadowRect = rectangle.MakeExpanded((DefaultThumbnailSize - thumbnailInShadowSize) * rectangle.Width / DefaultThumbnailSize * 1.3f);
@@ -503,6 +546,14 @@ namespace FlaxEditor.Content
                     ReleaseThumbnail();
                 }
             }
+        }
+
+        /// <summary>
+        /// Called when context menu is being prepared to show. Can be used to add custom options.
+        /// </summary>
+        /// <param name="menu">The menu.</param>
+        public virtual void OnContextMenu(FlaxEditor.GUI.ContextMenu.ContextMenu menu)
+        {
         }
 
         /// <summary>
@@ -596,23 +647,31 @@ namespace FlaxEditor.Content
         protected override bool ShowTooltip => true;
 
         /// <inheritdoc />
-        public override bool OnShowTooltip(out string text, out Vector2 location, out Rectangle area)
+        public override bool OnShowTooltip(out string text, out Float2 location, out Rectangle area)
         {
             UpdateTooltipText();
             var result = base.OnShowTooltip(out text, out _, out area);
-            location = Size * new Vector2(0.9f, 0.5f);
+            location = Size * new Float2(0.9f, 0.5f);
             return result;
+        }
+
+        /// <inheritdoc />
+        public override void NavigationFocus()
+        {
+            base.NavigationFocus();
+
+            if (IsFocused)
+                (Parent as ContentView)?.Select(this);
         }
 
         /// <inheritdoc />
         public override void Draw()
         {
-            // Cache data
             var size = Size;
             var style = Style.Current;
             var view = Parent as ContentView;
             var isSelected = view.IsSelected(this);
-            var clientRect = new Rectangle(Vector2.Zero, size);
+            var clientRect = new Rectangle(Float2.Zero, size);
             var textRect = TextRectangle;
             Rectangle thumbnailRect;
             TextAlignment nameAlignment;
@@ -620,9 +679,51 @@ namespace FlaxEditor.Content
             {
             case ContentViewType.Tiles:
             {
-                var thumbnailSize = size.X - 2 * DefaultMarginSize;
-                thumbnailRect = new Rectangle(DefaultMarginSize, DefaultMarginSize, thumbnailSize, thumbnailSize);
+                var thumbnailSize = size.X;
+                thumbnailRect = new Rectangle(0, 0, thumbnailSize, thumbnailSize);
                 nameAlignment = TextAlignment.Center;
+
+                if (this is ContentFolder)
+                {
+                    // Small shadow
+                    var shadowRect = new Rectangle(2, 2, clientRect.Width + 1, clientRect.Height + 1);
+                    var color = Color.Black.AlphaMultiplied(0.2f);
+                    Render2D.FillRectangle(shadowRect, color);
+                    Render2D.FillRectangle(clientRect, style.Background.RGBMultiplied(1.25f));
+
+                    if (isSelected)
+                        Render2D.FillRectangle(clientRect, Parent.ContainsFocus ? style.BackgroundSelected : style.LightBackground);
+                    else if (IsMouseOver)
+                        Render2D.FillRectangle(clientRect, style.BackgroundHighlighted);
+
+                    DrawThumbnail(ref thumbnailRect, false);
+                }
+                else
+                {
+                    // Small shadow
+                    var shadowRect = new Rectangle(2, 2, clientRect.Width + 1, clientRect.Height + 1);
+                    var color = Color.Black.AlphaMultiplied(0.2f);
+                    Render2D.FillRectangle(shadowRect, color);
+
+                    Render2D.FillRectangle(clientRect, style.Background.RGBMultiplied(1.25f));
+                    Render2D.FillRectangle(TextRectangle, style.LightBackground);
+
+                    var accentHeight = 2 * view.ViewScale;
+                    var barRect = new Rectangle(0, thumbnailRect.Height - accentHeight, clientRect.Width, accentHeight);
+                    Render2D.FillRectangle(barRect, Color.DimGray);
+
+                    DrawThumbnail(ref thumbnailRect, false);
+                    if (isSelected)
+                    {
+                        Render2D.FillRectangle(textRect, Parent.ContainsFocus ? style.BackgroundSelected : style.LightBackground);
+                        Render2D.DrawRectangle(clientRect, Parent.ContainsFocus ? style.BackgroundSelected : style.LightBackground);
+                    }
+                    else if (IsMouseOver)
+                    {
+                        Render2D.FillRectangle(textRect, style.BackgroundHighlighted);
+                        Render2D.DrawRectangle(clientRect, style.BackgroundHighlighted);
+                    }
+                }
                 break;
             }
             case ContentViewType.List:
@@ -630,28 +731,26 @@ namespace FlaxEditor.Content
                 var thumbnailSize = size.Y - 2 * DefaultMarginSize;
                 thumbnailRect = new Rectangle(DefaultMarginSize, DefaultMarginSize, thumbnailSize, thumbnailSize);
                 nameAlignment = TextAlignment.Near;
+
+                if (isSelected)
+                    Render2D.FillRectangle(clientRect, Parent.ContainsFocus ? style.BackgroundSelected : style.LightBackground);
+                else if (IsMouseOver)
+                    Render2D.FillRectangle(clientRect, style.BackgroundHighlighted);
+
+                DrawThumbnail(ref thumbnailRect);
                 break;
             }
             default: throw new ArgumentOutOfRangeException();
             }
 
-            // Draw background
-            if (isSelected)
-                Render2D.FillRectangle(clientRect, Parent.ContainsFocus ? style.BackgroundSelected : style.LightBackground);
-            else if (IsMouseOver)
-                Render2D.FillRectangle(clientRect, style.BackgroundHighlighted);
-
-            // Draw preview
-            DrawThumbnail(ref thumbnailRect);
-
             // Draw short name
             Render2D.PushClip(ref textRect);
-            Render2D.DrawText(style.FontMedium, ShowFileExtension || view.ShowFileExtensions ? FileName : ShortName, textRect, style.Foreground, nameAlignment, TextAlignment.Center, TextWrapping.WrapWords, 0.75f, 0.95f);
+            Render2D.DrawText(style.FontMedium, ShowFileExtension || view.ShowFileExtensions ? FileName : ShortName, textRect, style.Foreground, nameAlignment, TextAlignment.Center, TextWrapping.WrapWords, 1f, 0.95f);
             Render2D.PopClip();
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             Focus();
 
@@ -666,7 +765,7 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left && _isMouseDown)
             {
@@ -681,30 +780,21 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             Focus();
 
-            // Check if clicked on name area (and can be renamed)
-            if (CanRename && TextRectangle.Contains(ref location))
-            {
-                // Rename
-                (Parent as ContentView).OnItemDoubleClickName(this);
-            }
-            else
-            {
-                // Open
-                (Parent as ContentView).OnItemDoubleClick(this);
-            }
+            // Open
+            (Parent as ContentView).OnItemDoubleClick(this);
 
             return true;
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             // Check if start drag and drop
-            if (_isMouseDown && Vector2.Distance(_mouseDownStartPos, location) > 10.0f)
+            if (_isMouseDown && Float2.Distance(_mouseDownStartPos, location) > 10.0f)
             {
                 // Clear flag
                 _isMouseDown = false;
@@ -728,6 +818,15 @@ namespace FlaxEditor.Content
             }
 
             base.OnMouseLeave();
+        }
+
+        /// <inheritdoc />
+        public override void OnSubmit()
+        {
+            // Open
+            (Parent as ContentView).OnItemDoubleClick(this);
+
+            base.OnSubmit();
         }
 
         /// <inheritdoc />

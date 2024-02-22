@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "NavMeshBoundsVolume.h"
 #include "Engine/Level/Scene/Scene.h"
@@ -34,10 +34,10 @@ void NavMeshBoundsVolume::Deserialize(DeserializeStream& stream, ISerializeModif
 
 void NavMeshBoundsVolume::OnEnable()
 {
+    GetScene()->Navigation.Volumes.Add(this);
+
     // Base
     Actor::OnEnable();
-
-    GetScene()->Navigation.Volumes.Add(this);
 }
 
 void NavMeshBoundsVolume::OnDisable()

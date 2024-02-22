@@ -1,12 +1,14 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "MaterialInfo.h"
 
 struct MaterialParamsLink;
+class GPUShader;
 class GPUContext;
 class GPUTextureView;
+class GPUConstantBuffer;
 class RenderBuffers;
 class SceneRenderTask;
 struct RenderView;
@@ -19,12 +21,17 @@ struct DrawCall;
 class FLAXENGINE_API IMaterial
 {
 public:
-
     /// <summary>
     /// Gets the material info, structure which describes material surface.
     /// </summary>
     /// <returns>The constant reference to the material descriptor.</returns>
     virtual const MaterialInfo& GetInfo() const = 0;
+
+    /// <summary>
+    /// Gets the shader resource.
+    /// </summary>
+    /// <returns>The material shader resource.</returns>
+    virtual GPUShader* GetShader() const = 0;
 
     /// <summary>
     /// Determines whether material is a surface shader.
@@ -111,7 +118,7 @@ public:
     /// </summary>
     struct InstancingHandler
     {
-        void (*GetHash)(const DrawCall& drawCall, int32& batchKey);
+        void (*GetHash)(const DrawCall& drawCall, uint32& batchKey);
         bool (*CanBatch)(const DrawCall& a, const DrawCall& b);
         void (*WriteDrawCall)(struct InstanceData* instanceData, const DrawCall& drawCall);
     };
@@ -123,11 +130,13 @@ public:
     /// <returns>True if can use instancing, otherwise false.</returns>
     virtual bool CanUseInstancing(InstancingHandler& handler) const
     {
+#if BUILD_DEBUG
+        handler = { nullptr, nullptr, nullptr };
+#endif
         return false;
     }
 
 public:
-
     /// <summary>
     /// Settings for the material binding to the graphics pipeline.
     /// </summary>
@@ -149,6 +158,12 @@ public:
         BindParameters(::GPUContext* context, const ::RenderContext& renderContext);
         BindParameters(::GPUContext* context, const ::RenderContext& renderContext, const DrawCall& drawCall);
         BindParameters(::GPUContext* context, const ::RenderContext& renderContext, const DrawCall* firstDrawCall, int32 drawCallsCount);
+
+        // Per-view shared constant buffer (see ViewData in MaterialCommon.hlsl).
+        static GPUConstantBuffer* PerViewConstants;
+
+        // Binds the shared per-view constant buffer at slot 1 (see ViewData in MaterialCommon.hlsl)
+        void BindViewData();
     };
 
     /// <summary>

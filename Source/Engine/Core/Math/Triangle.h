@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,6 @@
 struct FLAXENGINE_API Triangle
 {
 public:
-
     /// <summary>
     /// The first vertex.
     /// </summary>
@@ -28,13 +27,10 @@ public:
     Vector3 V2;
 
 public:
-
     /// <summary>
     /// Empty constructor.
     /// </summary>
-    Triangle()
-    {
-    }
+    Triangle() = default;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Triangle"/> struct.
@@ -50,13 +46,18 @@ public:
     }
 
 public:
+    Vector3 GetNormal() const
+    {
+        return Vector3::Normalize((V1 - V0) ^ (V2 - V0));
+    }
 
+public:
     // Determines if there is an intersection between the current object and a Ray
     // @param ray The ray to test
     // @returns Whether the two objects intersected
     bool Intersects(const Ray& ray) const
     {
-        float distance;
+        Real distance;
         return CollisionsHelper::RayIntersectsTriangle(ray, V0, V1, V2, distance);
     }
 
@@ -64,7 +65,7 @@ public:
     // @param ray The ray to test
     // @param distance When the method completes, contains the distance of the intersection, or 0 if there was no intersection
     // @returns Whether the two objects intersected
-    bool Intersects(const Ray& ray, float& distance) const
+    bool Intersects(const Ray& ray, Real& distance) const
     {
         return CollisionsHelper::RayIntersectsTriangle(ray, V0, V1, V2, distance);
     }
@@ -74,7 +75,7 @@ public:
     // @param distance When the method completes, contains the distance of the intersection, or 0 if there was no intersection
     // @param normal When the method completes, contains the intersection surface normal vector, or Vector3::Up if there was no intersection
     // @returns Whether the two objects intersected
-    bool Intersects(const Ray& ray, float& distance, Vector3& normal) const
+    bool Intersects(const Ray& ray, Real& distance, Vector3& normal) const
     {
         return CollisionsHelper::RayIntersectsTriangle(ray, V0, V1, V2, distance, normal);
     }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Threading;
@@ -20,6 +20,7 @@ namespace FlaxEditor.Modules
         private bool _updateOrFixedUpdateWasCalled;
         private long _breakpointHangFlag;
         private EditorWindow _enterPlayFocusedWindow;
+        private Guid[] _scenesToReload;
 
         internal SimulationModule(Editor editor)
         : base(editor)
@@ -69,9 +70,20 @@ namespace FlaxEditor.Modules
         }
 
         /// <summary>
-        /// Checks if play mode should start only with single frame update and then enter step mode.
+        /// Delegates between playing game and playing scenes in editor based on the user's editor preference.
         /// </summary>
-        public bool ShouldPlayModeStartWithStep => Editor.UI.IsPauseButtonChecked;
+        public void DelegatePlayOrStopPlayInEditor()
+        {
+            switch (Editor.Options.Options.Interface.PlayButtonAction)
+            {
+            case Options.InterfaceOptions.PlayAction.PlayGame:
+                Editor.Simulation.RequestPlayGameOrStopPlay();
+                return;
+            case Options.InterfaceOptions.PlayAction.PlayScenes:
+                Editor.Simulation.RequestPlayScenesOrStopPlay();
+                return;
+            }
+        }
 
         /// <summary>
         /// Returns true if play mode has been requested.
@@ -81,7 +93,7 @@ namespace FlaxEditor.Modules
         /// <summary>
         /// Requests start playing in editor.
         /// </summary>
-        public void RequestStartPlay()
+        public void RequestStartPlayScenes()
         {
             if (Editor.StateMachine.IsEditMode)
             {
@@ -92,6 +104,64 @@ namespace FlaxEditor.Modules
                 _isPlayModeRequested = true;
                 Editor.UI.UpdateToolstrip();
             }
+        }
+
+        /// <summary>
+        /// Requests playing game start or stop in editor from the project's configured FirstScene.
+        /// </summary>
+        public void RequestPlayGameOrStopPlay()
+        {
+            if (Editor.StateMachine.IsPlayMode)
+            {
+                RequestStopPlay();
+            }
+            else
+            {
+                RequestStartPlayGame();
+            }
+        }
+
+        /// <summary>
+        /// Requests start playing in editor from the project's configured FirstScene.
+        /// </summary>
+        public void RequestStartPlayGame()
+        {
+            if (!Editor.StateMachine.IsEditMode)
+            {
+                return;
+            }
+
+            var firstScene = Content.Settings.GameSettings.Load().FirstScene;
+            if (firstScene == Guid.Empty)
+            {
+                if (Level.IsAnySceneLoaded)
+                    Editor.Simulation.RequestStartPlayScenes();
+                return;
+            }
+            if (!FlaxEngine.Content.GetAssetInfo(firstScene.ID, out var info))
+            {
+                Editor.LogWarning("Invalid First Scene in Game Settings.");
+            }
+
+            // Load scenes after entering the play mode
+            _scenesToReload = new Guid[Level.ScenesCount];
+            for (int i = 0; i < _scenesToReload.Length; i++)
+                _scenesToReload[i] = Level.GetScene(i).ID;
+            Level.UnloadAllScenes();
+            Level.LoadScene(firstScene);
+
+            Editor.PlayModeEnd += OnPlayGameEnd;
+            RequestPlayScenesOrStopPlay();
+        }
+
+        private void OnPlayGameEnd()
+        {
+            Editor.PlayModeEnd -= OnPlayGameEnd;
+
+            Level.UnloadAllScenes();
+
+            foreach (var sceneId in _scenesToReload)
+                Level.LoadScene(sceneId);
         }
 
         /// <summary>
@@ -111,14 +181,14 @@ namespace FlaxEditor.Modules
         }
 
         /// <summary>
-        /// Requests the playing start or stop in editor.
+        /// Requests the playing scenes start or stop in editor.
         /// </summary>
-        public void RequestPlayOrStopPlay()
+        public void RequestPlayScenesOrStopPlay()
         {
             if (Editor.StateMachine.IsPlayMode)
                 RequestStopPlay();
             else
-                RequestStartPlay();
+                RequestStartPlayScenes();
         }
 
         /// <summary>
@@ -196,16 +266,7 @@ namespace FlaxEditor.Modules
             // Show Game widow if hidden
             if (gameWin != null && gameWin.FocusOnPlay)
             {
-                if (!gameWin.IsDocked)
-                {
-                    gameWin.ShowFloating();
-                }
-                else if (!gameWin.IsSelected)
-                {
-                    gameWin.SelectTab(false);
-                    gameWin.RootWindow?.Window?.Focus();
-                    FlaxEngine.GUI.RootControl.GameRoot.Focus();
-                }
+                gameWin.FocusGameViewport();
             }
 
             Editor.Log("[PlayMode] Enter");
@@ -236,16 +297,15 @@ namespace FlaxEditor.Modules
                 if (_isPlayModeRequested)
                 {
                     // Check if editor has been compiled and scripting reloaded (there is no pending reload action)
-                    if ((ScriptsBuilder.IsReady || !Editor.Options.Options.General.AutoReloadScriptsOnMainWindowFocus) && !Level.IsAnyActionPending)
+                    if ((ScriptsBuilder.IsReady || !Editor.Options.Options.General.AutoReloadScriptsOnMainWindowFocus) && !Level.IsAnyActionPending && Level.IsAnySceneLoaded)
                     {
                         // Clear flag
                         _isPlayModeRequested = false;
 
                         // Enter play mode
+                        var shouldPlayModeStartWithStep = Editor.UI.IsPauseButtonChecked;
                         Editor.StateMachine.GoToState<PlayingState>();
-
-                        // Check if move just by one frame
-                        if (ShouldPlayModeStartWithStep)
+                        if (shouldPlayModeStartWithStep)
                         {
                             RequestPausePlay();
                         }

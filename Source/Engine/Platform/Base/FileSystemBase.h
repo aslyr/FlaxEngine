@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -35,12 +35,13 @@ enum class SpecialFolder
     Temporary,
 };
 
-API_INJECT_CPP_CODE("#include \"Engine/Platform/FileSystem.h\"");
+API_INJECT_CODE(cpp, "#include \"Engine/Platform/FileSystem.h\"");
 
 /// <summary>
 /// Platform implementation of filesystem service.
 /// </summary>
-API_CLASS(Static, Name="FileSystem") class FLAXENGINE_API FileSystemBase
+API_CLASS(Static, Name="FileSystem", Tag="NativeInvokeUseName")
+class FLAXENGINE_API FileSystemBase
 {
 DECLARE_SCRIPTING_TYPE_MINIMAL(FileSystemBase);
 
@@ -49,11 +50,16 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(FileSystemBase);
     /// </summary>
     /// <param name="parentWindow">The parent window or null.</param>
     /// <param name="initialDirectory">The initial directory.</param>
-    /// <param name="filter">The custom filter.</param>
+    /// <param name="filter">The file filter string as null-terminated pairs of name and list of extensions. Multiple file extensions must be separated with semicolon.</param>
     /// <param name="multiSelect">True if allow multiple files to be selected, otherwise use single-file mode.</param>
     /// <param name="title">The dialog title.</param>
     /// <param name="filenames">The output names of the files picked by the user.</param>
     /// <returns>True if failed, otherwise false.</returns>
+    /// <remarks>
+    /// Example file filters:
+    ///    "All Files\0*.*"
+    ///    "All Files\0*.*\0Image Files\0*.png;*.jpg"
+    /// </remarks>
     API_FUNCTION() static bool ShowOpenFileDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& filter, bool multiSelect, const StringView& title, API_PARAM(Out) Array<String, HeapAllocation>& filenames);
 
     /// <summary>
@@ -61,11 +67,16 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(FileSystemBase);
     /// </summary>
     /// <param name="parentWindow">The parent window.</param>
     /// <param name="initialDirectory">The initial directory.</param>
-    /// <param name="filter">The filter.</param>
+    /// <param name="filter">The file filter string as null-terminated pairs of name and list of extensions. Multiple file extensions must be separated with semicolon.</param>
     /// <param name="multiSelect">True if allow multiple files to be selected, otherwise use single-file mode.</param>
     /// <param name="title">The title.</param>
     /// <param name="filenames">The output names of the files picked by the user.</param>
     /// <returns>True if failed, otherwise false.</returns>
+    /// <remarks>
+    /// Example file filters:
+    ///    "All Files\0*.*"
+    ///    "All Files\0*.*\0Image Files\0*.png;*.jpg"
+    /// </remarks>
     API_FUNCTION() static bool ShowSaveFileDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& filter, bool multiSelect, const StringView& title, API_PARAM(Out) Array<String, HeapAllocation>& filenames);
 
     /// <summary>
@@ -76,7 +87,7 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(FileSystemBase);
     /// <param name="title">The dialog title.</param>
     /// <param name="path">The output path.</param>
     /// <returns>True if failed, otherwise false.</returns>
-    API_FUNCTION() static bool ShowBrowseFolderDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& title, API_PARAM(Out) StringView& path);
+    API_FUNCTION() static bool ShowBrowseFolderDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& title, API_PARAM(Out) String& path);
 
     /// <summary>
     /// Opens a standard file explorer application and navigates to the given directory.
@@ -123,6 +134,7 @@ public:
 
     static bool CopyFile(const String& dst, const String& src);
     static bool CopyDirectory(const String& dst, const String& src, bool withSubDirectories);
+    static uint64 GetDirectorySize(const StringView& path);
 
 public:
 

@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "../RendererPass.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUPipelineStatePermutations.h"
 
 /// <summary>

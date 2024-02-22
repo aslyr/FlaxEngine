@@ -1,11 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 /// <summary>
 /// Current GPU particles emitter shader version.
 /// </summary>
-#define PARTICLE_GPU_GRAPH_VERSION 9
+#define PARTICLE_GPU_GRAPH_VERSION 10
 
 #if COMPILE_WITH_PARTICLE_GPU_GRAPH
 
@@ -18,7 +18,6 @@ typedef ShaderGraphBox ParticleEmitterGraphGPUBox;
 class ParticleEmitterGraphGPUNode : public ParticleEmitterGraphNode<ShaderGraphNode<>>
 {
 public:
-
     ParticleEmitterGraphGPUNode()
         : ParticleEmitterGraphNode<ShaderGraphNode<>>()
     {
@@ -37,7 +36,6 @@ public:
 class ParticleEmitterGraphGPU : public ParticleEmitterGraph<ShaderGraph<ParticleEmitterGraphGPUNode, ParticleEmitterGraphGPUBox, ParticleSystemParameter>, ParticleEmitterGraphGPUNode, ShaderGraphValue>
 {
 public:
-
     /// <summary>
     /// Clears all the cached values.
     /// </summary>
@@ -56,7 +54,6 @@ public:
 class ParticleEmitterGPUGenerator : public ShaderGenerator
 {
 private:
-
     enum class ParticleContextType
     {
         Initialize,
@@ -84,7 +81,6 @@ private:
     Array<ParticleEmitterGraphGPU*, InlinedAllocation<16>> _graphs;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="ParticleEmitterGPUGenerator"/> class.
     /// </summary>
@@ -98,7 +94,6 @@ public:
     /// <summary>
     /// Gets the root graph.
     /// </summary>
-    /// <returns>The base graph.</returns>
     FORCE_INLINE ParticleEmitterGraphGPU* GetRootGraph() const
     {
         return _graphs.First();
@@ -120,7 +115,6 @@ public:
     bool Generate(WriteStream& source, BytesContainer& parametersData, int32& customDataSize);
 
 private:
-
     void clearCache();
 
     void ProcessModule(Node* node);
@@ -155,6 +149,16 @@ private:
     Value GetValue(Box* box)
     {
         return box->HasConnection() ? eatBox(box->GetParent<Node>(), box->FirstConnection()) : Value::Zero;
+    }
+
+    bool IsLocalSimulationSpace() const
+    {
+        return GetRootGraph()->SimulationSpace == ParticlesSimulationSpace::Local;
+    }
+
+    bool IsWorldSimulationSpace() const
+    {
+        return GetRootGraph()->SimulationSpace == ParticlesSimulationSpace::World;
     }
 };
 

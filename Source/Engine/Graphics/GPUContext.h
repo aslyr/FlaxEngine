@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -9,8 +9,6 @@
 #include "PixelFormat.h"
 #include "Config.h"
 
-struct Color;
-struct Vector4;
 class GPUConstantBuffer;
 class GPUShaderProgramCS;
 class GPUBuffer;
@@ -31,7 +29,7 @@ class GPUBufferView;
 /// </summary>
 API_STRUCT() struct GPUDispatchIndirectArgs
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDispatchIndirectArgs);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDispatchIndirectArgs);
 
     /// <summary>
     /// The X dimension of dispatch size.
@@ -54,7 +52,7 @@ DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDispatchIndirectArgs);
 /// </summary>
 API_STRUCT() struct GPUDrawIndirectArgs
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndirectArgs);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndirectArgs);
 
     /// <summary>
     /// The number of vertices to draw for each instance.
@@ -82,7 +80,7 @@ DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndirectArgs);
 /// </summary>
 API_STRUCT() struct GPUDrawIndexedIndirectArgs
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndexedIndirectArgs);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndexedIndirectArgs);
 
     /// <summary>
     /// The number of indices to draw for each instance.
@@ -113,20 +111,17 @@ DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUDrawIndexedIndirectArgs);
 /// <summary>
 /// Interface for GPU device context that can record and send graphics commands to the GPU in a sequence.
 /// </summary>
-API_CLASS(Sealed, NoSpawn) class FLAXENGINE_API GPUContext : public PersistentScriptingObject
+API_CLASS(Sealed, NoSpawn) class FLAXENGINE_API GPUContext : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUContext);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(GPUContext);
 private:
-
     GPUDevice* _device;
 
 protected:
-
     double _lastRenderTime = -1;
     GPUContext(GPUDevice* device);
 
 public:
-
     /// <summary>
     /// Gets the graphics device.
     /// </summary>
@@ -136,7 +131,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Begins new frame and enters commands collecting mode.
     /// </summary>
@@ -148,7 +142,6 @@ public:
     virtual void FrameEnd();
 
 public:
-
 #if GPU_ALLOW_PROFILE_EVENTS
 
     /// <summary>
@@ -169,7 +162,6 @@ public:
 #endif
 
 public:
-
     /// <summary>
     /// Gets the native pointer to the underlying graphics device context. It's a low-level platform-specific handle.
     /// </summary>
@@ -182,7 +174,6 @@ public:
     virtual bool IsDepthBufferBinded() = 0;
 
 public:
-
     /// <summary>
     /// Clears texture surface with a color. Supports volumetric textures and texture arrays (including cube textures).
     /// </summary>
@@ -198,14 +189,34 @@ public:
     API_FUNCTION() virtual void ClearDepth(GPUTextureView* depthBuffer, float depthValue = 1.0f) = 0;
 
     /// <summary>
-    /// Clears an unordered access resource with a float value.
+    /// Clears an unordered access buffer with a float value.
     /// </summary>
     /// <param name="buf">The buffer to clear.</param>
     /// <param name="value">The clear value.</param>
-    API_FUNCTION() virtual void ClearUA(GPUBuffer* buf, const Vector4& value) = 0;
+    API_FUNCTION() virtual void ClearUA(GPUBuffer* buf, const Float4& value) = 0;
+
+    /// <summary>
+    /// Clears an unordered access buffer with a unsigned value.
+    /// </summary>
+    /// <param name="buf">The buffer to clear.</param>
+    /// <param name="value">The clear value.</param>
+    virtual void ClearUA(GPUBuffer* buf, const uint32 value[4]) = 0;
+
+    /// <summary>
+    /// Clears an unordered access texture with a unsigned value.
+    /// </summary>
+    /// <param name="texture">The texture to clear.</param>
+    /// <param name="value">The clear value.</param>
+    virtual void ClearUA(GPUTexture* texture, const uint32 value[4]) = 0;
+
+    /// <summary>
+    /// Clears an unordered access texture with a float value.
+    /// </summary>
+    /// <param name="texture">The texture to clear.</param>
+    /// <param name="value">The clear value.</param>
+    virtual void ClearUA(GPUTexture* texture, const Float4& value) = 0;
 
 public:
-
     /// <summary>
     /// Updates the buffer data.
     /// </summary>
@@ -279,7 +290,6 @@ public:
     API_FUNCTION() virtual void CopySubresource(GPUResource* dstResource, uint32 dstSubresource, GPUResource* srcResource, uint32 srcSubresource) = 0;
 
 public:
-
     /// <summary>
     /// Unbinds all the render targets and flushes the change with the driver (used to prevent driver detection of resource hazards, eg. when down-scaling the texture).
     /// </summary>
@@ -306,14 +316,18 @@ public:
     API_FUNCTION() virtual void SetRenderTarget(GPUTextureView* depthBuffer, const Span<GPUTextureView*>& rts) = 0;
 
     /// <summary>
-    /// Sets the render target and unordered access output.
+    /// Sets the blend factor that modulate values for a pixel shader, render target, or both.
     /// </summary>
-    /// <param name="rt">The render target to bind to output.</param>
-    /// <param name="uaOutput">The unordered access buffer to bind to output.</param>
-    API_FUNCTION() virtual void SetRenderTarget(GPUTextureView* rt, GPUBuffer* uaOutput) = 0;
+    /// <param name="value">Blend factors, one for each RGBA component.</param>
+    API_FUNCTION() virtual void SetBlendFactor(const Float4& value) = 0;
+
+    /// <summary>
+    /// Sets the reference value for depth stencil tests.
+    /// </summary>
+    /// <param name="value">Reference value to perform against when doing a depth-stencil test.</param>
+    API_FUNCTION() virtual void SetStencilRef(uint32 value) = 0;
 
 public:
-
     /// <summary>
     /// Unbinds all shader resource slots and flushes the change with the driver (used to prevent driver detection of resource hazards, eg. when down-scaling the texture).
     /// </summary>
@@ -405,7 +419,6 @@ public:
     API_FUNCTION() virtual void BindSampler(int32 slot, GPUSampler* sampler) = 0;
 
 public:
-
     /// <summary>
     /// Updates the constant buffer data.
     /// </summary>
@@ -414,7 +427,6 @@ public:
     API_FUNCTION() virtual void UpdateCB(GPUConstantBuffer* cb, const void* data) = 0;
 
 public:
-
     /// <summary>
     /// Executes a command list from a thread group.
     /// </summary>
@@ -522,7 +534,6 @@ public:
     API_FUNCTION() virtual void DrawIndexedInstancedIndirect(GPUBuffer* bufferForArgs, uint32 offsetForArgs) = 0;
 
 public:
-
     /// <summary>
     /// Sets the rendering viewport and scissor rectangle.
     /// </summary>
@@ -539,7 +550,7 @@ public:
     /// <summary>
     /// Sets the rendering viewport and scissor rectangle.
     /// </summary>
-    /// <param name="viewport">The viewport.</param>
+    /// <param name="viewport">The viewport (in pixels).</param>
     API_FUNCTION() FORCE_INLINE void SetViewportAndScissors(const Viewport& viewport)
     {
         SetViewport(viewport);
@@ -561,17 +572,16 @@ public:
     /// <summary>
     /// Sets the rendering viewport.
     /// </summary>
-    /// <param name="viewport">The viewport.</param>
+    /// <param name="viewport">The viewport (in pixels).</param>
     API_FUNCTION() virtual void SetViewport(API_PARAM(Ref) const Viewport& viewport) = 0;
 
     /// <summary>
     /// Sets the scissor rectangle.
     /// </summary>
-    /// <param name="scissorRect">The scissor rectangle.</param>
+    /// <param name="scissorRect">The scissor rectangle (in pixels).</param>
     API_FUNCTION() virtual void SetScissor(API_PARAM(Ref) const Rectangle& scissorRect) = 0;
 
 public:
-
     /// <summary>
     /// Sets the graphics pipeline state.
     /// </summary>
@@ -598,4 +608,14 @@ public:
     /// Flushes the command buffer (calls GPU execution).
     /// </summary>
     API_FUNCTION() virtual void Flush() = 0;
+
+    /// <summary>
+    /// Sets the state of the resource (or subresource).
+    /// </summary>
+    virtual void SetResourceState(GPUResource* resource, uint64 state, int32 subresource = -1);
+
+    /// <summary>
+    /// Forces graphics backend to rebind descriptors after command list was used by external graphics library.
+    /// </summary>
+    virtual void ForceRebindDescriptors();
 };

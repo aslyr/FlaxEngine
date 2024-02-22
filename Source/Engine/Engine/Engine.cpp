@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Engine.h"
 #include "Game.h"
@@ -39,7 +39,7 @@
 #include "Engine/Scripting/ManagedCLR/MAssembly.h"
 #include "Engine/Scripting/ManagedCLR/MClass.h"
 #include "Engine/Scripting/ManagedCLR/MMethod.h"
-#include "Engine/Scripting/MException.h"
+#include "Engine/Scripting/ManagedCLR/MException.h"
 #include "Engine/Core/Config/PlatformSettings.h"
 #endif
 
@@ -65,6 +65,7 @@ Action Engine::FixedUpdate;
 Action Engine::Update;
 TaskGraph* Engine::UpdateGraph = nullptr;
 Action Engine::LateUpdate;
+Action Engine::LateFixedUpdate;
 Action Engine::Draw;
 Action Engine::Pause;
 Action Engine::Unpause;
@@ -84,6 +85,14 @@ int32 Engine::Main(const Char* cmdLine)
         return -1;
     }
 
+#if FLAX_TESTS
+    // Configure engine for test running environment
+    CommandLine::Options.Headless = true;
+    CommandLine::Options.Null = true;
+    CommandLine::Options.Mute = true;
+    CommandLine::Options.Std = true;
+#endif
+
     if (Platform::Init())
     {
         Platform::Fatal(TEXT("Cannot init platform."));
@@ -92,15 +101,25 @@ int32 Engine::Main(const Char* cmdLine)
 
     Platform::SetHighDpiAwarenessEnabled(!CommandLine::Options.LowDPI.IsTrue());
     Time::StartupTime = DateTime::Now();
-#if COMPILE_WITH_PROFILER
-    ProfilerCPU::Enabled = true;
-#endif
     Globals::StartupFolder = Globals::BinariesFolder = Platform::GetMainDirectory();
 #if USE_EDITOR
     Globals::StartupFolder /= TEXT("../../../..");
+#if PLATFORM_MAC
+    if (Globals::BinariesFolder.EndsWith(TEXT(".app/Contents")))
+    {
+        // If running editor from application package on macOS
+        Globals::StartupFolder = Globals::BinariesFolder;
+        Globals::BinariesFolder /= TEXT("MacOS");
+    }
+#endif
 #endif
     StringUtils::PathRemoveRelativeParts(Globals::StartupFolder);
     FileSystem::NormalizePath(Globals::BinariesFolder);
+
+    FileSystem::GetSpecialFolderPath(SpecialFolder::Temporary, Globals::TemporaryFolder);
+    if (Globals::TemporaryFolder.IsEmpty())
+        Platform::Fatal(TEXT("Failed to gather temporary folder directory."));
+    Globals::TemporaryFolder /= Guid::New().ToString(Guid::FormatType::D);
 
     // Load game info or project info
     {
@@ -110,7 +129,6 @@ int32 Engine::Main(const Char* cmdLine)
     }
 
     EngineImpl::InitPaths();
-
     EngineImpl::InitLog();
 
 #if USE_EDITOR
@@ -133,7 +151,7 @@ int32 Engine::Main(const Char* cmdLine)
     Platform::BeforeRun();
     EngineImpl::InitMainWindow();
     Application::BeforeRun();
-#if !USE_EDITOR && (PLATFORM_WINDOWS || PLATFORM_LINUX)
+#if !USE_EDITOR && (PLATFORM_WINDOWS || PLATFORM_LINUX || PLATFORM_MAC)
     EngineImpl::RunInBackground = PlatformSettings::Get()->RunInBackground;
 #endif
     Log::Logger::WriteFloor();
@@ -146,7 +164,7 @@ int32 Engine::Main(const Char* cmdLine)
     while (!ShouldExit())
     {
         // Reduce CPU usage by introducing idle time if the engine is running very fast and has enough time to spend
-        if ((useSleep && Time::UpdateFPS > 0) || !Platform::GetHasFocus())
+        if ((useSleep && Time::UpdateFPS > ZeroTolerance) || !Platform::GetHasFocus())
         {
             double nextTick = Time::GetNextTick();
             double timeToTick = nextTick - Platform::GetTimeSeconds();
@@ -185,6 +203,7 @@ int32 Engine::Main(const Char* cmdLine)
         if (Time::OnBeginPhysics())
         {
             OnFixedUpdate();
+            OnLateFixedUpdate();
             Time::OnEndPhysics();
         }
 
@@ -195,9 +214,6 @@ int32 Engine::Main(const Char* cmdLine)
             Time::OnEndDraw();
             FrameMark;
         }
-
-        // Collect physics simulation results (does nothing if Simulate hasn't been called in the previous loop step)
-        Physics::CollectResults();
     }
 
     // Call on exit event
@@ -225,6 +241,8 @@ void Engine::Exit(int32 exitCode)
 
 void Engine::RequestExit(int32 exitCode)
 {
+    if (Globals::IsRequestingExit)
+        return;
 #if USE_EDITOR
     // Send to editor (will leave play mode if need to)
     if (Editor::Managed->OnAppExit())
@@ -250,7 +268,7 @@ void Engine::OnFixedUpdate()
     // Update services
     EngineService::OnFixedUpdate();
 
-    if (!Time::GetGamePaused() && Physics::AutoSimulation)
+    if (!Time::GetGamePaused())
     {
         const float dt = Time::Physics.DeltaTime.GetTotalSeconds();
         Physics::Simulate(dt);
@@ -258,6 +276,20 @@ void Engine::OnFixedUpdate()
         // After this point we should not modify physic objects state (rendering operations is mostly readonly)
         // That's because auto-simulation mode is performing rendering during physics simulation
     }
+}
+
+void Engine::OnLateFixedUpdate()
+{
+    PROFILE_CPU_NAMED("Late Fixed Update");
+
+    // Call event
+    LateFixedUpdate();
+
+    // Update services
+    EngineService::OnLateFixedUpdate();
+
+    // Collect physics simulation results (does nothing if Simulate hasn't been called in the previous loop step)
+    Physics::CollectResults();
 }
 
 void Engine::OnUpdate()
@@ -396,6 +428,19 @@ JsonAsset* Engine::GetCustomSettings(const StringView& key)
     return Content::LoadAsync<JsonAsset>(assetId);
 }
 
+void Engine::FocusGameViewport()
+{
+#if USE_EDITOR
+    Editor::Managed->FocusGameViewport();
+#else
+    if (MainWindow)
+    {
+        MainWindow->BringToFront();
+        MainWindow->Focus();
+    }
+#endif
+}
+
 bool Engine::HasGameViewportFocus()
 {
 #if USE_EDITOR
@@ -479,7 +524,13 @@ void EngineImpl::InitLog()
     LOG(Info, "Compiled for Dev Environment");
 #endif
     LOG(Info, "Version " FLAXENGINE_VERSION_TEXT);
-    LOG(Info, "Compiled: {0} {1}", TEXT(__DATE__), TEXT(__TIME__));
+    const Char* cpp = TEXT("?");
+    if (__cplusplus == 202101L) cpp = TEXT("C++23");
+    else if (__cplusplus == 202002L) cpp = TEXT("C++20");
+    else if (__cplusplus == 201703L) cpp = TEXT("C++17");
+    else if (__cplusplus == 201402L) cpp = TEXT("C++14");
+    else if (__cplusplus == 201103L) cpp = TEXT("C++11");
+    LOG(Info, "Compiled: {0} {1} {2}", TEXT(__DATE__), TEXT(__TIME__), cpp);
 #ifdef _MSC_VER
     const String mcsVer = StringUtils::ToString(_MSC_FULL_VER);
     LOG(Info, "Compiled with Visual C++ {0}.{1}.{2}.{3:0^2d}", mcsVer.Substring(0, 2), mcsVer.Substring(2, 2), mcsVer.Substring(4, 5), _MSC_BUILD);
@@ -497,7 +548,8 @@ void EngineImpl::InitLog()
     LOG(Info, "Product: {0}, Company: {1}", Globals::ProductName, Globals::CompanyName);
     LOG(Info, "Current culture: {0}", Platform::GetUserLocaleName());
     LOG(Info, "Command line: {0}", CommandLine);
-    LOG(Info, "Base directory: {0}", Globals::StartupFolder);
+    LOG(Info, "Base folder: {0}", Globals::StartupFolder);
+    LOG(Info, "Binaries folder: {0}", Globals::BinariesFolder);
     LOG(Info, "Temporary folder: {0}", Globals::TemporaryFolder);
     LOG(Info, "Project folder: {0}", Globals::ProjectFolder);
 #if USE_EDITOR
@@ -512,12 +564,6 @@ void EngineImpl::InitLog()
 
 void EngineImpl::InitPaths()
 {
-    // Prepare temp folder path
-    FileSystem::GetSpecialFolderPath(SpecialFolder::Temporary, Globals::TemporaryFolder);
-    if (Globals::TemporaryFolder.IsEmpty())
-        Platform::Fatal(TEXT("Failed to gather temporary folder directory."));
-    Globals::TemporaryFolder /= Guid::New().ToString(Guid::FormatType::D);
-
     // Cache other global paths
     FileSystem::GetSpecialFolderPath(SpecialFolder::LocalAppData, Globals::ProductLocalFolder);
     if (Globals::ProductLocalFolder.IsEmpty())
@@ -527,15 +573,21 @@ void EngineImpl::InitPaths()
 #endif
 #if USE_EDITOR
     Globals::EngineContentFolder = Globals::StartupFolder / TEXT("Content");
+#if USE_MONO
 #if PLATFORM_WINDOWS
     Globals::MonoPath = Globals::StartupFolder / TEXT("Source/Platforms/Editor/Windows/Mono");
 #elif PLATFORM_LINUX
     Globals::MonoPath = Globals::StartupFolder / TEXT("Source/Platforms/Editor/Linux/Mono");
+#elif PLATFORM_MAC
+    Globals::MonoPath = Globals::StartupFolder / TEXT("Source/Platforms/Editor/Mac/Mono");
 #else
     #error "Please specify the Mono data location for Editor on this platform."
 #endif
+#endif
 #else
+#if USE_MONO
     Globals::MonoPath = Globals::StartupFolder / TEXT("Mono");
+#endif
 #endif
     Globals::ProjectContentFolder = Globals::ProjectFolder / TEXT("Content");
 #if USE_EDITOR
@@ -543,13 +595,15 @@ void EngineImpl::InitPaths()
     Globals::ProjectCacheFolder = Globals::ProjectFolder / TEXT("Cache");
 #endif
 
+#if USE_MONO
     // We must ensure that engine is located in folder which path contains only ANSI characters
     // Why? Mono lib must have etc and lib folders at ANSI path
     // But project can be located on Unicode path
     if (!Globals::StartupFolder.IsANSI())
         Platform::Fatal(TEXT("Cannot start application in directory which name contains non-ANSI characters."));
+#endif
 
-#if !PLATFORM_SWITCH
+#if !PLATFORM_SWITCH && !FLAX_TESTS
     // Setup directories
     if (FileSystem::DirectoryExists(Globals::TemporaryFolder))
         FileSystem::DeleteDirectory(Globals::TemporaryFolder);
@@ -605,7 +659,7 @@ void EngineImpl::InitMainWindow()
         return;
     }
 
-#if !USE_EDITOR
+#if !USE_EDITOR && !COMPILE_WITHOUT_CSHARP
     // Inform the managed runtime about the window (game can link GUI to it)
     auto scriptingClass = Scripting::GetStaticClass();
     ASSERT(scriptingClass);
@@ -613,7 +667,7 @@ void EngineImpl::InitMainWindow()
     ASSERT(setWindowMethod);
     void* params[1];
     params[0] = Engine::MainWindow->GetOrCreateManagedInstance();
-    MonoObject* exception = nullptr;
+    MObject* exception = nullptr;
     setWindowMethod->Invoke(nullptr, params, &exception);
     if (exception)
     {

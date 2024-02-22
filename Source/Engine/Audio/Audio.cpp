@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Audio.h"
 #include "AudioBackend.h"
@@ -18,6 +18,9 @@
 #if AUDIO_API_PS4
 #include "Platforms/PS4/Engine/Audio/AudioBackendPS4.h"
 #endif
+#if AUDIO_API_PS5
+#include "Platforms/PS5/Engine/Audio/AudioBackendPS5.h"
+#endif
 #if AUDIO_API_SWITCH
 #include "Platforms/Switch/Engine/Audio/AudioBackendSwitch.h"
 #endif
@@ -28,17 +31,9 @@
 #include "XAudio2/AudioBackendXAudio2.h"
 #endif
 
-const Char* ToString(AudioFormat value)
+float AudioDataInfo::GetLength() const
 {
-    switch (value)
-    {
-    case AudioFormat::Raw:
-        return TEXT("Raw");
-    case AudioFormat::Vorbis:
-        return TEXT("Vorbis");
-    default:
-        return TEXT("");
-    }
+    return (float)NumSamples / (float)Math::Max(1U, SampleRate * NumChannels);
 }
 
 Array<AudioListener*> Audio::Listeners;
@@ -54,6 +49,7 @@ namespace
     float Volume = 1.0f;
     int32 ActiveDeviceIndex = -1;
     bool MuteOnFocusLoss = true;
+    bool EnableHRTF = true;
 }
 
 class AudioService : public EngineService
@@ -88,6 +84,11 @@ namespace
 void AudioSettings::Apply()
 {
     ::MuteOnFocusLoss = MuteOnFocusLoss;
+    if (AudioBackend::Instance != nullptr)
+    {
+        Audio::SetDopplerFactor(DopplerFactor);
+        Audio::SetEnableHRTF(EnableHRTF);
+    }
 }
 
 AudioDevice* Audio::GetActiveDevice()
@@ -132,6 +133,19 @@ void Audio::SetDopplerFactor(float value)
 {
     value = Math::Max(0.0f, value);
     AudioBackend::SetDopplerFactor(value);
+}
+
+bool Audio::GetEnableHRTF()
+{
+    return EnableHRTF;
+}
+
+void Audio::SetEnableHRTF(bool value)
+{
+    if (EnableHRTF == value)
+        return;
+    EnableHRTF = value;
+    AudioBackend::Listener::ReinitializeAll();
 }
 
 void Audio::OnAddListener(AudioListener* listener)
@@ -182,44 +196,34 @@ bool AudioService::Init()
     AudioBackend* backend = nullptr;
 #if AUDIO_API_NONE
     if (mute)
-    {
         backend = New<AudioBackendNone>();
-    }
 #endif
 #if AUDIO_API_PS4
     if (!backend)
-    {
         backend = New<AudioBackendPS4>();
-    }
+#endif
+#if AUDIO_API_PS5
+    if (!backend)
+        backend = New<AudioBackendPS5>();
 #endif
 #if AUDIO_API_SWITCH
     if (!backend)
-    {
         backend = New<AudioBackendSwitch>();
-    }
 #endif
 #if AUDIO_API_OPENAL
     if (!backend)
-    {
         backend = New<AudioBackendOAL>();
-    }
 #endif
 #if AUDIO_API_XAUDIO2
 	if (!backend)
-	{
 		backend = New<AudioBackendXAudio2>();
-	}
 #endif
 #if AUDIO_API_NONE
     if (!backend)
-    {
         backend = New<AudioBackendNone>();
-    }
 #else
     if (mute)
-    {
         LOG(Warning, "Cannot use mute audio. Null Audio Backend not available on this platform.");
-    }
 #endif
     if (backend == nullptr)
     {

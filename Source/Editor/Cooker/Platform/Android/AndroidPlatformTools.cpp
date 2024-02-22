@@ -5,18 +5,20 @@
 #include "AndroidPlatformTools.h"
 #include "Editor/Editor.h"
 #include "Editor/ProjectInfo.h"
+#include "Editor/Cooker/GameCooker.h"
+#include "Editor/Utilities/EditorUtilities.h"
 #include "Engine/Platform/File.h"
 #include "Engine/Platform/FileSystem.h"
+#include "Engine/Platform/CreateProcessSettings.h"
 #include "Engine/Platform/Android/AndroidPlatformSettings.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
 #include "Engine/Graphics/Textures/TextureData.h"
 #include "Engine/Core/Config/GameSettings.h"
 #include "Engine/Core/Config/BuildSettings.h"
-#include "Editor/Utilities/EditorUtilities.h"
 #include "Engine/Content/Content.h"
 #include "Engine/Content/JsonAsset.h"
 
-IMPLEMENT_SETTINGS_GETTER(AndroidPlatformSettings, AndroidPlatform);
+IMPLEMENT_ENGINE_SETTINGS_GETTER(AndroidPlatformSettings, AndroidPlatform);
 
 namespace
 {
@@ -98,7 +100,14 @@ PixelFormat AndroidPlatformTools::GetTextureFormat(CookingData& data, TextureBas
         }
     }
 
-    return format;
+    switch (format)
+    {
+        // Not all Android devices support R11G11B10 textures (eg. M6 Note)
+    case PixelFormat::R11G11B10_Float:
+        return PixelFormat::R16G16B16A16_UNorm;
+    default:
+        return format;
+    }
 }
 
 void AndroidPlatformTools::OnBuildStarted(CookingData& data)
@@ -107,8 +116,6 @@ void AndroidPlatformTools::OnBuildStarted(CookingData& data)
     data.DataOutputPath /= TEXT("app/assets");
     data.NativeCodeOutputPath /= TEXT("app/assets");
     data.ManagedCodeOutputPath /= TEXT("app/assets");
-
-    PlatformTools::OnBuildStarted(data);
 }
 
 bool AndroidPlatformTools::OnPostProcess(CookingData& data)
@@ -132,33 +139,8 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
 
     // Setup package name (eg. com.company.project)
     String packageName = platformSettings->PackageName;
-    {
-        String productName = gameSettings->ProductName;
-        productName.Replace(TEXT(" "), TEXT(""));
-        productName.Replace(TEXT("."), TEXT(""));
-        productName.Replace(TEXT("-"), TEXT(""));
-        String companyName = gameSettings->CompanyName;
-        companyName.Replace(TEXT(" "), TEXT(""));
-        companyName.Replace(TEXT("."), TEXT(""));
-        companyName.Replace(TEXT("-"), TEXT(""));
-        packageName.Replace(TEXT("${PROJECT_NAME}"), *productName, StringSearchCase::IgnoreCase);
-        packageName.Replace(TEXT("${COMPANY_NAME}"), *companyName, StringSearchCase::IgnoreCase);
-        packageName = packageName.ToLower();
-        for (int32 i = 0; i < packageName.Length(); i++)
-        {
-            const auto c = packageName[i];
-            if (c != '_' && c != '.' && !StringUtils::IsAlnum(c))
-            {
-                LOG(Error, "Android Package Name \'{0}\' contains invalid character. Only letters, numbers, dots and underscore characters are allowed.", packageName);
-                return true;
-            }
-        }
-        if (packageName.IsEmpty())
-        {
-            LOG(Error, "Android Package Name is empty.", packageName);
-            return true;
-        }
-    }
+    if (EditorUtilities::FormatAppPackageName(packageName))
+        return true;
 
     // Setup Android application permissions
     HashSet<String> permissionsList;
@@ -185,6 +167,30 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
     {
         LOG(Info, "   {0}", e.Item);
         permissions += String::Format(TEXT("\n    <uses-permission android:name=\"{0}\" />"), e.Item);
+    }
+
+    // Setup default Android screen orientation
+    auto defaultOrienation = platformSettings->DefaultOrientation;
+    String orientation = String("fullSensor");
+    switch (defaultOrienation)
+    {
+    case AndroidPlatformSettings::ScreenOrientation::Portrait:
+        orientation = String("portrait");
+        break;
+    case AndroidPlatformSettings::ScreenOrientation::PortraitReverse:
+        orientation = String("reversePortrait");
+        break;
+    case AndroidPlatformSettings::ScreenOrientation::LandscapeRight:
+        orientation = String("landscape");
+        break;
+    case AndroidPlatformSettings::ScreenOrientation::LandscapeLeft:
+        orientation = String("reverseLandscape");
+        break;
+    case AndroidPlatformSettings::ScreenOrientation::AutoRotation:
+        orientation = String("fullSensor");
+        break;
+    default:
+        break;
     }
 
     // Setup Android application attributes
@@ -241,6 +247,7 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
     EditorUtilities::ReplaceInFile(manifestPath, TEXT("${PackageName}"), packageName);
     EditorUtilities::ReplaceInFile(manifestPath, TEXT("${ProjectVersion}"), projectVersion);
     EditorUtilities::ReplaceInFile(manifestPath, TEXT("${AndroidPermissions}"), permissions);
+    EditorUtilities::ReplaceInFile(manifestPath, TEXT("${DefaultOrientation}"), orientation);
     EditorUtilities::ReplaceInFile(manifestPath, TEXT("${AndroidAttributes}"), attributes);
     const String stringsPath = data.OriginalOutputPath / TEXT("app/src/main/res/values/strings.xml");
     EditorUtilities::ReplaceInFile(stringsPath, TEXT("${ProjectName}"), gameSettings->ProductName);
@@ -259,7 +266,7 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
         }
     }
 
-    // Generate Mono files hash id used to skip deploying Mono files if already extracted on device (Mono cannot access files packed into .apk via unix file access)
+    // Generate Dotnet files hash id used to skip deploying Dotnet files if already extracted on device (Dotnet cannot access files packed into .apk via unix file access)
     File::WriteAllText(assetsPath / TEXT("hash.txt"), Guid::New().ToString(), Encoding::ANSI);
 
     // TODO: expose event to inject custom gradle and manifest options or custom binaries into app
@@ -269,6 +276,7 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
     {
         return false;
     }
+    GameCooker::PackageFiles();
 
     // Validate environment variables
     Dictionary<String, String> envVars;
@@ -280,13 +288,14 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
         return true;
     }
     String androidSdk;
-    if (!envVars.TryGet(TEXT("ANDROID_SDK"), androidSdk) || !FileSystem::DirectoryExists(androidSdk))
+    if (!envVars.TryGet(TEXT("ANDROID_HOME"), androidSdk) || !FileSystem::DirectoryExists(androidSdk))
     {
-        LOG(Error, "Missing or invalid ANDROID_SDK env variable. {0}", androidSdk);
-        return true;
+        if (!envVars.TryGet(TEXT("ANDROID_SDK"), androidSdk) || !FileSystem::DirectoryExists(androidSdk))
+        {
+            LOG(Error, "Missing or invalid ANDROID_HOME env variable. {0}", androidSdk);
+            return true;
+        }
     }
-    if (!envVars.ContainsKey(TEXT("ANDROID_SDK_ROOT")))
-        envVars[TEXT("ANDROID_SDK_ROOT")] = androidSdk;
 
     // Build Gradle project into package
     LOG(Info, "Building Gradle project into package...");
@@ -295,13 +304,26 @@ bool AndroidPlatformTools::OnPostProcess(CookingData& data)
 #else
     const Char* gradlew = TEXT("gradlew");
 #endif
-    const bool distributionPackage = buildSettings->ForDistribution;
-    const String gradleCommand = String::Format(TEXT("\"{0}\" {1}"), data.OriginalOutputPath / gradlew, distributionPackage ? TEXT("assemble") : TEXT("assembleDebug"));
-    const int32 result = Platform::RunProcess(gradleCommand, data.OriginalOutputPath, envVars, true);
-    if (result != 0)
+#if PLATFORM_LINUX
     {
-        data.Error(TEXT("Failed to build Gradle project into package (result code: {0}). See log for more info."), result);
-        return true;
+        CreateProcessSettings procSettings;
+        procSettings.FileName = String::Format(TEXT("chmod +x \"{0}/gradlew\""), data.OriginalOutputPath);
+        procSettings.WorkingDirectory = data.OriginalOutputPath;
+        procSettings.HiddenWindow = true;
+        Platform::CreateProcess(procSettings);
+    }
+#endif
+    const bool distributionPackage = buildSettings->ForDistribution;
+    {
+        CreateProcessSettings procSettings;
+        procSettings.FileName = String::Format(TEXT("\"{0}\" {1}"), data.OriginalOutputPath / gradlew, distributionPackage ? TEXT("assemble") : TEXT("assembleDebug"));
+        procSettings.WorkingDirectory = data.OriginalOutputPath;
+        const int32 result = Platform::CreateProcess(procSettings);
+        if (result != 0)
+        {
+            data.Error(String::Format(TEXT("Failed to build Gradle project into package (result code: {0}). See log for more info."), result));
+            return true;
+        }
     }
 
     // Copy result package

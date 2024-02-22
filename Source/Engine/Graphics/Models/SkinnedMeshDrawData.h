@@ -1,8 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
-#include "Engine/Core/Common.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Graphics/GPUBuffer.h"
 
 /// <summary>
@@ -11,12 +11,10 @@
 class FLAXENGINE_API SkinnedMeshDrawData
 {
 private:
-
     bool _hasValidData = false;
     bool _isDirty = false;
 
 public:
-
     /// <summary>
     /// The bones count.
     /// </summary>
@@ -38,7 +36,6 @@ public:
     Array<byte> Data;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="SkinnedMeshDrawData"/> class.
     /// </summary>
@@ -50,13 +47,20 @@ public:
     ~SkinnedMeshDrawData();
 
 public:
-
     /// <summary>
     /// Determines whether this instance is ready for rendering.
     /// </summary>
     FORCE_INLINE bool IsReady() const
     {
         return BoneMatrices != nullptr && BoneMatrices->IsAllocated();
+    }
+
+    /// <summary>
+    /// Determines whether this instance has been modified and needs to be flushed with GPU buffer.
+    /// </summary>
+    FORCE_INLINE bool IsDirty() const
+    {
+        return _isDirty;
     }
 
     /// <summary>
@@ -79,8 +83,10 @@ public:
     void OnDataChanged(bool dropHistory);
 
     /// <summary>
-    /// Flushes the bones data buffer with the GPU by sending the data fro the CPU.
+    /// After bones Data has been send to the GPU buffer.
     /// </summary>
-    /// <param name="context">The GPU context.</param>
-    void Flush(class GPUContext* context);
+    void OnFlush()
+    {
+        _isDirty = false;
+    }
 };

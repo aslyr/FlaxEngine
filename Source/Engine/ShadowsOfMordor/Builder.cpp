@@ -1,15 +1,18 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Builder.h"
 #include "Engine/Engine/Engine.h"
 #include "Engine/Level/Scene/Scene.h"
 #include "Engine/Level/Level.h"
 #include "Engine/Content/Content.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Types/TimeSpan.h"
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Threading/ThreadSpawner.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUBuffer.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUPipelineState.h"
 #include "Engine/Graphics/RenderTargetPool.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
@@ -201,7 +204,7 @@ bool ShadowsOfMordor::Builder::RestoreState()
     for (int32 i = 0; i < scenesCount; i++)
     {
         Guid id;
-        stream->Read(&id);
+        stream->Read(id);
         Level::LoadScene(id);
     }
 
@@ -235,7 +238,7 @@ void ShadowsOfMordor::Builder::saveState()
     // Scenes ids
     stream->WriteInt32(_scenes.Count());
     for (int32 i = 0; i < _scenes.Count(); i++)
-        stream->Write(&_scenes[i]->Scene->GetID());
+        stream->Write(_scenes[i]->Scene->GetID());
 
     // State
     stream->WriteInt32(_giBounceRunningIndex);
@@ -273,6 +276,7 @@ void ShadowsOfMordor::Builder::saveState()
             context->Flush();
             Platform::Sleep(10);
             void* mapped = lightmapDataStaging->Map(GPUResourceMapMode::Read);
+            ASSERT(mapped);
             stream->WriteInt32(lightmapDataSize);
             stream->WriteBytes(mapped, lightmapDataSize);
             lightmapDataStaging->Unmap();
@@ -325,7 +329,7 @@ bool ShadowsOfMordor::Builder::loadState()
     for (int32 i = 0; i < scenesCount; i++)
     {
         Guid id;
-        stream->Read(&id);
+        stream->Read(id);
         if (Level::Scenes[i]->GetID() != id || _scenes[i]->SceneIndex != i)
         {
             LOG(Error, "Invalid scenes.");
@@ -445,6 +449,7 @@ bool ShadowsOfMordor::Builder::initResources()
             ViewFlags::DirectionalLights |
             ViewFlags::PointLights |
             ViewFlags::SpotLights |
+            ViewFlags::Sky |
             ViewFlags::Shadows |
             ViewFlags::Decals |
             ViewFlags::SkyLights |

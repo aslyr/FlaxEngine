@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Scene.h"
 #include "SceneAsset.h"
@@ -60,7 +60,6 @@ NavMeshBoundsVolume* SceneNavigation::FindNavigationBoundsOverlap(const Bounding
 
 Scene::Scene(const SpawnParams& params)
     : Actor(params)
-    , Rendering(this)
     , LightmapsData(this)
     , CSGData(this)
 {
@@ -120,6 +119,21 @@ String Scene::GetFilename() const
 String Scene::GetDataFolderPath() const
 {
     return Globals::ProjectContentFolder / TEXT("SceneData") / GetFilename();
+}
+
+Array<Guid> Scene::GetAssetReferences() const
+{
+    Array<Guid> result;
+    const auto asset = Content::Load<SceneAsset>(GetID());
+    if (asset)
+    {
+        asset->GetReferences(result);
+    }
+    else
+    {
+        // TODO: serialize scene to json and collect refs
+    }
+    return result;
 }
 
 #endif
@@ -325,24 +339,13 @@ void Scene::OnDeleteObject()
     Actor::OnDeleteObject();
 }
 
-void Scene::PostLoad()
+void Scene::Initialize()
 {
     // Initialize
     _parent = nullptr;
     _scene = this;
 
-    // Base
-    Actor::PostLoad();
-}
-
-void Scene::PostSpawn()
-{
-    // Initialize
-    _parent = nullptr;
-    _scene = this;
-
-    // Base
-    Actor::PostSpawn();
+    Actor::Initialize();
 }
 
 void Scene::BeginPlay(SceneBeginData* data)

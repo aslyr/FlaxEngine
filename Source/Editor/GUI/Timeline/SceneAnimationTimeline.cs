@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content;
@@ -33,7 +33,7 @@ namespace FlaxEditor.GUI.Timeline
         /// </summary>
         public SceneAnimationPlayer Player
         {
-            get => _player;
+            get => _player != null ? _player : null;
             set
             {
                 if (_player == value)
@@ -268,7 +268,7 @@ namespace FlaxEditor.GUI.Timeline
         /// <inheritdoc />
         public override void OnSeek(int frame)
         {
-            if (_player?.Animation)
+            if (_player != null && _player.Animation)
             {
                 _player.Animation.WaitForLoaded();
                 _player.Time = frame / _player.Animation.FramesPerSecond;

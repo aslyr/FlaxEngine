@@ -1,20 +1,21 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
+using FlaxEditor.CustomEditors.Dedicated;
 using FlaxEditor.CustomEditors.Editors;
 using FlaxEditor.Scripting;
 using FlaxEngine;
+using FlaxEngine.Interop;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.CustomEditors
 {
-    internal static class CustomEditorsUtil
+    internal static partial class CustomEditorsUtil
     {
-        private static readonly StringBuilder CachedSb = new StringBuilder(256);
-
         internal static readonly Dictionary<Type, string> InBuildTypeNames = new Dictionary<Type, string>()
         {
             { typeof(bool), "bool" },
@@ -46,51 +47,6 @@ namespace FlaxEditor.CustomEditors
             return result;
         }
 
-        /// <summary>
-        /// Gets the property name for UI. Removes unnecessary characters and filters text. Makes it more user-friendly.
-        /// </summary>
-        /// <param name="name">The name.</param>
-        /// <returns>The result.</returns>
-        public static string GetPropertyNameUI(string name)
-        {
-            int length = name.Length;
-            StringBuilder sb = CachedSb;
-            sb.Clear();
-            sb.EnsureCapacity(length + 8);
-            int startIndex = 0;
-
-            // Skip some prefixes
-            if (name.StartsWith("g_") || name.StartsWith("m_"))
-                startIndex = 2;
-
-            // Filter text
-            for (int i = startIndex; i < length; i++)
-            {
-                var c = name[i];
-
-                // Space before word starting with uppercase letter
-                if (char.IsUpper(c) && i > 0)
-                {
-                    if (i + 1 < length && !char.IsUpper(name[i + 1]))
-                        sb.Append(' ');
-                }
-                // Space instead of underscore
-                else if (c == '_')
-                {
-                    if (sb.Length > 0)
-                        sb.Append(' ');
-                    continue;
-                }
-                // Space before digits sequence
-                else if (i > 1 && char.IsDigit(c) && !char.IsDigit(name[i - 1]))
-                    sb.Append(' ');
-
-                sb.Append(c);
-            }
-
-            return sb.ToString();
-        }
-
         internal static CustomEditor CreateEditor(ValueContainer values, CustomEditor overrideEditor, bool canUseRefPicker = true)
         {
             // Check if use provided editor
@@ -107,21 +63,27 @@ namespace FlaxEditor.CustomEditors
 
         internal static CustomEditor CreateEditor(ScriptType targetType, bool canUseRefPicker = true)
         {
+            if (targetType == ScriptType.Null)
+                return new GenericEditor();
             if (targetType.IsArray)
             {
+                if (targetType.Type.GetArrayRank() != 1)
+                    return new GenericEditor(); // Not-supported multidimensional array
+
+                // Allow using custom editor for array of custom type
+                var customEditorType = Internal_GetCustomEditor(targetType.Type);
+                if (customEditorType != null)
+                    return (CustomEditor)Activator.CreateInstance(customEditorType);
+
                 return new ArrayEditor();
             }
             var targetTypeType = TypeUtils.GetType(targetType);
             if (canUseRefPicker)
             {
                 if (typeof(Asset).IsAssignableFrom(targetTypeType))
-                {
                     return new AssetRefEditor();
-                }
                 if (typeof(FlaxEngine.Object).IsAssignableFrom(targetTypeType))
-                {
                     return new FlaxObjectRefEditor();
-                }
             }
 
             // Use custom editor
@@ -129,11 +91,9 @@ namespace FlaxEditor.CustomEditors
                 var checkType = targetTypeType;
                 do
                 {
-                    var type = Internal_GetCustomEditor(checkType);
-                    if (type != null)
-                    {
-                        return (CustomEditor)Activator.CreateInstance(type);
-                    }
+                    var customEditorType = Internal_GetCustomEditor(checkType);
+                    if (customEditorType != null)
+                        return (CustomEditor)Activator.CreateInstance(customEditorType);
                     checkType = checkType.BaseType;
 
                     // Skip if cannot use ref editors
@@ -150,30 +110,27 @@ namespace FlaxEditor.CustomEditors
 
             // Select default editor (based on type)
             if (targetType.IsEnum)
-            {
                 return new EnumEditor();
-            }
             if (targetType.IsGenericType)
             {
-                if (DictionaryEditor.CanEditType(targetTypeType))
-                {
+                if (targetTypeType.GetGenericTypeDefinition() == typeof(Dictionary<,>))
                     return new DictionaryEditor();
-                }
 
                 // Use custom editor
                 var genericTypeDefinition = targetType.GetGenericTypeDefinition();
-                var type = Internal_GetCustomEditor(genericTypeDefinition);
-                if (type != null)
-                {
-                    return (CustomEditor)Activator.CreateInstance(type);
-                }
+                var customEditorType = Internal_GetCustomEditor(genericTypeDefinition);
+                if (customEditorType != null)
+                    return (CustomEditor)Activator.CreateInstance(customEditorType);
             }
+            if (typeof(FlaxEngine.Object).IsAssignableFrom(targetTypeType))
+                return new ScriptingObjectEditor();
 
             // The most generic editor
             return new GenericEditor();
         }
 
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        internal static extern Type Internal_GetCustomEditor(Type targetType);
+        [LibraryImport("FlaxEngine", EntryPoint = "CustomEditorsUtilInternal_GetCustomEditor", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        [return: MarshalUsing(typeof(SystemTypeMarshaller))]
+        internal static partial Type Internal_GetCustomEditor([MarshalUsing(typeof(SystemTypeMarshaller))] Type targetType);
     }
 }

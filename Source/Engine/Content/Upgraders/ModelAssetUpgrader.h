@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -19,7 +19,6 @@
 class ModelAssetUpgrader : public BinaryAssetUpgrader
 {
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="ModelAssetUpgrader"/> class.
     /// </summary>
@@ -27,16 +26,15 @@ public:
     {
         static const Upgrader upgraders[] =
         {
-            { 24, 25, &Upgrade_With_Repack },
-            { 23, 24, &Upgrade_22OrNewer_To_Newest },
-            { 22, 24, &Upgrade_22OrNewer_To_Newest },
-            { 1, 24, &Upgrade_Old_To_Newest },
+            { 24, 25, &Upgrade_With_Repack }, // [Deprecated on 28.04.2023, expires on 01.01.2024]
+            { 23, 24, &Upgrade_22OrNewer_To_Newest }, // [Deprecated on 28.04.2023, expires on 01.01.2024]
+            { 22, 24, &Upgrade_22OrNewer_To_Newest }, // [Deprecated on 28.04.2023, expires on 01.01.2024]
+            { 1, 24, &Upgrade_Old_To_Newest }, // [Deprecated on 28.04.2023, expires on 01.01.2024]
         };
         setup(upgraders, ARRAY_COUNT(upgraders));
     }
 
 private:
-
     // ============================================
     //                  Version 25:
     // The same as version 24 except Vertex Buffer 1 has `Color32 Color` component per vertex added
@@ -197,7 +195,7 @@ private:
             auto& slot = data->Materials[i];
 
             // Material
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Shadows Mode
             slot.ShadowsMode = static_cast<ShadowsCastingMode>(headerStream->ReadByte());
@@ -241,20 +239,20 @@ private:
                         return Asset::LoadResult::InvalidData;
 
                     // Vertex buffers
-                    auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                    auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                    auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                    auto vb1 = stream.Move<VB1ElementType18>(vertices);
                     bool hasColors = stream.ReadBool();
                     VB2ElementType18* vb2 = nullptr;
                     if (hasColors)
                     {
-                        vb2 = stream.Read<VB2ElementType18>(vertices);
+                        vb2 = stream.Move<VB2ElementType18>(vertices);
                     }
 
                     // Index Buffer
                     uint32 indicesCount = triangles * 3;
                     bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                     uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                    auto ib = stream.Read<byte>(indicesCount * ibStride);
+                    auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                     // Allocate mesh
                     lod.Meshes[meshIndex] = New<MeshData>();
@@ -282,11 +280,11 @@ private:
 
                 // Box
                 BoundingBox box;
-                headerStream->Read(&box);
+                headerStream->Read(box);
 
                 // Sphere
                 BoundingSphere sphere;
-                headerStream->Read(&sphere);
+                headerStream->Read(sphere);
 
                 // Has Lightmap UVs
                 bool hasLightmapUVs = headerStream->ReadBool();
@@ -314,7 +312,7 @@ private:
             auto& slot = data->Materials[i];
 
             // Material
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Shadows Mode
             slot.ShadowsMode = static_cast<ShadowsCastingMode>(headerStream->ReadByte());
@@ -358,14 +356,14 @@ private:
                         return Asset::LoadResult::InvalidData;
 
                     // Vertex buffers
-                    auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                    auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                    auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                    auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                     // Index Buffer
                     uint32 indicesCount = triangles * 3;
                     bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                     uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                    auto ib = stream.Read<byte>(indicesCount * ibStride);
+                    auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                     // Allocate mesh
                     lod.Meshes[meshIndex] = New<MeshData>();
@@ -393,11 +391,11 @@ private:
 
                 // Box
                 BoundingBox box;
-                headerStream->Read(&box);
+                headerStream->Read(box);
 
                 // Sphere
                 BoundingSphere sphere;
-                headerStream->Read(&sphere);
+                headerStream->Read(sphere);
 
                 // Has Lightmap UVs
                 bool hasLightmapUVs = headerStream->ReadBool();
@@ -422,7 +420,7 @@ private:
             auto& slot = data->Materials[i];
 
             // Material
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Shadows Mode
             slot.ShadowsMode = static_cast<ShadowsCastingMode>(headerStream->ReadByte());
@@ -462,11 +460,11 @@ private:
 
                 // Box
                 BoundingBox box;
-                headerStream->Read(&box);
+                headerStream->Read(box);
 
                 // Sphere
                 BoundingSphere sphere;
-                headerStream->Read(&sphere);
+                headerStream->Read(sphere);
             }
 
             // Get meshes data
@@ -486,14 +484,14 @@ private:
                         return Asset::LoadResult::InvalidData;
 
                     // Vertex buffers
-                    auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                    auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                    auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                    auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                     // Index Buffer
                     uint32 indicesCount = triangles * 3;
                     bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                     uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                    auto ib = stream.Read<byte>(indicesCount * ibStride);
+                    auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                     // Copy data
                     auto& mesh = *data->LODs[lodIndex].Meshes[i];
@@ -541,15 +539,15 @@ private:
             slot.ShadowsMode = castShadows ? ShadowsCastingMode::All : ShadowsCastingMode::None;
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Box
             BoundingBox box;
-            headerStream->Read(&box);
+            headerStream->Read(box);
 
             // Sphere
             BoundingSphere sphere;
-            headerStream->Read(&sphere);
+            headerStream->Read(sphere);
         }
 
         {
@@ -569,14 +567,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -616,15 +614,15 @@ private:
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Box
             BoundingBox box;
-            headerStream->Read(&box);
+            headerStream->Read(box);
 
             // Sphere
             BoundingSphere sphere;
-            headerStream->Read(&sphere);
+            headerStream->Read(sphere);
         }
 
         {
@@ -644,14 +642,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -691,15 +689,15 @@ private:
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Box
             BoundingBox box;
-            headerStream->Read(&box);
+            headerStream->Read(box);
 
             // Sphere
             BoundingSphere sphere;
-            headerStream->Read(&sphere);
+            headerStream->Read(sphere);
         }
 
         // Load all LODs
@@ -720,14 +718,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -769,17 +767,17 @@ private:
 
             // Local Transform
             Transform transform;
-            headerStream->Read(&transform);
+            headerStream->Read(transform);
 
             // Force Two Sided
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Corners
             BoundingBox box;
-            headerStream->Read(&box);
+            headerStream->Read(box);
         }
 
         // Load all LODs
@@ -800,14 +798,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType18>(vertices);
-                auto vb1 = stream.Read<VB1ElementType18>(vertices);
+                auto vb0 = stream.Move<VB0ElementType18>(vertices);
+                auto vb1 = stream.Move<VB1ElementType18>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -849,18 +847,18 @@ private:
 
             // Local Transform
             Transform transform;
-            headerStream->Read(&transform);
+            headerStream->Read(transform);
 
             // Force Two Sided
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
 
             // Corners
             Vector3 corner;
             for (int32 cornerIndex = 0; cornerIndex < 8; cornerIndex++)
-                headerStream->Read(&corner);
+                headerStream->Read(corner);
         }
 
         // Load all LODs
@@ -881,14 +879,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType15>(vertices);
-                auto vb1 = stream.Read<VB1ElementType15>(vertices);
+                auto vb0 = stream.Move<VB0ElementType15>(vertices);
+                auto vb1 = stream.Move<VB1ElementType15>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -935,13 +933,13 @@ private:
 
             // Local Transform
             Transform transform;
-            headerStream->Read(&transform);
+            headerStream->Read(transform);
 
             // Force Two Sided
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
         }
 
         // Load all LODs
@@ -962,14 +960,14 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffers
-                auto vb0 = stream.Read<VB0ElementType15>(vertices);
-                auto vb1 = stream.Read<VB1ElementType15>(vertices);
+                auto vb0 = stream.Move<VB0ElementType15>(vertices);
+                auto vb1 = stream.Move<VB1ElementType15>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];
@@ -1016,13 +1014,13 @@ private:
 
             // Local Transform
             Transform transform;
-            headerStream->Read(&transform);
+            headerStream->Read(transform);
 
             // Force Two Sided
             headerStream->ReadBool();
 
             // Default material ID
-            headerStream->Read(&slot.AssetID);
+            headerStream->Read(slot.AssetID);
         }
 
         // Load all LODs
@@ -1044,13 +1042,13 @@ private:
                     return Asset::LoadResult::InvalidData;
 
                 // Vertex buffer
-                auto vb = stream.Read<ModelVertex15>(vertices);
+                auto vb = stream.Move<ModelVertex15>(vertices);
 
                 // Index Buffer
                 uint32 indicesCount = triangles * 3;
                 bool use16BitIndexBuffer = indicesCount <= MAX_uint16;
                 uint32 ibStride = use16BitIndexBuffer ? sizeof(uint16) : sizeof(uint32);
-                auto ib = stream.Read<byte>(indicesCount * ibStride);
+                auto ib = stream.Move<byte>(indicesCount * ibStride);
 
                 // Copy data
                 auto& mesh = *data->LODs[0].Meshes[i];

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,11 +10,9 @@ template<int Size>
 class GPUPipelineStatePermutations
 {
 public:
-
     GPUPipelineState* States[Size];
 
 public:
-
     GPUPipelineStatePermutations()
     {
         Platform::MemoryClear(States, sizeof(States));
@@ -26,7 +24,6 @@ public:
     }
 
 public:
-
     bool IsValid() const
     {
         for (int i = 0; i < Size; i++)
@@ -45,8 +42,12 @@ public:
         return States[index];
     }
 
-public:
+    FORCE_INLINE GPUPipelineState*& operator[](int32 index)
+    {
+        return States[index];
+    }
 
+public:
     void CreatePipelineStates()
     {
         for (int i = 0; i < Size; i++)
@@ -82,11 +83,9 @@ template<int Size>
 class GPUPipelineStatePermutationsPs : public GPUPipelineStatePermutations<Size>
 {
 public:
-
     typedef GPUPipelineStatePermutations<Size> Base;
 
 public:
-
     GPUPipelineStatePermutationsPs()
     {
     }
@@ -96,7 +95,6 @@ public:
     }
 
 public:
-
     bool Create(GPUPipelineState::Description& desc, GPUShader* shader, const StringAnsiView& psName)
     {
         for (int i = 0; i < Size; i++)
@@ -116,11 +114,9 @@ template<int Size>
 class ComputeShaderPermutation
 {
 public:
-
     GPUShaderProgramCS* Shaders[Size];
 
 public:
-
     ComputeShaderPermutation()
     {
         Platform::MemoryClear(Shaders, sizeof(Shaders));
@@ -131,14 +127,12 @@ public:
     }
 
 public:
-
     FORCE_INLINE GPUShaderProgramCS* Get(const int index) const
     {
         return Shaders[index];
     }
 
 public:
-
     void Clear()
     {
         Platform::MemoryClear(Shaders, sizeof(Shaders));

@@ -5,11 +5,15 @@
 obj/
 Cache/
 Binaries/
+Output/
 Logs/
+Source/*.Gen.*
 Source/*.csproj
 /Package_*/
 !Source/Engine/Debug
-/Source/Platforms/Editor/Linux/Mono/etc/mono/registry
+PackageEditor_Cert.command
+PackageEditor_Cert.bat
+PackagePlatforms_Cert.bat
 
 # User-specific files
 *.suo
@@ -19,6 +23,9 @@ Source/*.csproj
 *.tlog
 *.lastbuilddate
 *.opendb
+*.DS_Store
+*.xcodeproj
+launchSettings.json
 
 # NUNIT
 *.VisualState.xml
@@ -146,5 +153,6 @@ bin/
 obj/
 *.vcxproj.filters
 .vscode/
+.idea/
 *.code-workspace
-
+omnisharp.json

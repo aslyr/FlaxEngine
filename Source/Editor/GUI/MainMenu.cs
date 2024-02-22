@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine;
@@ -45,7 +45,7 @@ namespace FlaxEditor.GUI
 
                 if (_selected != null && _selected.ContextMenu.HasChildren)
                 {
-                    _selected.ContextMenu.Show(_selected, new Vector2(0, _selected.Height));
+                    _selected.ContextMenu.Show(_selected, new Float2(0, _selected.Height));
                     _selected.ContextMenu.VisibleChanged += OnSelectedContextMenuVisibleChanged;
                 }
             }
@@ -187,7 +187,7 @@ namespace FlaxEditor.GUI
             }
         }
 
-        private WindowHitCodes OnHitTest(ref Vector2 mouse)
+        private WindowHitCodes OnHitTest(ref Float2 mouse)
         {
             var dpiScale = _window.DpiScale;
 
@@ -286,13 +286,14 @@ namespace FlaxEditor.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             if (base.OnMouseDoubleClick(location, button))
                 return true;
 
 #if PLATFORM_WINDOWS
-            if (_useCustomWindowSystem)
+            var child = GetChildAtRecursive(location);
+            if (_useCustomWindowSystem && child is not Button && child is not MainMenuButton)
             {
                 if (_window.IsMaximized)
                     _window.Restore();
@@ -305,6 +306,17 @@ namespace FlaxEditor.GUI
         }
 
         /// <inheritdoc />
+        public override bool OnKeyDown(KeyboardKeys key)
+        {
+            if (base.OnKeyDown(key))
+                return true;
+
+            // Fallback to the edit window for shortcuts
+            var editor = Editor.Instance;
+            return editor.Windows.EditWin.InputActions.Process(editor, this, key);
+        }
+
+        /// <inheritdoc />
         protected override void PerformLayoutAfterChildren()
         {
             float x = 0;
@@ -314,7 +326,7 @@ namespace FlaxEditor.GUI
             {
                 // Icon
                 _icon.X = x;
-                _icon.Size = new Vector2(Height);
+                _icon.Size = new Float2(Height);
                 x += _icon.Width;
             }
 #endif

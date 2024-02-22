@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,8 +9,11 @@ using FlaxEditor.GUI.Drag;
 using FlaxEditor.GUI.Tree;
 using FlaxEditor.Scripting;
 using FlaxEditor.Utilities;
+using FlaxEditor.Windows;
+using FlaxEditor.Windows.Assets;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 using Object = FlaxEngine.Object;
 
 namespace FlaxEditor.SceneGraph.GUI
@@ -23,8 +26,10 @@ namespace FlaxEditor.SceneGraph.GUI
     {
         private int _orderInParent;
         private DragActors _dragActors;
+        private DragScripts _dragScripts;
         private DragAssets _dragAssets;
         private DragActorType _dragActorType;
+        private DragScriptItems _dragScriptItems;
         private DragHandlers _dragHandlers;
         private List<Rectangle> _highlights;
         private bool _hasSearchFilter;
@@ -62,7 +67,8 @@ namespace FlaxEditor.SceneGraph.GUI
                 _orderInParent = actor.OrderInParent;
                 Visible = (actor.HideFlags & HideFlags.HideInHierarchy) == 0;
 
-                var id = actor.ID;
+                // Pick the correct id when inside a prefab window.
+                var id = actor.HasPrefabLink && actor.Scene == null ? actor.PrefabObjectID : actor.ID;
                 if (Editor.Instance.ProjectCache.IsExpandedActor(ref id))
                 {
                     Expand(true);
@@ -80,22 +86,25 @@ namespace FlaxEditor.SceneGraph.GUI
         {
             if (Parent is ActorTreeNode parent)
             {
-                for (int i = 0; i < parent.ChildrenCount; i++)
+                var anyChanged = false;
+                var children = parent.Children;
+                for (int i = 0; i < children.Count; i++)
                 {
-                    if (parent.Children[i] is ActorTreeNode child)
-                        child._orderInParent = child.Actor.OrderInParent;
+                    if (children[i] is ActorTreeNode child && child.Actor)
+                    {
+                        var orderInParent = child.Actor.OrderInParent;
+                        anyChanged |= child._orderInParent != orderInParent;
+                        if (anyChanged)
+                            child._orderInParent = orderInParent;
+                    }
                 }
-                parent.SortChildren();
+                if (anyChanged)
+                    parent.SortChildren();
             }
             else if (Actor)
             {
                 _orderInParent = Actor.OrderInParent;
             }
-        }
-
-        internal void OnNameChanged()
-        {
-            UpdateText();
         }
 
         /// <summary>
@@ -172,7 +181,8 @@ namespace FlaxEditor.SceneGraph.GUI
             // Restore cached state on query filter clear
             if (noFilter && actor != null)
             {
-                var id = actor.ID;
+                // Pick the correct id when inside a prefab window.
+                var id = actor.HasPrefabLink && actor.Scene.Scene == null ? actor.PrefabObjectID : actor.ID;
                 isExpanded = Editor.Instance.ProjectCache.IsExpandedActor(ref id);
             }
 
@@ -193,12 +203,27 @@ namespace FlaxEditor.SceneGraph.GUI
         {
             // Update hidden state
             var actor = Actor;
-            if (actor != null && !_hasSearchFilter)
+            if (actor && !_hasSearchFilter)
             {
                 Visible = (actor.HideFlags & HideFlags.HideInHierarchy) == 0;
             }
 
             base.Update(deltaTime);
+        }
+
+
+        /// <inheritdoc />
+        protected override bool ShowTooltip => true;
+
+        /// <inheritdoc />
+        public override bool OnShowTooltip(out string text, out Float2 location, out Rectangle area)
+        {
+            // Evaluate tooltip text once it's actually needed
+            var actor = _actorNode.Actor;
+            if (string.IsNullOrEmpty(TooltipText) && actor)
+                TooltipText = Surface.SurfaceUtils.GetVisualScriptTypeDescription(TypeUtils.GetObjectType(actor));
+
+            return base.OnShowTooltip(out text, out location, out area);
         }
 
         /// <inheritdoc />
@@ -209,22 +234,25 @@ namespace FlaxEditor.SceneGraph.GUI
             {
                 Color color = Style.Current.Foreground;
                 var actor = Actor;
-                if (actor != null && actor.HasPrefabLink)
+                if (actor)
                 {
-                    // Prefab
-                    color = Style.Current.ProgressNormal;
-                }
+                    if (actor.HasPrefabLink)
+                    {
+                        // Prefab
+                        color = Style.Current.ProgressNormal;
+                    }
 
-                if (actor != null && !actor.IsActiveInHierarchy)
-                {
-                    // Inactive
-                    return Style.Current.ForegroundGrey;
-                }
+                    if (!actor.IsActiveInHierarchy)
+                    {
+                        // Inactive
+                        return Style.Current.ForegroundGrey;
+                    }
 
-                if (actor?.Scene != null && Editor.Instance.StateMachine.IsPlayMode && actor.IsStatic)
-                {
-                    // Static
-                    return color * 0.85f;
+                    if (actor.Scene != null && Editor.Instance.StateMachine.IsPlayMode && actor.IsStatic)
+                    {
+                        // Static
+                        return color * 0.85f;
+                    }
                 }
 
                 // Default
@@ -247,7 +275,7 @@ namespace FlaxEditor.SceneGraph.GUI
         /// <summary>
         /// Starts the actor renaming action.
         /// </summary>
-        public void StartRenaming()
+        public void StartRenaming(EditorWindow window, Panel treePanel = null)
         {
             // Block renaming during scripts reload
             if (Editor.Instance.ProgressReporting.CompileScripts.IsActive)
@@ -255,9 +283,29 @@ namespace FlaxEditor.SceneGraph.GUI
 
             Select();
 
+            // Disable scrolling of view
+            if (window is SceneTreeWindow)
+                (window as SceneTreeWindow).ScrollingOnSceneTreeView(false);
+            else if (window is PrefabWindow)
+                (window as PrefabWindow).ScrollingOnTreeView(false);
+
             // Start renaming the actor
-            var dialog = RenamePopup.Show(this, HeaderRect, _actorNode.Name, false);
+            var rect = TextRect;
+            if (treePanel != null)
+            {
+                treePanel.ScrollViewTo(this, true);
+                rect.Size = new Float2(treePanel.Width - TextRect.Location.X, TextRect.Height);
+            }
+            var dialog = RenamePopup.Show(this, rect, _actorNode.Name, false);
             dialog.Renamed += OnRenamed;
+            dialog.Closed += popup =>
+            {
+                // Enable scrolling of view
+                if (window is SceneTreeWindow)
+                    (window as SceneTreeWindow).ScrollingOnSceneTreeView(true);
+                else if (window is PrefabWindow)
+                    (window as PrefabWindow).ScrollingOnTreeView(true);
+            };
         }
 
         private void OnRenamed(RenamePopup renamePopup)
@@ -270,10 +318,12 @@ namespace FlaxEditor.SceneGraph.GUI
         protected override void OnExpandedChanged()
         {
             base.OnExpandedChanged();
+            var actor = Actor;
 
-            if (!IsLayoutLocked && Actor)
+            if (!IsLayoutLocked && actor)
             {
-                var id = Actor.ID;
+                // Pick the correct id when inside a prefab window.
+                var id = actor.HasPrefabLink && actor.Scene == null ? actor.PrefabObjectID : actor.ID;
                 Editor.Instance.ProjectCache.SetExpandedActor(ref id, IsExpanded);
             }
         }
@@ -320,6 +370,15 @@ namespace FlaxEditor.SceneGraph.GUI
             if (_dragActors.OnDragEnter(data))
                 return _dragActors.Effect;
 
+            // Check if drop scripts
+            if (_dragScripts == null)
+            {
+                _dragScripts = new DragScripts(ValidateDragScript);
+                _dragHandlers.Add(_dragScripts);
+            }
+            if (_dragScripts.OnDragEnter(data))
+                return _dragScripts.Effect;
+
             // Check if drag assets
             if (_dragAssets == null)
             {
@@ -337,6 +396,13 @@ namespace FlaxEditor.SceneGraph.GUI
             }
             if (_dragActorType.OnDragEnter(data))
                 return _dragActorType.Effect;
+            if (_dragScriptItems == null)
+            {
+                _dragScriptItems = new DragScriptItems(ValidateDragScriptItem);
+                _dragHandlers.Add(_dragScriptItems);
+            }
+            if (_dragScriptItems.OnDragEnter(data))
+                return _dragScriptItems.Effect;
 
             return DragDropEffect.None;
         }
@@ -405,6 +471,14 @@ namespace FlaxEditor.SceneGraph.GUI
                     _prefabIds[j] = allScripts[i].PrefabID;
                     _prefabObjectIds[j] = allScripts[i].PrefabObjectID;
                 }
+            }
+
+            public ReparentAction(Script script)
+            {
+                _actorsCount = 0;
+                _ids = new Guid[] { script.ID };
+                _prefabIds = new Guid[] { script.PrefabID };
+                _prefabObjectIds = new Guid[] { script.PrefabObjectID };
             }
 
             private void GetAllActors(List<Actor> allActors, Actor actor)
@@ -548,19 +622,49 @@ namespace FlaxEditor.SceneGraph.GUI
 
                 result = DragDropEffect.Move;
             }
+            // Drag scripts
+            else if (_dragScripts != null && _dragScripts.HasValidDrag)
+            {
+                foreach (var script in _dragScripts.Objects)
+                {
+                    var customAction = script.HasPrefabLink ? new ReparentAction(script) : null;
+                    using (new UndoBlock(ActorNode.Root.Undo, script, "Change script parent", customAction))
+                    {
+                        script.SetParent(newParent, true);
+                    }
+                }
+                Select();
+                result = DragDropEffect.Move;
+            }
             // Drag assets
             else if (_dragAssets != null && _dragAssets.HasValidDrag)
             {
+                var spawnParent = myActor;
+                if (DragOverMode == DragItemPositioning.Above || DragOverMode == DragItemPositioning.Below)
+                    spawnParent = newParent;
+
                 for (int i = 0; i < _dragAssets.Objects.Count; i++)
                 {
                     var item = _dragAssets.Objects[i];
                     var actor = item.OnEditorDrop(this);
-                    actor.StaticFlags = Actor.StaticFlags;
+                    if (spawnParent.GetType() != typeof(Scene))
+                    {
+                        // Set all Actors static flags to match parents
+                        List<Actor> childActors = new List<Actor>();
+                        Utilities.Utils.GetActorsTree(childActors, actor);
+                        foreach (var child in childActors)
+                        {
+                            child.StaticFlags = spawnParent.StaticFlags;
+                        }
+                    }
                     actor.Name = item.ShortName;
-                    actor.Transform = Actor.Transform;
-                    ActorNode.Root.Spawn(actor, Actor);
+                    if (_dragAssets.Objects[i] is not PrefabItem)
+                        actor.Transform = Transform.Identity;
+                    var previousTrans = actor.Transform;
+                    ActorNode.Root.Spawn(actor, spawnParent);
+                    actor.LocalTransform = previousTrans;
+                    actor.OrderInParent = newOrder;
                 }
-
                 result = DragDropEffect.Move;
             }
             // Drag actor type
@@ -569,8 +673,6 @@ namespace FlaxEditor.SceneGraph.GUI
                 for (int i = 0; i < _dragActorType.Objects.Count; i++)
                 {
                     var item = _dragActorType.Objects[i];
-
-                    // Create actor
                     var actor = item.CreateInstance() as Actor;
                     if (actor == null)
                     {
@@ -580,11 +682,36 @@ namespace FlaxEditor.SceneGraph.GUI
                     actor.StaticFlags = Actor.StaticFlags;
                     actor.Name = item.Name;
                     actor.Transform = Actor.Transform;
-
-                    // Spawn
                     ActorNode.Root.Spawn(actor, Actor);
                 }
+                result = DragDropEffect.Move;
+            }
+            // Drag script item
+            else if (_dragScriptItems != null && _dragScriptItems.HasValidDrag)
+            {
+                var spawnParent = myActor;
+                if (DragOverMode == DragItemPositioning.Above || DragOverMode == DragItemPositioning.Below)
+                    spawnParent = newParent;
 
+                for (int i = 0; i < _dragScriptItems.Objects.Count; i++)
+                {
+                    var item = _dragScriptItems.Objects[i];
+                    var actorType = Editor.Instance.CodeEditing.Actors.Get(item);
+                    if (actorType != ScriptType.Null)
+                    {
+                        var actor = actorType.CreateInstance() as Actor;
+                        if (actor == null)
+                        {
+                            Editor.LogWarning("Failed to spawn actor of type " + actorType.TypeName);
+                            continue;
+                        }
+                        actor.StaticFlags = spawnParent.StaticFlags;
+                        actor.Name = actorType.Name;
+                        actor.Transform = spawnParent.Transform;
+                        ActorNode.Root.Spawn(actor, spawnParent);
+                        actor.OrderInParent = newOrder;
+                    }
+                }
                 result = DragDropEffect.Move;
             }
 
@@ -609,8 +736,24 @@ namespace FlaxEditor.SceneGraph.GUI
             if (thisHasScene != otherHasScene)
                 return false;
 
+            // Reject dragging actors between prefab windows (different roots)
+            if (!thisHasScene && ActorNode.Root != actorNode.Root)
+                return false;
+
             // Reject dragging parents and itself
             return actorNode.Actor != null && actorNode != ActorNode && actorNode.Find(Actor) == null;
+        }
+
+        private bool ValidateDragScript(Script script)
+        {
+            // Reject dragging scripts not linked to scene (eg. from prefab) or in the opposite way
+            var thisHasScene = Actor.Scene != null;
+            var otherHasScene = script.Scene != null;
+            if (thisHasScene != otherHasScene)
+                return false;
+
+            // Reject dragging parents and itself
+            return script.Actor != null && script.Parent != Actor;
         }
 
         private bool ValidateDragAsset(AssetItem assetItem)
@@ -621,6 +764,11 @@ namespace FlaxEditor.SceneGraph.GUI
         private static bool ValidateDragActorType(ScriptType actorType)
         {
             return true;
+        }
+
+        private static bool ValidateDragScriptItem(ScriptItem script)
+        {
+            return Editor.Instance.CodeEditing.Actors.Get(script) != ScriptType.Null;
         }
 
         /// <inheritdoc />
@@ -637,6 +785,11 @@ namespace FlaxEditor.SceneGraph.GUI
                 for (var i = 0; i < tree.Selection.Count; i++)
                 {
                     var e = tree.Selection[i];
+
+                    // Skip if parent is already selected to keep correct parenting
+                    if (tree.Selection.Contains(e.Parent))
+                        continue;
+
                     if (e is ActorTreeNode node && node.ActorNode.CanDrag)
                         actors.Add(node.ActorNode);
                 }
@@ -655,8 +808,10 @@ namespace FlaxEditor.SceneGraph.GUI
         public override void OnDestroy()
         {
             _dragActors = null;
+            _dragScripts = null;
             _dragAssets = null;
             _dragActorType = null;
+            _dragScriptItems = null;
             _dragHandlers?.Clear();
             _dragHandlers = null;
             _highlights = null;

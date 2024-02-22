@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -144,7 +144,7 @@ namespace FlaxEditor.Windows.Assets
             // Set paste target if only one actor is selected and no target provided
             if (pasteTargetActor == null && Selection.Count == 1 && Selection[0] is ActorNode actorNode)
             {
-                pasteTargetActor = actorNode.Actor;
+                pasteTargetActor = actorNode.Actor.IsPrefabRoot ? actorNode.Actor : actorNode.Actor.Parent;
             }
 
             // Create paste action
@@ -153,6 +153,9 @@ namespace FlaxEditor.Windows.Assets
             {
                 OnPasteAction(pasteAction);
             }
+
+            // Scroll to new selected node
+            ScrollToSelectedNode();
         }
 
         /// <summary>
@@ -180,6 +183,9 @@ namespace FlaxEditor.Windows.Assets
             {
                 OnPasteAction(pasteAction);
             }
+
+            // Scroll to new selected node
+            ScrollToSelectedNode();
         }
 
         private void OnPasteAction(PasteActorsAction pasteAction)
@@ -328,6 +334,9 @@ namespace FlaxEditor.Windows.Assets
             }, action2.ActionString);
             action.Do();
             Undo.AddAction(action);
+
+            _treePanel.PerformLayout();
+            _treePanel.PerformLayout();
         }
     }
 }

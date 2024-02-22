@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ImportAudio.h"
 
@@ -19,54 +19,11 @@
 #include "Engine/Tools/AudioTool/OggVorbisEncoder.h"
 #include "Engine/Serialization/JsonWriters.h"
 
-ImportAudio::Options::Options()
-{
-    Format = AudioFormat::Vorbis;
-    DisableStreaming = false;
-    Is3D = false;
-    Quality = 0.4f;
-    BitDepth = 16;
-}
-
-String ImportAudio::Options::ToString() const
-{
-    return String::Format(TEXT("Format:{}, DisableStreaming:{}, Is3D:{}, Quality:{}, BitDepth:{}"),
-                          ::ToString(Format),
-                          DisableStreaming,
-                          Is3D,
-                          Quality,
-                          BitDepth
-    );
-}
-
-void ImportAudio::Options::Serialize(SerializeStream& stream, const void* otherObj)
-{
-    SERIALIZE_GET_OTHER_OBJ(ImportAudio::Options);
-
-    SERIALIZE(Format);
-    SERIALIZE(DisableStreaming);
-    SERIALIZE(Is3D);
-    SERIALIZE(Quality);
-    SERIALIZE(BitDepth);
-}
-
-void ImportAudio::Options::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
-{
-    DESERIALIZE(Format);
-    DESERIALIZE(DisableStreaming);
-    DESERIALIZE(Is3D);
-    DESERIALIZE(Quality);
-    DESERIALIZE(BitDepth);
-}
-
-bool ImportAudio::TryGetImportOptions(String path, Options& options)
+bool ImportAudio::TryGetImportOptions(const StringView& path, Options& options)
 {
 #if IMPORT_AUDIO_CACHE_OPTIONS
-
-    // Check if target asset file exists
     if (FileSystem::FileExists(path))
     {
-        // Try to load asset file and asset info
         auto tmpFile = ContentStorageManager::GetStorage(path);
         AssetInitData data;
         if (tmpFile
@@ -80,15 +37,12 @@ bool ImportAudio::TryGetImportOptions(String path, Options& options)
             metadata.Parse(data.Metadata.Get<const char>(), data.Metadata.Length());
             if (!metadata.HasParseError())
             {
-                // Success
                 options.Deserialize(metadata, nullptr);
                 return true;
             }
         }
     }
-
 #endif
-
     return false;
 }
 
@@ -110,6 +64,10 @@ CreateAssetResult ImportAudio::Import(CreateAssetContext& context, AudioDecoder&
         }
     }
 
+    // Vorbis uses fixed 16-bit depth
+    if (options.Format == AudioFormat::Vorbis)
+        options.BitDepth = AudioTool::BitDepth::_16;
+
     LOG_STR(Info, options.ToString());
 
     // Open the file
@@ -123,9 +81,7 @@ CreateAssetResult ImportAudio::Import(CreateAssetContext& context, AudioDecoder&
     Array<byte> audioData;
     if (decoder.Convert(stream, info, audioData))
         return CreateAssetResult::Error;
-
-    const float length = info.NumSamples / static_cast<float>(Math::Max(1U, info.SampleRate * info.NumChannels));
-    LOG(Info, "Audio: {0}kHz, channels: {1}, Bit depth: {2}, Length: {3}s", info.SampleRate / 1000.0f, info.NumChannels, info.BitDepth, length);
+    LOG(Info, "Audio: {0}kHz, channels: {1}, Bit depth: {2}, Length: {3}s", info.SampleRate / 1000.0f, info.NumChannels, info.BitDepth, info.GetLength());
 
     // Load the whole audio data
     uint32 bytesPerSample = info.BitDepth / 8;
@@ -133,33 +89,15 @@ CreateAssetResult ImportAudio::Import(CreateAssetContext& context, AudioDecoder&
     DataContainer<byte> sampleBuffer;
     sampleBuffer.Link(audioData.Get());
 
-    // Convert to Mono if used as 3D source
-    if (options.Is3D && info.NumChannels > 1)
-    {
-        const uint32 numSamplesPerChannel = info.NumSamples / info.NumChannels;
-
-        const uint32 monoBufferSize = numSamplesPerChannel * bytesPerSample;
-        sampleBuffer.Allocate(monoBufferSize);
-
-        AudioTool::ConvertToMono(audioData.Get(), sampleBuffer.Get(), info.BitDepth, numSamplesPerChannel, info.NumChannels);
-
-        info.NumSamples = numSamplesPerChannel;
-        info.NumChannels = 1;
-
-        bufferSize = monoBufferSize;
-    }
-
     // Convert bit depth if need to
-    if (options.BitDepth != static_cast<int32>(info.BitDepth))
+    uint32 outputBitDepth = (uint32)options.BitDepth;
+    if (outputBitDepth != info.BitDepth)
     {
-        const uint32 outBufferSize = info.NumSamples * (options.BitDepth / 8);
+        const uint32 outBufferSize = info.NumSamples * (outputBitDepth / 8);
         sampleBuffer.Allocate(outBufferSize);
-
-        AudioTool::ConvertBitDepth(audioData.Get(), info.BitDepth, sampleBuffer.Get(), options.BitDepth, info.NumSamples);
-
-        info.BitDepth = options.BitDepth;
+        AudioTool::ConvertBitDepth(audioData.Get(), info.BitDepth, sampleBuffer.Get(), outputBitDepth, info.NumSamples);
+        info.BitDepth = outputBitDepth;
         bytesPerSample = info.BitDepth / 8;
-
         bufferSize = outBufferSize;
     }
 
@@ -187,7 +125,7 @@ CreateAssetResult ImportAudio::Import(CreateAssetContext& context, AudioDecoder&
     context.Data.Header.Chunks[chunkIndex]->Data.Copy(dataPtr, dataSize);
 
 #define WRITE_DATA(chunkIndex, dataPtr, dataSize) \
-    samplesPerChunk[chunkIndex] = (dataSize) / (options.BitDepth / 8); \
+    samplesPerChunk[chunkIndex] = (dataSize) / (outputBitDepth / 8); \
     switch (options.Format) \
     { \
     case AudioFormat::Raw: \
@@ -221,8 +159,9 @@ CreateAssetResult ImportAudio::Import(CreateAssetContext& context, AudioDecoder&
     else
     {
         // Split audio data into a several chunks (uniform data spread)
-        const int32 MinChunkSize = 1 * 1024 * 1024; // 1 MB
-        const int32 chunkSize = Math::Max<int32>(MinChunkSize, Math::AlignUp<uint32>(bufferSize / ASSET_FILE_DATA_CHUNKS, 256));
+        const int32 minChunkSize = 1 * 1024 * 1024; // 1 MB
+        const int32 dataAlignment = info.NumChannels * bytesPerSample; // Ensure to never split samples in-between (eg. 24-bit that uses 3 bytes)
+        const int32 chunkSize = Math::Max<int32>(minChunkSize, (int32)Math::AlignUp<uint32>(bufferSize / ASSET_FILE_DATA_CHUNKS, dataAlignment));
         const int32 chunksCount = Math::CeilToInt((float)bufferSize / chunkSize);
         ASSERT(chunksCount > 0 && chunksCount <= ASSET_FILE_DATA_CHUNKS);
 

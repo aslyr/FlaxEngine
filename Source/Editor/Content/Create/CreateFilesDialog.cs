@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -62,7 +62,7 @@ namespace FlaxEditor.Content.Create
                 Offsets = new Margin(-ButtonsWidth - ButtonsMargin, ButtonsWidth, -ButtonsHeight - ButtonsMargin, ButtonsHeight),
                 Parent = this
             };
-            createButton.Clicked += OnCreate;
+            createButton.Clicked += OnSubmit;
             var cancelButton = new Button
             {
                 Text = "Cancel",
@@ -84,32 +84,17 @@ namespace FlaxEditor.Content.Create
             _settingsEditor = new CustomEditorPresenter(null);
             _settingsEditor.Panel.Parent = panel;
 
-            _dialogSize = new Vector2(TotalWidth, panel.Bottom);
+            _dialogSize = new Float2(TotalWidth, panel.Bottom);
 
             _settingsEditor.Select(_entry.Settings);
         }
 
-        private void OnCreate()
+        /// <inheritdoc />
+        public override void OnSubmit()
         {
             Editor.Instance.ContentImporting.LetThemBeCreatedxD(_entry);
-            Close(DialogResult.OK);
-        }
 
-        private void OnCancel()
-        {
-            Close(DialogResult.Cancel);
-        }
-
-        private void OnSelectedChanged(List<TreeNode> before, List<TreeNode> after)
-        {
-            var selection = new List<object>(after.Count);
-            for (int i = 0; i < after.Count; i++)
-            {
-                if (after[i].Tag is CreateFileEntry fileEntry && fileEntry.HasSettings)
-                    selection.Add(fileEntry.Settings);
-            }
-
-            _settingsEditor.Select(selection);
+            base.OnSubmit();
         }
 
         /// <inheritdoc />
@@ -117,7 +102,7 @@ namespace FlaxEditor.Content.Create
         {
             base.SetupWindowSettings(ref settings);
 
-            settings.MinimumSize = new Vector2(300, 400);
+            settings.MinimumSize = new Float2(300, 400);
             settings.HasSizingFrame = true;
         }
     }

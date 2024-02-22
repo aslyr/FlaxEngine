@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,7 +14,6 @@ class Task;
 class FLAXENGINE_API ITextureOwner
 {
 public:
-
     /// <summary>
     /// Gets the texture owner mutex used to synchronize texture logic.
     /// </summary>

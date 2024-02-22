@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ColorGradingPass.h"
 #include "RenderList.h"
@@ -9,30 +9,30 @@
 #include "Engine/Graphics/RenderTask.h"
 
 PACK_STRUCT(struct Data {
-    Vector4 ColorSaturationShadows;
-    Vector4 ColorContrastShadows;
-    Vector4 ColorGammaShadows;
-    Vector4 ColorGainShadows;
-    Vector4 ColorOffsetShadows;
+    Float4 ColorSaturationShadows;
+    Float4 ColorContrastShadows;
+    Float4 ColorGammaShadows;
+    Float4 ColorGainShadows;
+    Float4 ColorOffsetShadows;
 
-    Vector4 ColorSaturationMidtones;
-    Vector4 ColorContrastMidtones;
-    Vector4 ColorGammaMidtones;
-    Vector4 ColorGainMidtones;
-    Vector4 ColorOffsetMidtones;
+    Float4 ColorSaturationMidtones;
+    Float4 ColorContrastMidtones;
+    Float4 ColorGammaMidtones;
+    Float4 ColorGainMidtones;
+    Float4 ColorOffsetMidtones;
 
-    Vector4 ColorSaturationHighlights;
-    Vector4 ColorContrastHighlights;
-    Vector4 ColorGammaHighlights;
-    Vector4 ColorGainHighlights;
-    Vector4 ColorOffsetHighlights;
+    Float4 ColorSaturationHighlights;
+    Float4 ColorContrastHighlights;
+    Float4 ColorGammaHighlights;
+    Float4 ColorGainHighlights;
+    Float4 ColorOffsetHighlights;
 
     float ColorCorrectionShadowsMax;
     float ColorCorrectionHighlightsMin;
     float WhiteTemp;
     float WhiteTint;
 
-    Vector3 Dummy;
+    Float3 Dummy;
     float LutWeight;
     });
 
@@ -62,7 +62,7 @@ bool ColorGradingPass::Init()
         formatSupportFlags |= FormatSupport::Texture3D;
     else
         formatSupportFlags |= FormatSupport::Texture2D;
-    if (FORMAT_FEATURES_ARE_NOT_SUPPORTED(formatSupport, formatSupportFlags))
+    if (EnumHasNoneFlags(formatSupport, formatSupportFlags))
     {
         // Fallback to format that is supported on every washing machine
         _lutFormat = PixelFormat::R8G8B8A8_UNorm;
@@ -148,6 +148,7 @@ GPUTexture* ColorGradingPass::RenderLUT(RenderContext& renderContext)
         lutDesc = GPUTextureDescription::New2D(LutSize * LutSize, LutSize, 1, _lutFormat);
     }
     const auto lut = RenderTargetPool::Get(lutDesc);
+    RENDER_TARGET_POOL_SET_NAME(lut, "ColorGrading.LUT");
 
     // Prepare the parameters
     Data data;
@@ -204,11 +205,6 @@ GPUTexture* ColorGradingPass::RenderLUT(RenderContext& renderContext)
         context->SetRenderTarget(lut->View());
         context->DrawFullscreenTriangle();
     }
-
-    // TODO: this could run in async during scene rendering or sth
-
-    const Viewport viewport = renderContext.Task->GetViewport();
-    context->SetViewportAndScissors(viewport);
     context->UnBindSR(0);
 
     return lut;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -21,6 +21,11 @@ namespace FlaxEngine.GUI
         /// The text location and size.
         /// </summary>
         public Rectangle Bounds;
+
+        /// <summary>
+        /// Custom ascender value for the line layout (block size above the baseline). Set to 0 to use ascender from the font.
+        /// </summary>
+        public float Ascender;
 
         /// <summary>
         /// The custom tag.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +9,7 @@ using System.Text;
 using FlaxEditor.GUI.Timeline.Undo;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.GUI.Timeline.Tracks
 {
@@ -56,7 +57,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
 
             var keyframes = new KeyframesEditor.Keyframe[keyframesCount];
             var dataBuffer = new byte[e.ValueSize];
-            var propertyType = Scripting.TypeUtils.GetManagedType(e.MemberTypeName);
+            var propertyType = TypeUtils.GetManagedType(e.MemberTypeName);
             if (propertyType == null)
             {
                 e.Keyframes.ResetKeyframes();
@@ -262,7 +263,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
             Keyframes.KeyframesEditorContext = Timeline;
             Keyframes.CustomViewPanning = Timeline.OnKeyframesViewPanning;
             Keyframes.Bounds = new Rectangle(Timeline.StartOffset, Y + 1.0f, Timeline.Duration * Timeline.UnitsPerSecond * Timeline.Zoom, Height - 2.0f);
-            Keyframes.ViewScale = new Vector2(Timeline.Zoom, 1.0f);
+            Keyframes.ViewScale = new Float2(Timeline.Zoom, 1.0f);
             Keyframes.UpdateKeyframes();
         }
 
@@ -423,7 +424,7 @@ namespace FlaxEditor.GUI.Timeline.Tracks
         }
 
         /// <inheritdoc />
-        public new void OnKeyframesMove(IKeyframesEditor editor, ContainerControl control, Vector2 location, bool start, bool end)
+        public new void OnKeyframesMove(IKeyframesEditor editor, ContainerControl control, Float2 location, bool start, bool end)
         {
             if (Keyframes != null && Keyframes.Visible)
                 Keyframes.OnKeyframesMove(editor, control, location, start, end);

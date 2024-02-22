@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2022 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -40,7 +40,6 @@ DECLARE_ENUM_OPERATORS(AssetsCacheFlags);
 class FLAXENGINE_API AssetsCache
 {
 public:
-
     /// <summary>
     /// The registry entry structure.
     /// </summary>
@@ -75,26 +74,16 @@ public:
     typedef Dictionary<String, Guid> PathsMapping;
 
 private:
-
-    bool _isDirty;
+    bool _isDirty = false;
     CriticalSection _locker;
     Registry _registry;
     PathsMapping _pathsMapping;
     String _path;
 
 public:
-
     /// <summary>
-    /// Initializes a new instance of the <see cref="AssetsCache"/> class.
+    /// Gets amount of registered assets.
     /// </summary>
-    AssetsCache();
-
-public:
-
-    /// <summary>
-    /// Gets amount of registered assets
-    /// </summary>
-    /// <returns>Registry size</returns>
     int32 Size() const
     {
         _locker.Lock();
@@ -104,7 +93,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Init registry
     /// </summary>
@@ -127,7 +115,6 @@ public:
     static bool Save(const StringView& path, const Registry& entries, const PathsMapping& pathsMapping, const AssetsCacheFlags flags = AssetsCacheFlags::None);
 
 public:
-
     /// <summary>
     /// Finds the asset path by id. In editor it returns the actual asset path, at runtime it returns the mapped asset path.
     /// </summary>
@@ -172,6 +159,12 @@ public:
         AssetInfo info;
         return FindAsset(id, info);
     }
+
+    /// <summary>
+    /// Gets the asset ids.
+    /// </summary>
+    /// <param name="result">The result array.</param>
+    void GetAll(Array<Guid, HeapAllocation>& result) const;
 
     /// <summary>
     /// Gets the asset ids that match the given typename.

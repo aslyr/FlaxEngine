@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -48,7 +48,7 @@ namespace FlaxEngine.GUI
         /// <param name="target">The parent control to attach to it.</param>
         /// <param name="location">Popup menu origin location in parent control coordinates.</param>
         /// <param name="targetArea">Tooltip target area of interest.</param>
-        public void Show(Control target, Vector2 location, Rectangle targetArea)
+        public void Show(Control target, Float2 location, Rectangle targetArea)
         {
             if (target == null)
                 throw new ArgumentNullException();
@@ -68,26 +68,12 @@ namespace FlaxEngine.GUI
             var parentWin = target.Root;
             if (parentWin == null)
                 return;
-            float dpiScale = target.RootWindow.DpiScale;
-            Vector2 dpiSize = Size * dpiScale;
-            Vector2 locationWS = target.PointToWindow(location);
-            Vector2 locationSS = parentWin.PointToScreen(locationWS);
-            Rectangle monitorBounds = Platform.GetMonitorBounds(locationSS);
-            Vector2 rightBottomMonitorBounds = monitorBounds.BottomRight;
-            Vector2 rightBottomLocationSS = locationSS + dpiSize;
-
-            // Prioritize tooltip placement within parent window, fall back to virtual desktop
-            if (rightBottomMonitorBounds.Y < rightBottomLocationSS.Y)
-            {
-                // Direction: up
-                locationSS.Y -= dpiSize.Y;
-            }
-            if (rightBottomMonitorBounds.X < rightBottomLocationSS.X)
-            {
-                // Direction: left
-                locationSS.X -= dpiSize.X;
-            }
+            var dpiScale = target.RootWindow.DpiScale;
+            var dpiSize = Size * dpiScale;
+            var locationWS = target.PointToWindow(location);
+            var locationSS = parentWin.PointToScreen(locationWS);
             _showTarget = target;
+            WrapPosition(ref locationSS);
 
             // Create window
             var desc = CreateWindowSettings.Default;
@@ -99,13 +85,14 @@ namespace FlaxEngine.GUI
             desc.SupportsTransparency = false;
             desc.ShowInTaskbar = false;
             desc.ActivateWhenFirstShown = false;
-            desc.AllowInput = true;
+            desc.AllowInput = false;
             desc.AllowMinimize = false;
             desc.AllowMaximize = false;
             desc.AllowDragAndDrop = false;
             desc.IsTopmost = true;
             desc.IsRegularWindow = false;
             desc.HasSizingFrame = false;
+            desc.ShowAfterFirstPaint = true;
             _window = Platform.CreateWindow(ref desc);
             if (_window == null)
                 throw new InvalidOperationException("Failed to create tooltip window.");
@@ -165,7 +152,7 @@ namespace FlaxEngine.GUI
 
                 if (_timeToPopupLeft <= 0.0f)
                 {
-                    if (_lastTarget.OnShowTooltip(out _currentText, out Vector2 location, out Rectangle area))
+                    if (_lastTarget.OnShowTooltip(out _currentText, out var location, out var area))
                     {
                         Show(_lastTarget, location, area);
                     }
@@ -179,6 +166,8 @@ namespace FlaxEngine.GUI
         /// <param name="target">The target.</param>
         public void OnMouseLeaveControl(Control target)
         {
+            if (Visible)
+                Hide();
             _lastTarget = null;
         }
 
@@ -190,16 +179,47 @@ namespace FlaxEngine.GUI
             }
         }
 
+        private void WrapPosition(ref Float2 locationSS, float flipOffset = 0.0f)
+        {
+            if (_showTarget?.RootWindow == null)
+                return;
+
+            // Calculate popup direction
+            var dpiScale = _showTarget.RootWindow.DpiScale;
+            var dpiSize = Size * dpiScale;
+            var monitorBounds = Platform.GetMonitorBounds(locationSS);
+            var rightBottomMonitorBounds = monitorBounds.BottomRight;
+            var rightBottomLocationSS = locationSS + dpiSize;
+
+            // Prioritize tooltip placement within parent window, fall back to virtual desktop
+            if (rightBottomMonitorBounds.Y < rightBottomLocationSS.Y)
+            {
+                // Direction: up
+                locationSS.Y -= dpiSize.Y + flipOffset;
+            }
+            if (rightBottomMonitorBounds.X < rightBottomLocationSS.X)
+            {
+                // Direction: left
+                locationSS.X -= dpiSize.X + flipOffset * 2;
+            }
+        }
+
         /// <inheritdoc />
         public override void Update(float deltaTime)
         {
-            // Auto hide if mouse leaves control area
-            Vector2 mousePos = Input.MouseScreenPosition;
-            Vector2 location = _showTarget.PointFromScreen(mousePos);
+            var mousePos = Input.MouseScreenPosition;
+            var location = _showTarget.PointFromScreen(mousePos);
             if (!_showTarget.OnTestTooltipOverControl(ref location))
             {
-                // Mouse left or sth
+                // Auto hide if mouse leaves control area
                 Hide();
+            }
+            else
+            {
+                // Position tooltip when mouse moves
+                WrapPosition(ref mousePos, 10);
+                if (_window)
+                    _window.Position = mousePos + new Float2(15, 10);
             }
 
             base.Update(deltaTime);
@@ -211,7 +231,7 @@ namespace FlaxEngine.GUI
             var style = Style.Current;
 
             // Background
-            Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), Color.Lerp(style.BackgroundSelected, style.Background, 0.6f));
+            Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), Color.Lerp(style.BackgroundSelected, style.Background, 0.6f));
             Render2D.FillRectangle(new Rectangle(1.1f, 1.1f, Width - 2, Height - 2), style.Background);
 
             // Tooltip text
@@ -235,7 +255,7 @@ namespace FlaxEngine.GUI
             var style = Style.Current;
 
             // Calculate size of the tooltip
-            var size = Vector2.Zero;
+            var size = Float2.Zero;
             if (style != null && style.FontMedium && !string.IsNullOrEmpty(_currentText))
             {
                 var layout = TextLayoutOptions.Default;
@@ -252,7 +272,7 @@ namespace FlaxEngine.GUI
                 }
                 //size.X += style.FontMedium.MeasureText(_currentText).X;
             }
-            Size = size + new Vector2(24.0f);
+            Size = size + new Float2(24.0f);
 
             // Check if is visible size get changed
             if (Visible && prevSize != Size)
@@ -262,7 +282,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnShowTooltip(out string text, out Vector2 location, out Rectangle area)
+        public override bool OnShowTooltip(out string text, out Float2 location, out Rectangle area)
         {
             base.OnShowTooltip(out text, out location, out area);
 

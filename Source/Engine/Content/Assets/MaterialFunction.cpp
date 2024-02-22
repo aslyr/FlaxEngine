@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MaterialFunction.h"
 #include "Engine/Threading/Threading.h"
@@ -75,6 +75,8 @@ AssetChunksFlag MaterialFunction::getChunksToPreload() const
 BytesContainer MaterialFunction::LoadSurface()
 {
     BytesContainer result;
+    if (WaitForLoaded())
+        return result;
     ScopeLock lock(Locker);
     if (HasChunk(0))
     {
@@ -89,6 +91,8 @@ BytesContainer MaterialFunction::LoadSurface()
 
 bool MaterialFunction::LoadSurface(MaterialGraph& graph)
 {
+    if (WaitForLoaded())
+        return true;
     ScopeLock lock(Locker);
     if (HasChunk(0))
     {

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,23 +10,35 @@
 /// <summary>
 /// Template for dynamic array with variable capacity.
 /// </summary>
+/// <typeparam name="T">The type of elements in the array.</typeparam>
+/// <typeparam name="AllocationType">The type of memory allocator.</typeparam>
 template<typename T, typename AllocationType = HeapAllocation>
 API_CLASS(InBuild) class Array
 {
     friend Array;
 public:
-
     typedef T ItemType;
     typedef typename AllocationType::template Data<T> AllocationData;
 
 private:
-
     int32 _count;
     int32 _capacity;
     AllocationData _allocation;
 
-public:
+    FORCE_INLINE static void MoveToEmpty(AllocationData& to, AllocationData& from, int32 fromCount, int32 fromCapacity)
+    {
+        if IF_CONSTEXPR (AllocationType::HasSwap)
+            to.Swap(from);
+        else
+        {
+            to.Allocate(fromCapacity);
+            Memory::MoveItems(to.Get(), from.Get(), fromCount);
+            Memory::DestructItems(from.Get(), fromCount);
+            from.Free();
+        }
+    }
 
+public:
     /// <summary>
     /// Initializes a new instance of the <see cref="Array"/> class.
     /// </summary>
@@ -113,15 +125,15 @@ public:
     /// Initializes a new instance of the <see cref="Array"/> class.
     /// </summary>
     /// <param name="other">The other collection to copy.</param>
-    template<typename U>
-    explicit Array(const Array<U>& other) noexcept
+    template<typename OtherT = T, typename OtherAllocationType = AllocationType>
+    explicit Array(const Array<OtherT, OtherAllocationType>& other) noexcept
     {
-        _capacity = other._count;
-        _count = other._count;
+        _capacity = other.Capacity();
+        _count = other.Count();
         if (_capacity > 0)
         {
             _allocation.Allocate(_capacity);
-            Memory::ConstructItems(_allocation.Get(), other._data, other._count);
+            Memory::ConstructItems(_allocation.Get(), other.Get(), _count);
         }
     }
 
@@ -135,7 +147,7 @@ public:
         _capacity = other._capacity;
         other._count = 0;
         other._capacity = 0;
-        _allocation.Swap(other._allocation);
+        MoveToEmpty(_allocation, other._allocation, _count, _capacity);
     }
 
     /// <summary>
@@ -145,11 +157,11 @@ public:
     /// <returns>The reference to this.</returns>
     Array& operator=(std::initializer_list<T> initList) noexcept
     {
-        Memory::DestructItems(_allocation.Get(), _count);
-        _count = _capacity = (int32)initList.size();
-        if (_capacity > 0)
+        Clear();
+        if (initList.size() > 0)
         {
-            _allocation.Allocate(_capacity);
+            EnsureCapacity((int32)initList.size());
+            _count = (int32)initList.size();
             Memory::ConstructItems(_allocation.Get(), initList.begin(), _count);
         }
         return *this;
@@ -165,13 +177,13 @@ public:
         if (this != &other)
         {
             Memory::DestructItems(_allocation.Get(), _count);
-            if (_capacity < other._count)
+            if (_capacity < other.Count())
             {
                 _allocation.Free();
-                _capacity = other._count;
+                _capacity = other.Count();
                 _allocation.Allocate(_capacity);
             }
-            _count = other._count;
+            _count = other.Count();
             Memory::ConstructItems(_allocation.Get(), other.Get(), _count);
         }
         return *this;
@@ -192,7 +204,7 @@ public:
             _capacity = other._capacity;
             other._count = 0;
             other._capacity = 0;
-            _allocation.Swap(other._allocation);
+            MoveToEmpty(_allocation, other._allocation, _count, _capacity);
         }
         return *this;
     }
@@ -206,7 +218,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the amount of the items in the collection.
     /// </summary>
@@ -237,6 +248,16 @@ public:
     FORCE_INLINE bool IsEmpty() const
     {
         return _count == 0;
+    }
+
+    /// <summary>
+    /// Determines if given index is valid.
+    /// </summary>
+    /// <param name="index">The index.</param>
+    /// <returns><c>true</c> if is valid a index; otherwise, <c>false</c>.</returns>
+    bool IsValidIndex(int32 index) const
+    {
+        return index < _count && index >= 0;
     }
 
     /// <summary>
@@ -332,7 +353,6 @@ public:
     }
 
 public:
-
     FORCE_INLINE T* begin()
     {
         return &_allocation.Get()[0];
@@ -354,7 +374,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Clear the collection without changing its capacity.
     /// </summary>
@@ -493,7 +512,7 @@ public:
     /// Adds the other collection to the collection.
     /// </summary>
     /// <param name="other">The other collection to add.</param>
-    template<typename OtherT, typename OtherAllocationType = HeapAllocation>
+    template<typename OtherT, typename OtherAllocationType = AllocationType>
     FORCE_INLINE void Add(const Array<OtherT, OtherAllocationType>& other)
     {
         Add(other.Get(), other.Count());
@@ -545,8 +564,8 @@ public:
     /// <summary>
     /// Adds the new items to the end of the collection, possibly reallocating the whole collection to fit. The new items will be zeroed.
     /// </summary>
-    /// Warning! AddZeroed() will create items without calling the constructor and this is not appropriate for item types that require a constructor to function properly.
     /// <remarks>
+    /// Warning! AddZeroed() will create items without calling the constructor and this is not appropriate for item types that require a constructor to function properly.
     /// </remarks>
     /// <param name="count">The number of new items to add.</param>
     void AddZeroed(int32 count = 1)
@@ -717,9 +736,16 @@ public:
     /// <param name="other">The other collection.</param>
     void Swap(Array& other)
     {
-        ::Swap(_count, other._count);
-        ::Swap(_capacity, other._capacity);
-        _allocation.Swap(other._allocation);
+        if IF_CONSTEXPR (AllocationType::HasSwap)
+        {
+            _allocation.Swap(other._allocation);
+            ::Swap(_count, other._count);
+            ::Swap(_capacity, other._capacity);
+        }
+        else
+        {
+            ::Swap(other, *this);
+        }
     }
 
     /// <summary>
@@ -730,13 +756,10 @@ public:
         T* data = _allocation.Get();
         const int32 count = _count / 2;
         for (int32 i = 0; i < count; i++)
-        {
             ::Swap(data[i], data[_count - i - 1]);
-        }
     }
 
 public:
-
     /// <summary>
     /// Performs push on stack operation (stack grows at the end of the collection).
     /// </summary>
@@ -775,7 +798,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Performs enqueue to queue operation (queue head is in the beginning of queue).
     /// </summary>
@@ -798,7 +820,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Searches for the given item within the entire collection.
     /// </summary>
@@ -867,10 +888,10 @@ public:
     }
 
 public:
-
-    bool operator==(const Array& other) const
+    template<typename OtherT = T, typename OtherAllocationType = AllocationType>
+    bool operator==(const Array<OtherT, OtherAllocationType>& other) const
     {
-        if (_count == other._count)
+        if (_count == other.Count())
         {
             const T* data = _allocation.Get();
             const T* otherData = other.Get();
@@ -879,17 +900,18 @@ public:
                 if (!(data[i] == otherData[i]))
                     return false;
             }
+            return true;
         }
-        return true;
+        return false;
     }
 
-    bool operator!=(const Array& other) const
+    template<typename OtherT = T, typename OtherAllocationType = AllocationType>
+    bool operator!=(const Array<OtherT, OtherAllocationType>& other) const
     {
         return !operator==(other);
     }
 
 public:
-
     /// <summary>
     /// The collection iterator.
     /// </summary>
@@ -913,7 +935,6 @@ public:
         }
 
     public:
-
         Iterator()
             : _array(nullptr)
             , _index(-1)
@@ -933,7 +954,6 @@ public:
         }
 
     public:
-
         FORCE_INLINE Array* GetArray() const
         {
             return _array;
@@ -946,12 +966,12 @@ public:
 
         FORCE_INLINE bool IsEnd() const
         {
-            return _index == _array->Count();
+            return _index == _array->_count;
         }
 
         FORCE_INLINE bool IsNotEnd() const
         {
-            return _index != _array->Count();
+            return _index != _array->_count;
         }
 
         FORCE_INLINE T& operator*() const
@@ -974,9 +994,16 @@ public:
             return _array != v._array || _index != v._index;
         }
 
+        Iterator& operator=(const Iterator& v)
+        {
+            _array = v._array;
+            _index = v._index;
+            return *this;
+        }
+
         Iterator& operator++()
         {
-            if (_index != _array->Count())
+            if (_index != _array->_count)
                 _index++;
             return *this;
         }
@@ -984,7 +1011,7 @@ public:
         Iterator operator++(int)
         {
             Iterator temp = *this;
-            if (_index != _array->Count())
+            if (_index != _array->_count)
                 _index++;
             return temp;
         }
@@ -1006,7 +1033,6 @@ public:
     };
 
 public:
-
     /// <summary>
     /// Gets iterator for beginning of the collection.
     /// </summary>

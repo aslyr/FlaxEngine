@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -16,66 +16,25 @@
 #define ANIM_GRAPH_MULTI_BLEND_2D_MAX_TRIS 32
 #define ANIM_GRAPH_MAX_STATE_TRANSITIONS 64
 #define ANIM_GRAPH_MAX_CALL_STACK 100
+#define ANIM_GRAPH_MAX_EVENTS 64
 
 class AnimGraph;
 class AnimSubGraph;
 class AnimGraphBase;
 class AnimGraphNode;
 class AnimGraphExecutor;
+class AnimatedModel;
+class AnimEvent;
+class AnimContinuousEvent;
 class SkinnedModel;
 class SkeletonData;
-
-/// <summary>
-/// The root motion data container. Supports displacement and rotation (no scale component).
-/// </summary>
-struct RootMotionData
-{
-    static RootMotionData Identity;
-
-    Vector3 Translation;
-    Quaternion Rotation;
-
-    RootMotionData()
-    {
-    }
-
-    RootMotionData(const Vector3& translation, const Quaternion& rotation)
-    {
-        Translation = translation;
-        Rotation = rotation;
-    }
-
-    RootMotionData(const RootMotionData& other)
-    {
-        Translation = other.Translation;
-        Rotation = other.Rotation;
-    }
-
-    explicit RootMotionData(const Transform& other)
-    {
-        Translation = other.Translation;
-        Rotation = other.Orientation;
-    }
-
-    RootMotionData& operator+=(const RootMotionData& b);
-    RootMotionData& operator+=(const Transform& b);
-    RootMotionData& operator-=(const Transform& b);
-    RootMotionData operator+(const RootMotionData& b) const;
-    RootMotionData operator-(const RootMotionData& b) const;
-
-    static void Lerp(const RootMotionData& t1, const RootMotionData& t2, float amount, RootMotionData& result)
-    {
-        Vector3::Lerp(t1.Translation, t2.Translation, amount, result.Translation);
-        Quaternion::Slerp(t1.Rotation, t2.Rotation, amount, result.Rotation);
-    }
-};
 
 /// <summary>
 /// The animation graph 'impulse' connections data container (the actual transfer is done via pointer as it gives better performance). 
 /// Container for skeleton nodes transformation hierarchy and any other required data. 
 /// Unified layout for both local and model transformation spaces.
 /// </summary>
-struct AnimGraphImpulse
+struct FLAXENGINE_API AnimGraphImpulse
 {
     /// <summary>
     /// The skeleton nodes transformation hierarchy nodes. Size always matches the Anim Graph skeleton description.
@@ -85,7 +44,7 @@ struct AnimGraphImpulse
     /// <summary>
     /// The root motion extracted from the animation to apply on animated object.
     /// </summary>
-    RootMotionData RootMotion = RootMotionData::Identity;
+    Transform RootMotion = Transform::Identity;
 
     /// <summary>
     /// The animation time position (in seconds).
@@ -133,9 +92,9 @@ enum class BoneTransformMode
 };
 
 /// <summary>
-/// The animated model root motion mode.
+/// The animated model root motion extraction modes.
 /// </summary>
-enum class RootMotionMode
+enum class RootMotionExtraction
 {
     /// <summary>
     /// Don't extract nor apply the root motion.
@@ -159,35 +118,22 @@ enum class RootMotionMode
 class AnimGraphStateTransition
 {
 public:
-
     /// <summary>
     /// The transition flag types.
     /// </summary>
     enum class FlagTypes
     {
-        /// <summary>
-        /// The none.
-        /// </summary>
         None = 0,
-
-        /// <summary>
-        /// The enabled flag.
-        /// </summary>
         Enabled = 1,
-
-        /// <summary>
-        /// The solo flag.
-        /// </summary>
         Solo = 2,
-
-        /// <summary>
-        /// The use default rule flag.
-        /// </summary>
         UseDefaultRule = 4,
+        InterruptionRuleRechecking = 8,
+        InterruptionInstant = 16,
+        InterruptionSourceState = 32,
+        InterruptionDestinationState = 64,
     };
 
 public:
-
     /// <summary>
     /// The destination state node.
     /// </summary>
@@ -222,9 +168,8 @@ DECLARE_ENUM_OPERATORS(AnimGraphStateTransition::FlagTypes);
 /// <seealso cref="GraphParameter" />
 API_CLASS() class AnimGraphParameter : public VisjectGraphParameter
 {
-DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(AnimGraphParameter, VisjectGraphParameter);
+    DECLARE_SCRIPTING_TYPE_WITH_CONSTRUCTOR_IMPL(AnimGraphParameter, VisjectGraphParameter);
 public:
-
     AnimGraphParameter(const AnimGraphParameter& other)
         : AnimGraphParameter()
     {
@@ -243,12 +188,44 @@ public:
 };
 
 /// <summary>
+/// The animation graph slot-based animation.
+/// </summary>
+struct FLAXENGINE_API AnimGraphSlot
+{
+    String Name;
+    AssetReference<Animation> Animation;
+    float Speed = 1.0f;
+    float BlendInTime = 0.0f;
+    float BlendOutTime = 0.0f;
+    int32 LoopCount = 0;
+    bool Pause = false;
+    bool Reset = false;
+};
+
+/// <summary>
+/// The animation graph state container for a single node playback trace (eg. animation sample info or state transition). Can be used by Anim Graph debugging or custom scripting.
+/// </summary>
+API_STRUCT(NoDefault) struct FLAXENGINE_API AnimGraphTraceEvent
+{
+    DECLARE_SCRIPTING_TYPE_MINIMAL(AnimGraphTraceEvent);
+
+    // Contextual asset used. For example, sampled animation.
+    API_FIELD() Asset* Asset = nullptr;
+    // Generic value contextual to playback type (eg. animation sample position).
+    API_FIELD() float Value = 0;
+    // Identifier of the node in the graph.
+    API_FIELD() uint32 NodeId = 0;
+    // Ids of graph nodes (call of hierarchy).
+    API_FIELD(Internal, NoArray) uint32 NodePath[8] = {};
+};
+
+/// <summary>
 /// The animation graph instance data storage. Required to update the animation graph.
 /// </summary>
-class AnimGraphInstanceData
+class FLAXENGINE_API AnimGraphInstanceData
 {
+    friend AnimGraphExecutor;
 public:
-
     // ---- Quick documentation ----
     // AnimGraphInstanceData holds a single animation graph instance playback data.
     // It has parameters (the same layout as graph) that can be modified per instance (eg. by game scripts).
@@ -283,7 +260,26 @@ public:
         uint64 LastUpdateFrame;
         AnimGraphNode* CurrentState;
         AnimGraphStateTransition* ActiveTransition;
+        AnimGraphStateTransition* BaseTransition;
+        AnimGraphNode* BaseTransitionState;
         float TransitionPosition;
+        float BaseTransitionPosition;
+    };
+
+    struct SlotBucket
+    {
+        int32 Index;
+        float TimePosition;
+        float BlendInPosition;
+        float BlendOutPosition;
+        int32 LoopsDone;
+        int32 LoopsLeft;
+    };
+
+    struct InstanceDataBucket
+    {
+        bool Init;
+        float Data[4];
     };
 
     /// <summary>
@@ -297,22 +293,12 @@ public:
             MultiBlendBucket MultiBlend;
             BlendPoseBucket BlendPose;
             StateMachineBucket StateMachine;
+            SlotBucket Slot;
+            InstanceDataBucket InstanceData;
         };
     };
 
 public:
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AnimGraphInstanceData"/> class.
-    /// </summary>
-    /// <param name="object">The object that represents the instance data source.</param>
-    AnimGraphInstanceData(ScriptingObject* object)
-        : Object(object)
-    {
-    }
-
-public:
-
     /// <summary>
     /// The instance data version number. Used to sync the Anim Graph data with the instance state. Handles Anim Graph reloads to ensure data is valid.
     /// </summary>
@@ -336,7 +322,7 @@ public:
     /// <summary>
     /// The current root motion delta to apply on a target object.
     /// </summary>
-    RootMotionData RootMotion = RootMotionData::Identity;
+    Transform RootMotion = Transform::Identity;
 
     /// <summary>
     /// The animation graph parameters collection (instanced, override the default values).
@@ -358,8 +344,22 @@ public:
     /// </summary>
     ScriptingObject* Object;
 
-public:
+    /// <summary>
+    /// The output nodes pose skeleton asset to use. Allows to remap evaluated animation pose for Base Model of the Anim Graph to the target Animated Model that plays it. Nodes Pose will match its skeleton. Use null if disable retargetting.
+    /// </summary>
+    SkinnedModel* NodesSkeleton = nullptr;
 
+    /// <summary>
+    /// The custom event called after local pose evaluation and retargetting.
+    /// </summary>
+    Delegate<AnimGraphImpulse*> LocalPoseOverride;
+
+    /// <summary>
+    /// The slots animations.
+    /// </summary>
+    Array<AnimGraphSlot, InlinedAllocation<4>> Slots;
+
+public:
     /// <summary>
     /// Clears this container data.
     /// </summary>
@@ -374,6 +374,47 @@ public:
     /// Invalidates the update timer.
     /// </summary>
     void Invalidate();
+
+    /// <summary>
+    /// Invokes any outgoing AnimEvent and AnimContinuousEvent collected during the last animation update. When called from non-main thread only Async events will be invoked.
+    /// </summary>
+    void InvokeAnimEvents();
+
+public:
+    // Anim Graph logic tracing feature that allows to collect insights of animations sampling and skeleton poses operations.
+    bool EnableTracing = false;
+    // Trace events collected when using EnableTracing option.
+    Array<AnimGraphTraceEvent> TraceEvents;
+
+private:
+    struct OutgoingEvent
+    {
+        enum Types
+        {
+            OnEvent,
+            OnBegin,
+            OnEnd,
+        };
+
+        AnimEvent* Instance;
+        AnimatedModel* Actor;
+        Animation* Anim;
+        float Time, DeltaTime;
+        Types Type;
+    };
+
+    struct ActiveEvent
+    {
+        AnimContinuousEvent* Instance;
+        Animation* Anim;
+        AnimGraphNode* Node;
+        bool Hit;
+
+        OutgoingEvent End(AnimatedModel* actor) const;
+    };
+
+    Array<ActiveEvent, InlinedAllocation<8>> ActiveEvents;
+    Array<OutgoingEvent, InlinedAllocation<8>> OutgoingEvents;
 };
 
 /// <summary>
@@ -388,7 +429,6 @@ struct AnimGraphTransitionData
 class AnimGraphBox : public VisjectGraphBox
 {
 public:
-
     AnimGraphBox()
     {
     }
@@ -407,7 +447,6 @@ public:
 class AnimGraphNode : public VisjectGraphNode<AnimGraphBox>
 {
 public:
-
     struct MultiBlend1DData
     {
         /// <summary>
@@ -452,7 +491,7 @@ public:
         AnimSubGraph* Graph;
     };
 
-    struct StateData
+    struct StateBaseData
     {
         /// <summary>
         /// The invalid transition valid used in Transitions to indicate invalid transition linkage.
@@ -460,14 +499,21 @@ public:
         const static uint16 InvalidTransitionIndex = MAX_uint16;
 
         /// <summary>
-        /// The graph of the state. Contains the state animation evaluation graph. Its root node is the state output node with an input box for the state blend pose sampling.
-        /// </summary>
-        AnimSubGraph* Graph;
-
-        /// <summary>
         /// The outgoing transitions from this state to the other states. Each array item contains index of the transition data from the state node graph transitions cache. Value InvalidTransitionIndex is used for last transition to indicate the transitions amount.
         /// </summary>
         uint16 Transitions[ANIM_GRAPH_MAX_STATE_TRANSITIONS];
+    };
+
+    struct StateData : StateBaseData
+    {
+        /// <summary>
+        /// The graph of the state. Contains the state animation evaluation graph. Its root node is the state output node with an input box for the state blend pose sampling.
+        /// </summary>
+        AnimSubGraph* Graph;
+    };
+
+    struct AnyStateData : StateBaseData
+    {
     };
 
     struct CustomData
@@ -480,7 +526,7 @@ public:
         /// <summary>
         /// The GC handle to the managed instance of the node object.
         /// </summary>
-        uint32 Handle;
+        MGCHandle Handle;
     };
 
     struct CurveData
@@ -521,6 +567,7 @@ public:
             MultiBlend2DData MultiBlend2D;
             StateMachineData StateMachine;
             StateData State;
+            AnyStateData AnyState;
             CustomData Custom;
             CurveData Curve;
             AnimationGraphFunctionData AnimationGraphFunction;
@@ -530,7 +577,6 @@ public:
     };
 
 public:
-
     /// <summary>
     /// The animation graph.
     /// </summary>
@@ -547,13 +593,11 @@ public:
     AdditionalData Data;
 
 public:
-
     AnimGraphNode()
     {
     }
 
 public:
-
     /// <summary>
     /// Gets the per-node node transformations cache (cached).
     /// </summary>
@@ -569,7 +613,6 @@ public:
 class AnimGraphBase : public VisjectGraph<AnimGraphNode, AnimGraphBox, AnimGraphParameter>
 {
 protected:
-
     AnimGraph* _graph;
     Node* _rootNode = nullptr;
 
@@ -579,7 +622,6 @@ protected:
     }
 
 public:
-
     /// <summary>
     /// The sub graphs nested in this graph.
     /// </summary>
@@ -606,7 +648,6 @@ public:
     int32 BucketsCountTotal;
 
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="AnimGraphBase"/> class.
     /// </summary>
@@ -616,7 +657,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the root node of the graph (cache don load).
     /// </summary>
@@ -635,7 +675,6 @@ public:
     AnimSubGraph* LoadSubGraph(const void* data, int32 dataLength, const Char* name);
 
 public:
-
     // [Graph]
     bool Load(ReadStream* stream, bool loadMeta) override;
     void Clear() override;
@@ -644,9 +683,11 @@ public:
 #endif
 
 protected:
-
     // [Graph]
     bool onNodeLoaded(Node* n) override;
+
+private:
+    void LoadStateTransitions(AnimGraphNode::StateBaseData& data, Value& transitionsData);
 };
 
 /// <summary>
@@ -662,7 +703,6 @@ class AnimSubGraph : public AnimGraphBase
     friend AnimGraphParameter;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AnimSubGraph" /> class.
     /// </summary>
@@ -685,7 +725,6 @@ class AnimGraph : public AnimGraphBase
     friend AnimGraphExecutor;
 
 private:
-
     typedef void (*InitBucketHandler)(AnimGraphInstanceData::Bucket&);
 
     bool _isFunction, _isRegisteredForScriptingEvents;
@@ -695,7 +734,6 @@ private:
     Asset* _owner;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AnimGraph"/> class.
     /// </summary>
@@ -713,7 +751,6 @@ public:
     ~AnimGraph();
 
 public:
-
     /// <summary>
     /// The Anim Graph data version number. Used to sync the Anim Graph data with the instances state. Handles Anim Graph reloads to ensure data is valid.
     /// </summary>
@@ -728,21 +765,12 @@ public:
     AssetReference<SkinnedModel> BaseModel;
 
 public:
-
     /// <summary>
     /// Determines whether this graph is ready for the animation evaluation.
     /// </summary>
     bool IsReady() const;
 
-    /// <summary>
-    /// Determines whether this graph can be used with the specified skeleton.
-    /// </summary>
-    /// <param name="other">The other skinned model to check.</param>
-    /// <returns>True if can perform the update, otherwise false.</returns>
-    bool CanUseWithSkeleton(SkinnedModel* other) const;
-
 private:
-
     void ClearCustomNode(Node* node);
     bool InitCustomNode(Node* node);
 
@@ -753,7 +781,6 @@ private:
     void OnScriptsLoaded();
 
 public:
-
     // [Graph]
     bool Load(ReadStream* stream, bool loadMeta) override;
     bool onParamCreated(Parameter* p) override;
@@ -769,12 +796,16 @@ struct AnimGraphContext
     AnimGraphInstanceData* Data;
     AnimGraphImpulse EmptyNodes;
     AnimGraphTransitionData TransitionData;
+    bool StackOverFlow;
     Array<VisjectExecutor::Node*, FixedAllocation<ANIM_GRAPH_MAX_CALL_STACK>> CallStack;
     Array<VisjectExecutor::Graph*, FixedAllocation<32>> GraphStack;
+    Array<uint32, FixedAllocation<ANIM_GRAPH_MAX_CALL_STACK> > NodePath;
     Dictionary<VisjectExecutor::Node*, VisjectExecutor::Graph*> Functions;
     ChunkedArray<AnimGraphImpulse, 256> PoseCache;
     int32 PoseCacheSize;
     Dictionary<VisjectExecutor::Box*, Variant> ValueCache;
+
+    AnimGraphTraceEvent& AddTraceEvent(const AnimGraphNode* node);
 };
 
 /// <summary>
@@ -784,16 +815,14 @@ class AnimGraphExecutor : public VisjectExecutor
 {
     friend AnimGraphNode;
 private:
-
     AnimGraph& _graph;
-    RootMotionMode _rootMotionMode = RootMotionMode::NoExtraction;
+    RootMotionExtraction _rootMotionMode = RootMotionExtraction::NoExtraction;
     int32 _skeletonNodesCount = 0;
 
     // Per-thread context to allow async execution
-    static ThreadLocal<AnimGraphContext> Context;
+    static ThreadLocal<AnimGraphContext*> Context;
 
 public:
-
     /// <summary>
     /// Initializes the managed runtime calls.
     /// </summary>
@@ -806,7 +835,6 @@ public:
     explicit AnimGraphExecutor(AnimGraph& graph);
 
 public:
-
     /// <summary>
     /// Updates the graph animation.
     /// </summary>
@@ -841,12 +869,11 @@ public:
     }
 
     /// <summary>
-    /// Resets all the state bucket used by the given graph including sub-graphs (total). Can eb used to reset the animation state of the nested graph (including children).
+    /// Resets all the state bucket used by the given graph including sub-graphs (total). Can be used to reset the animation state of the nested graph (including children).
     /// </summary>
     void ResetBuckets(AnimGraphContext& context, AnimGraphBase* graph);
 
 private:
-
     Value eatBox(Node* caller, Box* box) override;
     Graph* GetCurrentGraph() const override;
 
@@ -856,11 +883,22 @@ private:
     void ProcessGroupCustom(Box* boxBase, Node* nodeBase, Value& value);
     void ProcessGroupFunction(Box* boxBase, Node* node, Value& value);
 
+    enum class ProcessAnimationMode
+    {
+        Override,
+        Add,
+        BlendAdditive,
+    };
+
     int32 GetRootNodeIndex(Animation* anim);
-    void UpdateRootMotion(const Animation::NodeToChannel* mapping, Animation* anim, float pos, float prevPos, Transform& rootNode, RootMotionData& rootMotion);
+    void ProcessAnimEvents(AnimGraphNode* node, bool loop, float length, float animPos, float animPrevPos, Animation* anim, float speed);
+    void ProcessAnimation(AnimGraphImpulse* nodes, AnimGraphNode* node, bool loop, float length, float pos, float prevPos, Animation* anim, float speed, float weight = 1.0f, ProcessAnimationMode mode = ProcessAnimationMode::Override);
     Variant SampleAnimation(AnimGraphNode* node, bool loop, float length, float startTimePos, float prevTimePos, float& newTimePos, Animation* anim, float speed);
     Variant SampleAnimationsWithBlend(AnimGraphNode* node, bool loop, float length, float startTimePos, float prevTimePos, float& newTimePos, Animation* animA, Animation* animB, float speedA, float speedB, float alpha);
     Variant SampleAnimationsWithBlend(AnimGraphNode* node, bool loop, float length, float startTimePos, float prevTimePos, float& newTimePos, Animation* animA, Animation* animB, Animation* animC, float speedA, float speedB, float speedC, float alphaA, float alphaB, float alphaC);
     Variant Blend(AnimGraphNode* node, const Value& poseA, const Value& poseB, float alpha, AlphaBlendMode alphaMode);
-    Variant SampleState(AnimGraphNode* state);
+    Variant SampleState(AnimGraphContext& context, const AnimGraphNode* state);
+    void InitStateTransition(AnimGraphContext& context, AnimGraphInstanceData::StateMachineBucket& stateMachineBucket, AnimGraphStateTransition* transition = nullptr);
+    AnimGraphStateTransition* UpdateStateTransitions(AnimGraphContext& context, const AnimGraphNode::StateMachineData& stateMachineData, AnimGraphNode* state, AnimGraphNode* ignoreState = nullptr);
+    void UpdateStateTransitions(AnimGraphContext& context, const AnimGraphNode::StateMachineData& stateMachineData, AnimGraphInstanceData::StateMachineBucket& stateMachineBucket, const AnimGraphNode::StateBaseData& stateData);
 };

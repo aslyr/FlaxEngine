@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,7 +14,7 @@ class GPUTexture;
 /// </summary>
 API_CLASS(Static) class FLAXENGINE_API Screenshot
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(Screenshot);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(Screenshot);
 
     /// <summary>
     /// Captures the specified render target contents and saves it to the file.

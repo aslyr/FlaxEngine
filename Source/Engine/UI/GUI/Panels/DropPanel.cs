@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -96,45 +96,51 @@ namespace FlaxEngine.GUI
         }
 
         /// <summary>
+        /// Gets or sets a value indicating whether enable drop down icon drawing.
+        /// </summary>
+        [EditorOrder(1)]
+        public bool EnableDropDownIcon { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to enable containment line drawing,
+        /// </summary>
+        [EditorOrder(2)]
+        public bool EnableContainmentLines { get; set; } = false;
+
+        /// <summary>
         /// Gets or sets the color used to draw header text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Header Style"), EditorOrder(2010), ExpandGroups]
         public Color HeaderTextColor;
 
         /// <summary>
         /// Gets or sets the color of the header.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Header Style"), EditorOrder(2011)]
         public Color HeaderColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the header when mouse is over.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Header Style"), EditorOrder(2012)]
         public Color HeaderColorMouseOver { get; set; }
 
         /// <summary>
         /// Gets or sets the font used to render panel header text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Header Text Style"), EditorOrder(2020), ExpandGroups]
         public FontReference HeaderTextFont { get; set; }
 
         /// <summary>
         /// Gets or sets the custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("Custom material used to render the header text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
+        [EditorDisplay("Header Text Style"), EditorOrder(2021), Tooltip("Custom material used to render the header text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.")]
         public MaterialBase HeaderTextMaterial { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether enable drop down icon drawing.
-        /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
-        public bool EnableDropDownIcon { get; set; }
 
         /// <summary>
         /// Occurs when mouse right-clicks over the header.
         /// </summary>
-        public event Action<DropPanel, Vector2> MouseButtonRightClicked;
+        public event Action<DropPanel, Float2> MouseButtonRightClicked;
 
         /// <summary>
         /// Occurs when drop panel is opened or closed.
@@ -186,13 +192,13 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the image used to render drop panel drop arrow icon when panel is opened.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The image used to render drop panel drop arrow icon when panel is opened.")]
+        [EditorDisplay("Icon Style"), EditorOrder(2030), Tooltip("The image used to render drop panel drop arrow icon when panel is opened."), ExpandGroups]
         public IBrush ArrowImageOpened { get; set; }
 
         /// <summary>
         /// Gets or sets the image used to render drop panel drop arrow icon when panel is closed.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The image used to render drop panel drop arrow icon when panel is closed.")]
+        [EditorDisplay("Icon Style"), EditorOrder(2031), Tooltip("The image used to render drop panel drop arrow icon when panel is closed.")]
         public IBrush ArrowImageClosed { get; set; }
 
         /// <summary>
@@ -204,18 +210,18 @@ namespace FlaxEngine.GUI
         protected override bool ShowTooltip => base.ShowTooltip && _mouseOverHeader;
 
         /// <inheritdoc />
-        public override bool OnShowTooltip(out string text, out Vector2 location, out Rectangle area)
+        public override bool OnShowTooltip(out string text, out Float2 location, out Rectangle area)
         {
             var result = base.OnShowTooltip(out text, out location, out area);
 
             // Change the position
-            location = new Vector2(Width * 0.5f, HeaderHeight);
+            location = new Float2(Width * 0.5f, HeaderHeight);
 
             return result;
         }
 
         /// <inheritdoc />
-        public override bool OnTestTooltipOverControl(ref Vector2 location)
+        public override bool OnTestTooltipOverControl(ref Float2 location)
         {
             return HeaderRectangle.Contains(ref location);
         }
@@ -241,7 +247,7 @@ namespace FlaxEngine.GUI
         /// Opens the group.
         /// </summary>
         /// <param name="animate">Enable/disable animation feature.</param>
-        public void Open(bool animate = true)
+        public void Open(bool animate = false)
         {
             // Check if state will change
             if (_isClosed)
@@ -265,7 +271,7 @@ namespace FlaxEngine.GUI
         /// Closes the group.
         /// </summary>
         /// <param name="animate">Enable/disable animation feature.</param>
-        public void Close(bool animate = true)
+        public void Close(bool animate = false)
         {
             // Check if state will change
             if (!_isClosed)
@@ -291,9 +297,9 @@ namespace FlaxEngine.GUI
         public void Toggle()
         {
             if (_isClosed)
-                Open();
+                Open(true);
             else
-                Close();
+                Close(true);
         }
 
         /// <inheritdoc />
@@ -336,7 +342,7 @@ namespace FlaxEngine.GUI
             var backgroundColor = BackgroundColor;
             if (backgroundColor.A > 0.0f)
             {
-                Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), backgroundColor);
+                Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), backgroundColor);
             }
 
             // Header
@@ -369,6 +375,15 @@ namespace FlaxEngine.GUI
             }
 
             Render2D.DrawText(HeaderTextFont.GetFont(), HeaderTextMaterial, HeaderText, textRect, textColor, TextAlignment.Near, TextAlignment.Center);
+
+            if (!_isClosed && EnableContainmentLines)
+            {
+                Color lineColor = Style.Current.ForegroundGrey - new Color(0, 0, 0, 100);
+                float lineThickness = 0.05f;
+                Render2D.DrawLine(new Float2(1, HeaderHeight), new Float2(1, Height), lineColor, lineThickness);
+                Render2D.DrawLine(new Float2(1, Height), new Float2(Width, Height), lineColor, lineThickness);
+                Render2D.DrawLine(new Float2(Width, HeaderHeight), new Float2(Width, Height), lineColor, lineThickness);
+            }
 
             // Children
             DrawChildren();
@@ -434,7 +449,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (base.OnMouseDown(location, button))
                 return true;
@@ -455,7 +470,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             _mouseOverHeader = HeaderRectangle.Contains(location);
 
@@ -463,7 +478,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (base.OnMouseUp(location, button))
                 return true;
@@ -483,6 +498,29 @@ namespace FlaxEngine.GUI
                 return true;
             }
 
+            return false;
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseDoubleClick(location, button))
+                return true;
+            
+            _mouseOverHeader = HeaderRectangle.Contains(location);
+            if (button == MouseButton.Left && _mouseOverHeader)
+            {
+                _mouseButtonLeftDown = true;
+                return true;
+            }
+
+            if (button == MouseButton.Left && _mouseButtonLeftDown)
+            {
+                _mouseButtonLeftDown = false;
+                if (_mouseOverHeader)
+                    Toggle();
+                return true;
+            }
             return false;
         }
 
@@ -559,6 +597,15 @@ namespace FlaxEngine.GUI
         protected override void PerformLayoutAfterChildren()
         {
             Arrange();
+        }
+
+        /// <inheritdoc />
+        protected override bool CanNavigateChild(Control child)
+        {
+            // Closed panel skips navigation for hidden children
+            if (IsClosed && child.IsScrollable)
+                return false;
+            return base.CanNavigateChild(child);
         }
     }
 }

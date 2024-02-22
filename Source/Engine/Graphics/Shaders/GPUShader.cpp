@@ -1,9 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "GPUShader.h"
 #include "GPUConstantBuffer.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Math.h"
+#include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Serialization/MemoryReadStream.h"
 
 GPUShaderProgramsContainer::GPUShaderProgramsContainer()
@@ -58,6 +59,7 @@ uint32 GPUShaderProgramsContainer::CalculateHash(const StringAnsiView& name, int
 }
 
 GPUShader::GPUShader()
+    : GPUResource(SpawnParams(Guid::New(), TypeInitializer))
 {
     Platform::MemoryClear(_constantBuffers, sizeof(_constantBuffers));
 }
@@ -85,7 +87,11 @@ bool GPUShader::Create(MemoryReadStream& stream)
     GPUShaderProgramInitializer initializer;
 #if !BUILD_RELEASE
     initializer.Owner = this;
+    const StringView name = GetName();
+#else
+    const StringView name;
 #endif
+    const bool hasCompute = GPUDevice::Instance->Limits.HasCompute;
     for (int32 i = 0; i < shadersCount; i++)
     {
         const ShaderStage type = static_cast<ShaderStage>(stream.ReadByte());
@@ -109,16 +115,21 @@ bool GPUShader::Create(MemoryReadStream& stream)
                 LOG(Warning, "Invalid shader cache size.");
                 return true;
             }
-            byte* cache = stream.Read<byte>(cacheSize);
+            byte* cache = stream.Move<byte>(cacheSize);
 
             // Read bindings
             stream.ReadBytes(&initializer.Bindings, sizeof(ShaderBindings));
 
             // Create shader program
+            if (type == ShaderStage::Compute && !hasCompute)
+            {
+                LOG(Warning, "Failed to create {} Shader program '{}' ({}).", ::ToString(type), String(initializer.Name), name);
+                continue;
+            }
             GPUShaderProgram* shader = CreateGPUShaderProgram(type, initializer, cache, cacheSize, stream);
             if (shader == nullptr)
             {
-                LOG(Warning, "Failed to create shader program.");
+                LOG(Error, "Failed to create {} Shader program '{}' ({}).", ::ToString(type), String(initializer.Name), name);
                 return true;
             }
 
@@ -143,12 +154,12 @@ bool GPUShader::Create(MemoryReadStream& stream)
 
             // Create CB
 #if GPU_ENABLE_RESOURCE_NAMING
-            String name = ToString() + TEXT(".CB") + i;
+            String name = String::Format(TEXT("{}.CB{}"), ToString(), i);
 #else
 			String name;
 #endif
             ASSERT(_constantBuffers[slotIndex] == nullptr);
-            const auto cb = CreateCB(name, size, stream);
+            const auto cb = GPUDevice::Instance->CreateConstantBuffer(size, name);
             if (cb == nullptr)
             {
                 LOG(Warning, "Failed to create shader constant buffer.");
@@ -189,14 +200,21 @@ GPUShaderProgram* GPUShader::GetShader(ShaderStage stage, const StringAnsiView& 
     return shader;
 }
 
-GPUResource::ResourceType GPUShader::GetResourceType() const
+GPUResourceType GPUShader::GetResourceType() const
 {
-    return ResourceType::Shader;
+    return GPUResourceType::Shader;
 }
 
 void GPUShader::OnReleaseGPU()
 {
+    for (GPUConstantBuffer*& cb : _constantBuffers)
+    {
+        if (cb)
+        {
+            SAFE_DELETE_GPU_RESOURCE(cb);
+            cb = nullptr;
+        }
+    }
     _memoryUsage = 0;
     _shaders.Clear();
-    Platform::MemoryClear(_constantBuffers, sizeof(_constantBuffers));
 }

@@ -1,16 +1,21 @@
-// Copyright (c) 2012-2019 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_LINUX
 
 #include "LinuxFileSystem.h"
 #include "Engine/Platform/File.h"
+#include "Engine/Platform/StringUtils.h"
 #include "Engine/Core/Types/String.h"
+#include "Engine/Core/Types/StringBuilder.h"
 #include "Engine/Core/Types/StringView.h"
 #include "Engine/Core/Types/TimeSpan.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Core/Math/Math.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Utilities/StringConverter.h"
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <cerrno>
@@ -23,14 +28,72 @@ const DateTime UnixEpoch(1970, 1, 1);
 
 bool LinuxFileSystem::ShowOpenFileDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& filter, bool multiSelect, const StringView& title, Array<String, HeapAllocation>& filenames)
 {
+    const StringAsANSI<> initialDirectoryAnsi(*initialDirectory, initialDirectory.Length());
     const StringAsANSI<> titleAnsi(*title, title.Length());
+    const char* initDir = initialDirectory.HasChars() ? initialDirectoryAnsi.Get() : ".";
+    String xdgCurrentDesktop;
+    StringBuilder fileFilter;
+    Array<String> fileFilterEntries;
+    Platform::GetEnvironmentVariable(TEXT("XDG_CURRENT_DESKTOP"), xdgCurrentDesktop);
+    StringUtils::GetZZString(filter.Get()).Split('\0', fileFilterEntries);
+
+    const bool zenitySupported = FileSystem::FileExists(TEXT("/usr/bin/zenity"));
+    const bool kdialogSupported = FileSystem::FileExists(TEXT("/usr/bin/kdialog"));
     char cmd[2048];
-    // TODO: multiSelect support
-    // TODO: filter support
-    sprintf(cmd, "/usr/bin/zenity --modal --file-selection --title=\"%s\" ", titleAnsi.Get());
+    if (zenitySupported && (xdgCurrentDesktop != TEXT("KDE") || !kdialogSupported)) // Prefer kdialog when running on KDE
+    {
+        for (int32 i = 1; i < fileFilterEntries.Count(); i += 2)
+        {
+            String extensions(fileFilterEntries[i]);
+            fileFilterEntries[i].Replace(TEXT(";"), TEXT(" "));
+            fileFilter.Append(String::Format(TEXT("{0}--file-filter=\"{1}|{2}\""), i > 1 ? TEXT(" ") : TEXT(""), fileFilterEntries[i-1].Get(), extensions.Get()));
+        }
+
+        sprintf(cmd, "/usr/bin/zenity --modal --file-selection %s--filename=\"%s\" --title=\"%s\" %s ", multiSelect ? "--multiple --separator=$'\n' " : " ", initDir, titleAnsi.Get(), fileFilter.ToStringView().ToStringAnsi().GetText());
+    }
+    else if (kdialogSupported)
+    {
+        for (int32 i = 1; i < fileFilterEntries.Count(); i += 2)
+        {
+            String extensions(fileFilterEntries[i]);
+            fileFilterEntries[i].Replace(TEXT(";"), TEXT(" "));
+            fileFilter.Append(String::Format(TEXT("{0}\"{1}({2})\""), i > 1 ? TEXT(" ") : TEXT(""), fileFilterEntries[i-1].Get(), extensions.Get()));
+        }
+        fileFilter.Append(String::Format(TEXT("{0}\"{1}({2})\""), TEXT(" "), TEXT("many things"), TEXT("*.png *.jpg")));
+
+        sprintf(cmd, "/usr/bin/kdialog --getopenfilename %s--title \"%s\" \"%s\" %s ", multiSelect ? "--multiple --separate-output " : " ", titleAnsi.Get(), initDir, fileFilter.ToStringView().ToStringAnsi().GetText());
+    }
+    else
+    {
+        LOG(Error, "Missing file picker (install zenity or kdialog).");
+        return true;    
+    }
     FILE* f = popen(cmd, "r");
     char buf[2048];
-    fgets(buf, ARRAY_COUNT(buf), f); 
+    char* writePointer = buf;
+    int remainingCapacity = ARRAY_COUNT(buf);
+    // make sure we read all output from kdialog
+    while (remainingCapacity > 0 && fgets(writePointer, remainingCapacity, f))
+    {
+        int r = strlen(writePointer);
+        writePointer += r;
+        remainingCapacity -= r;
+    }
+    if (remainingCapacity <= 0)
+    {
+        LOG(Error, "You selected more files than an internal buffer can hold. Try selecting fewer files at a time.");
+        // in case of an overflow we miss the closing null byte, add it after the rightmost linefeed
+        while (*writePointer != '\n')
+        {
+            writePointer--;
+            if (writePointer == buf)
+            {
+                *buf = 0;
+                break;
+            }
+        }
+        *(++writePointer) = 0;
+    }
     int result = pclose(f);
     if (result != 0)
     {
@@ -48,11 +111,56 @@ bool LinuxFileSystem::ShowOpenFileDialog(Window* parentWindow, const StringView&
     return false;
 }
 
+bool LinuxFileSystem::ShowBrowseFolderDialog(Window* parentWindow, const StringView& initialDirectory, const StringView& title, String& path)
+{
+    const StringAsANSI<> titleAnsi(*title, title.Length());
+    String xdgCurrentDesktop;
+    Platform::GetEnvironmentVariable(TEXT("XDG_CURRENT_DESKTOP"), xdgCurrentDesktop);
+
+    // TODO: support initialDirectory
+
+    const bool zenitySupported = FileSystem::FileExists(TEXT("/usr/bin/zenity"));
+    const bool kdialogSupported = FileSystem::FileExists(TEXT("/usr/bin/kdialog"));
+    char cmd[2048];
+    if (zenitySupported && (xdgCurrentDesktop != TEXT("KDE") || !kdialogSupported)) // Prefer kdialog when running on KDE
+    {
+        sprintf(cmd, "/usr/bin/zenity --modal --file-selection --directory --title=\"%s\" ", titleAnsi.Get());
+    }
+    else if (kdialogSupported)
+    {
+        sprintf(cmd, "/usr/bin/kdialog --getexistingdirectory --title \"%s\" ", titleAnsi.Get());
+    }
+    else
+    {
+        LOG(Error, "Missing file picker (install zenity or kdialog).");
+        return true;    
+    }
+    FILE* f = popen(cmd, "r");
+    char buf[2048];
+    fgets(buf, ARRAY_COUNT(buf), f); 
+    int result = pclose(f);
+    if (result != 0)
+        return true;
+
+    const char* c = buf;
+    while (*c)
+    {
+        const char* start = c;
+        while (*c != '\n')
+            c++;
+        path = String(start, (int32)(c - start));
+        if (path.HasChars())
+            break;
+        c++;
+    }
+    return false;
+}
+
 bool LinuxFileSystem::ShowFileExplorer(const StringView& path)
 {
     const StringAsANSI<> pathAnsi(*path, path.Length());
     char cmd[2048];
-    sprintf(cmd, "nautilus %s &", pathAnsi.Get());
+    sprintf(cmd, "xdg-open %s &", pathAnsi.Get());
     system(cmd);
     return false;
 }
@@ -256,20 +364,20 @@ bool LinuxFileSystem::FileExists(const StringView& path)
 bool LinuxFileSystem::DeleteFile(const StringView& path)
 {
     const StringAsANSI<> pathANSI(*path, path.Length());
-    return unlink(pathANSI.Get()) == 0;
+    return unlink(pathANSI.Get()) != 0;
 }
 
 uint64 LinuxFileSystem::GetFileSize(const StringView& path)
 {
     struct stat fileInfo;
-    fileInfo.st_size = -1;
+    fileInfo.st_size = 0;
     const StringAsANSI<> pathANSI(*path, path.Length());
     if (stat(pathANSI.Get(), &fileInfo) != -1)
     {
         // Check for directories
         if (S_ISDIR(fileInfo.st_mode))
         {
-            fileInfo.st_size = -1;
+            fileInfo.st_size = 0;
         }
     }
     return fileInfo.st_size;
@@ -312,7 +420,23 @@ bool LinuxFileSystem::MoveFile(const StringView& dst, const StringView& src, boo
         return true;
     }
 
-    return rename(StringAsANSI<>(*src, src.Length()).Get(), StringAsANSI<>(*dst, dst.Length()).Get()) != 0;
+    if (overwrite)
+    {
+        unlink(StringAsANSI<>(*dst, dst.Length()).Get());
+    }
+    if (rename(StringAsANSI<>(*src, src.Length()).Get(), StringAsANSI<>(*dst, dst.Length()).Get()) != 0)
+    {
+        if (errno == EXDEV)
+        {
+            if (!CopyFile(dst, src))
+            {
+                unlink(StringAsANSI<>(*src, src.Length()).Get());
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 bool LinuxFileSystem::CopyFile(const StringView& dst, const StringView& src)
@@ -332,24 +456,37 @@ bool LinuxFileSystem::CopyFile(const StringView& dst, const StringView& src)
     if (dstFile < 0)
         goto out_error;
 
-    while (readSize = read(srcFile, buffer, sizeof(buffer)), readSize > 0)
+    // first try the kernel method
+    struct stat statBuf;
+    fstat(srcFile, &statBuf);
+    readSize = 1;
+    while (readSize > 0)
     {
-        char* ptr = buffer;
-        ssize_t writeSize;
-
-        do
+        readSize = sendfile(dstFile, srcFile, 0, statBuf.st_size);
+    }
+    // sendfile could fail for example if the input file is not nmap'able
+    // in this case we fall back to the read/write loop
+    if (readSize < 0)
+    {
+        while (readSize = read(srcFile, buffer, sizeof(buffer)), readSize > 0)
         {
-            writeSize = write(dstFile, ptr, readSize);
-            if (writeSize >= 0)
+            char* ptr = buffer;
+            ssize_t writeSize;
+
+            do
             {
-                readSize -= writeSize;
-                ptr += writeSize;
-            }
-            else if (errno != EINTR)
-            {
-                goto out_error;
-            }
-        } while (readSize > 0);
+                writeSize = write(dstFile, ptr, readSize);
+                if (writeSize >= 0)
+                {
+                    readSize -= writeSize;
+                    ptr += writeSize;
+                }
+                else if (errno != EINTR)
+                {
+                    goto out_error;
+                }
+            } while (readSize > 0);
+        }
     }
 
     if (readSize == 0)
@@ -520,7 +657,7 @@ DateTime LinuxFileSystem::GetFileLastEditTime(const StringView& path)
         return DateTime::MinValue();
     }
 
-    const TimeSpan timeSinceEpoch(0, 0, fileInfo.st_mtime);
+    const TimeSpan timeSinceEpoch(0, 0, 0, fileInfo.st_mtime);
     return UnixEpoch + timeSinceEpoch;
 }
 
@@ -542,8 +679,14 @@ void LinuxFileSystem::GetSpecialFolderPath(const SpecialFolder type, String& res
         result = TEXT("/usr/share");
         break;
     case SpecialFolder::LocalAppData:
-        result = home;
+    {
+        String dataHome;
+        if (!Platform::GetEnvironmentVariable(TEXT("XDG_DATA_HOME"), dataHome))
+            result = dataHome;
+        else
+            result = home / TEXT(".local/share");
         break;
+    }
     case SpecialFolder::ProgramData:
         result = String::Empty;
         break;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -69,23 +69,9 @@ class StringAnsiView;
 struct Guid;
 struct DateTime;
 struct TimeSpan;
-struct Vector2;
-struct Vector3;
-struct Vector4;
-struct Int2;
-struct Int3;
-struct Int4;
-struct Quaternion;
-struct Matrix;
-struct Ray;
-struct Rectangle;
-struct Plane;
-struct BoundingBox;
-struct BoundingSphere;
-struct BoundingFrustum;
-struct Color;
-struct Color32;
 struct Variant;
+template<typename T>
+class Span;
 class HeapAllocation;
 template<int Capacity>
 class FixedAllocation;
@@ -102,15 +88,95 @@ class Function;
 template<typename... Params>
 class Delegate;
 
+// @formatter:off
+
+#if USE_LARGE_WORLDS
+// 64-bit precision for world coordinates
+API_TYPEDEF(Alias) typedef double Real;
+#define MIN_Real MIN_double
+#define MAX_Real MAX_double
+#else
+// 32-bit precision for world coordinates
+API_TYPEDEF(Alias) typedef float Real;
+#define MIN_Real MIN_float
+#define MAX_Real MAX_float
+#endif
+
+// Vector2
+template<typename T> struct Vector2Base;
+API_TYPEDEF() typedef Vector2Base<float> Float2;
+API_TYPEDEF() typedef Vector2Base<double> Double2;
+API_TYPEDEF() typedef Vector2Base<int32> Int2;
+API_TYPEDEF(Alias) typedef Vector2Base<Real> Vector2;
+
+// Vector3
+template<typename T> struct Vector3Base;
+API_TYPEDEF() typedef Vector3Base<float> Float3;
+API_TYPEDEF() typedef Vector3Base<double> Double3;
+API_TYPEDEF() typedef Vector3Base<int32> Int3;
+API_TYPEDEF(Alias) typedef Vector3Base<Real> Vector3;
+
+// Vector4
+template<typename T> struct Vector4Base;
+API_TYPEDEF() typedef Vector4Base<float> Float4;
+API_TYPEDEF() typedef Vector4Base<double> Double4;
+API_TYPEDEF() typedef Vector4Base<int32> Int4;
+API_TYPEDEF(Alias) typedef Vector4Base<Real> Vector4;
+
+struct BoundingBox;
+struct Matrix;
+struct Matrix3x3;
+struct Ray;
+struct Plane;
+struct Rectangle;
+struct Quaternion;
+struct BoundingSphere;
+struct BoundingFrustum;
+struct OrientedBoundingBox;
+struct Transform;
+struct Color;
+struct Color32;
+
+// @formatter:on
+
 // Declares full set of operators for the enum type (using binary operation on integer values)
 #define DECLARE_ENUM_OPERATORS(T) \
-    inline T operator~ (T a) { return (T)~(int)a; } \
-    inline T operator| (T a, T b) { return (T)((int)a | (int)b); } \
-    inline int operator& (T a, T b) { return ((int)a & (int)b); } \
-    inline T operator^ (T a, T b) { return (T)((int)a ^ (int)b); } \
-    inline T& operator|= (T& a, T b) { return (T&)((int&)a |= (int)b); } \
-    inline T& operator&= (T& a, T b) { return (T&)((int&)a &= (int)b); } \
-    inline T& operator^= (T& a, T b) { return (T&)((int&)a ^= (int)b); }
+    inline constexpr bool operator!(T a) { return !(__underlying_type(T))a; } \
+    inline constexpr T operator~(T a) { return (T)~(__underlying_type(T))a; } \
+    inline constexpr T operator|(T a, T b) { return (T)((__underlying_type(T))a | (__underlying_type(T))b); } \
+    inline constexpr T operator&(T a, T b) { return (T)((__underlying_type(T))a & (__underlying_type(T))b); } \
+    inline constexpr T operator^(T a, T b) { return (T)((__underlying_type(T))a ^ (__underlying_type(T))b); } \
+    inline T& operator|=(T& a, T b) { return a = (T)((__underlying_type(T))a | (__underlying_type(T))b); } \
+    inline T& operator&=(T& a, T b) { return a = (T)((__underlying_type(T))a & (__underlying_type(T))b); } \
+    inline T& operator^=(T& a, T b) { return a = (T)((__underlying_type(T))a ^ (__underlying_type(T))b); }
+
+// Returns true if given enum value has one or more enum flags set
+template<typename T>
+constexpr bool EnumHasAnyFlags(T value, T flags)
+{
+	return ((__underlying_type(T))value & (__underlying_type(T))flags) != 0;
+}
+
+// Returns true if given enum value has all of the enum flags set
+template<typename T>
+constexpr bool EnumHasAllFlags(T value, T flags)
+{
+	return ((__underlying_type(T))value & (__underlying_type(T))flags) == (__underlying_type(T))flags;
+}
+
+// Returns true if given enum value has none of enum flags set
+template<typename T>
+constexpr bool EnumHasNoneFlags(T value, T flags)
+{
+	return ((__underlying_type(T))value & (__underlying_type(T))flags) == 0;
+}
+
+// Returns enum value with additional enum flags set
+template<typename T>
+constexpr T EnumAddFlags(T value, T flags)
+{
+	return (T)((__underlying_type(T))value | (__underlying_type(T))flags);
+}
 
 // Returns byte offset from the object pointer in vtable to the begin of the given inherited type implementation
 #define VTABLE_OFFSET(type, baseType) (((intptr)static_cast<baseType*>((type*)1))-1)

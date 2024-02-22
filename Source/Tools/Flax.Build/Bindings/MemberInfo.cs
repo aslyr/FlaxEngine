@@ -1,5 +1,6 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
+using System.Collections.Generic;
 using System.IO;
 
 namespace Flax.Build.Bindings
@@ -12,21 +13,44 @@ namespace Flax.Build.Bindings
         public string Name;
         public string[] Comment;
         public bool IsStatic;
+        public bool IsConstexpr;
+        public bool IsDeprecated;
+        public bool IsHidden;
         public AccessLevel Access;
         public string Attributes;
+        public Dictionary<string, string> Tags;
 
         public bool HasAttribute(string name)
         {
             return Attributes != null && Attributes.Contains(name);
         }
 
+        public string GetTag(string tag)
+        {
+            if (Tags != null && Tags.TryGetValue(tag, out var value))
+                return value;
+            return null;
+        }
+
+        public void SetTag(string tag, string value)
+        {
+            if (Tags == null)
+                Tags = new Dictionary<string, string>();
+            Tags[tag] = value;
+        }
+
+
         public virtual void Write(BinaryWriter writer)
         {
             writer.Write(Name);
             BindingsGenerator.Write(writer, Comment);
             writer.Write(IsStatic);
+            writer.Write(IsConstexpr);
+            writer.Write(IsDeprecated);
+            writer.Write(IsHidden);
             writer.Write((byte)Access);
             BindingsGenerator.Write(writer, Attributes);
+            BindingsGenerator.Write(writer, Tags);
         }
 
         public virtual void Read(BinaryReader reader)
@@ -34,8 +58,12 @@ namespace Flax.Build.Bindings
             Name = reader.ReadString();
             Comment = BindingsGenerator.Read(reader, Comment);
             IsStatic = reader.ReadBoolean();
+            IsConstexpr = reader.ReadBoolean();
+            IsDeprecated = reader.ReadBoolean();
+            IsHidden = reader.ReadBoolean();
             Access = (AccessLevel)reader.ReadByte();
             Attributes = BindingsGenerator.Read(reader, Attributes);
+            Tags = BindingsGenerator.Read(reader, Tags);
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "FontManager.h"
 #include "FontTextureAtlas.h"
@@ -27,7 +27,6 @@ using namespace FontManagerImpl;
 class FontManagerService : public EngineService
 {
 public:
-
     FontManagerService()
         : EngineService(TEXT("Font Manager"), -700)
     {
@@ -125,7 +124,8 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
 
     // Set load flags
     uint32 glyphFlags = FT_LOAD_NO_BITMAP;
-    if (options.Flags & FontFlags::AntiAliasing)
+    const bool useAA = EnumHasAnyFlags(options.Flags, FontFlags::AntiAliasing);
+    if (useAA)
     {
         switch (options.Hinting)
         {
@@ -154,6 +154,18 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
 
     // Get the index to the glyph in the font face
     const FT_UInt glyphIndex = FT_Get_Char_Index(face, c);
+#if !BUILD_RELEASE
+    if (glyphIndex == 0)
+    {
+        LOG(Warning, "Font `{}` doesn't contain character `\\u{:x}`, consider choosing another font. ", String(face->family_name), c);
+    }
+#endif
+
+    // Init the character data
+    Platform::MemoryClear(&entry, sizeof(entry));
+    entry.Character = c;
+    entry.Font = font;
+    entry.IsValid = false;
 
     // Load the glyph
     const FT_Error error = FT_Load_Glyph(face, glyphIndex, glyphFlags);
@@ -164,18 +176,18 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
     }
 
     // Handle special effects
-    if (options.Flags & FontFlags::Bold)
+    if (EnumHasAnyFlags(options.Flags, FontFlags::Bold))
     {
         FT_GlyphSlot_Embolden(face->glyph);
     }
-    if (options.Flags & FontFlags::Italic)
+    if (EnumHasAnyFlags(options.Flags, FontFlags::Italic))
     {
         FT_GlyphSlot_Oblique(face->glyph);
     }
 
     // Render glyph to the bitmap
     FT_GlyphSlot glyph = face->glyph;
-    FT_Render_Glyph(glyph, options.Flags & FontFlags::AntiAliasing ? FT_RENDER_MODE_NORMAL : FT_RENDER_MODE_MONO);
+    FT_Render_Glyph(glyph, useAA ? FT_RENDER_MODE_NORMAL : FT_RENDER_MODE_MONO);
 
     FT_Bitmap* bitmap = &glyph->bitmap;
     FT_Bitmap tmpBitmap;
@@ -189,8 +201,6 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
     ASSERT(bitmap && bitmap->pixel_mode == FT_PIXEL_MODE_GRAY);
 
     // Fill the character data
-    Platform::MemoryClear(&entry, sizeof(entry));
-    entry.Character = c;
     entry.AdvanceX = Convert26Dot6ToRoundedPixel<int16>(glyph->advance.x);
     entry.OffsetY = glyph->bitmap_top;
     entry.OffsetX = glyph->bitmap_left;
@@ -241,7 +251,7 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
 
     // Find atlas for the character texture
     int32 atlasIndex = 0;
-    const FontTextureAtlas::Slot* slot = nullptr;
+    const FontTextureAtlasSlot* slot = nullptr;
     for (; atlasIndex < Atlases.Count(); atlasIndex++)
     {
         // Add the character to the texture
@@ -282,6 +292,7 @@ bool FontManager::AddNewEntry(Font* font, Char c, FontCharacterEntry& entry)
     entry.UV.Y = static_cast<float>(slot->Y + padding);
     entry.UVSize.X = static_cast<float>(slot->Width - 2 * padding);
     entry.UVSize.Y = static_cast<float>(slot->Height - 2 * padding);
+    entry.Slot = slot;
 
     return false;
 }

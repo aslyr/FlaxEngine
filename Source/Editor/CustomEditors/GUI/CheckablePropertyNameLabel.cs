@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine;
@@ -31,7 +31,7 @@ namespace FlaxEditor.CustomEditors.GUI
             CheckBox = new CheckBox(2, 2)
             {
                 Checked = true,
-                Size = new Vector2(14),
+                Size = new Float2(14),
                 Parent = this
             };
             CheckBox.StateChanged += OnCheckChanged;

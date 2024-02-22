@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -17,7 +17,6 @@
 class SkeletonMaskUpgrader : public BinaryAssetUpgrader
 {
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="SkeletonMaskUpgrader"/> class.
     /// </summary>
@@ -31,7 +30,6 @@ public:
     }
 
 private:
-
     static bool Upgrade_1_To_2(AssetMigrationContext& context)
     {
         ASSERT(context.Input.SerializedVersion == 1 && context.Output.SerializedVersion == 2);
@@ -49,7 +47,7 @@ private:
             MemoryReadStream stream(dataChunk->Get(), dataChunk->Size());
 
             Guid skeletonId;
-            stream.Read(&skeletonId);
+            stream.Read(skeletonId);
             int32 maskCount;
             stream.ReadInt32(&maskCount);
             bonesMask.Resize(maskCount, false);
@@ -85,9 +83,9 @@ private:
             if (context.AllocateChunk(0))
                 return true;
             MemoryWriteStream stream(4096);
-            
+
             const Guid skeletonId = skeleton.GetID();
-            stream.Write(&skeletonId);
+            stream.Write(skeletonId);
             stream.WriteInt32(nodesMask.Count());
             for (auto& e : nodesMask)
             {

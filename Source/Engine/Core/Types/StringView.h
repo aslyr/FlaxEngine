@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,7 +13,6 @@ template<typename T>
 class StringViewBase
 {
 protected:
-
     const T* _data;
     int32 _length;
 
@@ -30,6 +29,7 @@ protected:
     }
 
 public:
+    typedef T CharType;
 
     /// <summary>
     /// Gets the specific const character from this string.
@@ -41,7 +41,7 @@ public:
         ASSERT(index >= 0 && index <= _length);
         return _data[index];
     }
-   
+
     FORCE_INLINE StringViewBase& operator=(const StringViewBase& other)
     {
         if (this != &other)
@@ -53,8 +53,7 @@ public:
     }
 
     /// <summary>
-    /// Lexicographically tests how this string compares to the other given string.
-    /// In case sensitive mode 'A' is less than 'a'.
+    /// Lexicographically tests how this string compares to the other given string. In case sensitive mode 'A' is less than 'a'.
     /// </summary>
     /// <param name="str">The another string test against.</param>
     /// <param name="searchCase">The case sensitivity mode.</param>
@@ -63,9 +62,7 @@ public:
     {
         const bool thisIsShorter = Length() < str.Length();
         const int32 minLength = thisIsShorter ? Length() : str.Length();
-        const int32 prefixCompare = (searchCase == StringSearchCase::CaseSensitive)
-                                    ? StringUtils::Compare(this->GetNonTerminatedText(), str.GetNonTerminatedText(), minLength)
-                                    : StringUtils::CompareIgnoreCase(this->GetNonTerminatedText(), str.GetNonTerminatedText(), minLength);
+        const int32 prefixCompare = searchCase == StringSearchCase::CaseSensitive ? StringUtils::Compare(GetText(), str.GetText(), minLength) : StringUtils::CompareIgnoreCase(GetText(), str.GetText(), minLength);
         if (prefixCompare != 0)
             return prefixCompare;
         if (Length() == str.Length())
@@ -74,7 +71,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Returns true if string is empty.
     /// </summary>
@@ -117,14 +113,23 @@ public:
 
     /// <summary>
     /// Gets the pointer to the string or to the static empty text if string is null. Returned pointer is always non-null, but is not null-terminated.
+    /// [Deprecated on 26.10.2022, expires on 26.10.2024] Use GetText()
     /// </summary>
-    FORCE_INLINE const T* GetNonTerminatedText() const
+    DEPRECATED const T* GetNonTerminatedText() const
+    {
+        return _data ? _data : (const T*)TEXT("");
+    }
+
+    /// <summary>
+    /// Gets the pointer to the string or to the static empty text if string is null. Returned pointer is always valid (read-only).
+    /// </summary>
+    /// <returns>The string handle.</returns>
+    FORCE_INLINE const T* GetText() const
     {
         return _data ? _data : (const T*)TEXT("");
     }
 
 public:
-
     /// <summary>
     /// Searches the string for the occurrence of a character.
     /// </summary>
@@ -205,14 +210,12 @@ public:
 API_CLASS(InBuild) class FLAXENGINE_API StringView : public StringViewBase<Char>
 {
 public:
-
     /// <summary>
     /// Instance of the empty string.
     /// </summary>
     static StringView Empty;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="StringView"/> class.
     /// </summary>
@@ -257,7 +260,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Assigns the static string.
     /// </summary>
@@ -277,7 +279,7 @@ public:
     /// <returns>True if this string is lexicographically equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator==(const StringView& other) const
     {
-        return this->Compare(other) == 0;
+        return _length == other._length && (_length == 0 || StringUtils::Compare(_data, other._data, _length) == 0);
     }
 
     /// <summary>
@@ -287,7 +289,7 @@ public:
     /// <returns>True if this string is lexicographically is not equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator!=(const StringView& other) const
     {
-        return this->Compare(other) != 0;
+        return !(*this == other);
     }
 
     /// <summary>
@@ -297,7 +299,7 @@ public:
     /// <returns>True if this string is lexicographically equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator==(const Char* other) const
     {
-        return this->Compare(StringView(other)) == 0;
+        return *this == StringView(other);
     }
 
     /// <summary>
@@ -307,7 +309,7 @@ public:
     /// <returns>True if this string is lexicographically is not equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator!=(const Char* other) const
     {
-        return this->Compare(StringView(other)) != 0;
+        return !(*this == StringView(other));
     }
 
     /// <summary>
@@ -325,6 +327,17 @@ public:
     bool operator!=(const String& other) const;
 
 public:
+    using StringViewBase::StartsWith;
+    FORCE_INLINE bool StartsWith(const StringView& prefix, StringSearchCase searchCase = StringSearchCase::IgnoreCase) const
+    {
+        return StringViewBase::StartsWith(prefix, searchCase);
+    }
+
+    using StringViewBase::EndsWith;
+    FORCE_INLINE bool EndsWith(const StringView& suffix, StringSearchCase searchCase = StringSearchCase::IgnoreCase) const
+    {
+        return StringViewBase::EndsWith(suffix, searchCase);
+    }
 
     /// <summary>
     /// Gets the left most given number of characters.
@@ -356,7 +369,6 @@ public:
     StringView Substring(int32 startIndex, int32 count) const;
 
 public:
-
     String ToString() const;
     StringAnsi ToStringAnsi() const;
 };
@@ -383,7 +395,7 @@ namespace fmt
         template<typename FormatContext>
         auto format(const StringView& v, FormatContext& ctx) -> decltype(ctx.out())
         {
-            return fmt::internal::copy(v.Get(), v.Get() + v.Length(), ctx.out());
+            return fmt::detail::copy_str<Char>(v.Get(), v.Get() + v.Length(), ctx.out());
         }
     };
 }
@@ -394,14 +406,12 @@ namespace fmt
 API_CLASS(InBuild) class FLAXENGINE_API StringAnsiView : public StringViewBase<char>
 {
 public:
-
     /// <summary>
     /// Instance of the empty string.
     /// </summary>
     static StringAnsiView Empty;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="StringView"/> class.
     /// </summary>
@@ -446,7 +456,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Assigns the static string.
     /// </summary>
@@ -466,7 +475,7 @@ public:
     /// <returns>True if this string is lexicographically equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator==(const StringAnsiView& other) const
     {
-        return this->Compare(other) == 0;
+        return _length == other._length && (_length == 0 || StringUtils::Compare(_data, other._data, _length) == 0);
     }
 
     /// <summary>
@@ -476,7 +485,7 @@ public:
     /// <returns>True if this string is lexicographically is not equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator!=(const StringAnsiView& other) const
     {
-        return this->Compare(other) != 0;
+        return !(*this == other);
     }
 
     /// <summary>
@@ -486,7 +495,7 @@ public:
     /// <returns>True if this string is lexicographically equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator==(const char* other) const
     {
-        return this->Compare(StringAnsiView(other)) == 0;
+        return *this == StringAnsiView(other);
     }
 
     /// <summary>
@@ -496,7 +505,7 @@ public:
     /// <returns>True if this string is lexicographically is not equivalent to the other, otherwise false.</returns>
     FORCE_INLINE bool operator!=(const char* other) const
     {
-        return this->Compare(StringAnsiView(other)) != 0;
+        return !(*this == StringAnsiView(other));
     }
 
     /// <summary>
@@ -514,6 +523,17 @@ public:
     bool operator!=(const StringAnsi& other) const;
 
 public:
+    using StringViewBase::StartsWith;
+    FORCE_INLINE bool StartsWith(const StringAnsiView& prefix, StringSearchCase searchCase = StringSearchCase::IgnoreCase) const
+    {
+        return StringViewBase::StartsWith(prefix, searchCase);
+    }
+
+    using StringViewBase::EndsWith;
+    FORCE_INLINE bool EndsWith(const StringAnsiView& suffix, StringSearchCase searchCase = StringSearchCase::IgnoreCase) const
+    {
+        return StringViewBase::EndsWith(suffix, searchCase);
+    }
 
     /// <summary>
     /// Retrieves substring created from characters starting from startIndex to the String end.
@@ -531,7 +551,6 @@ public:
     StringAnsi Substring(int32 startIndex, int32 count) const;
 
 public:
-
     String ToString() const;
     StringAnsi ToStringAnsi() const;
 };
@@ -558,7 +577,7 @@ namespace fmt
         template<typename FormatContext>
         auto format(const StringAnsiView& v, FormatContext& ctx) -> decltype(ctx.out())
         {
-            return fmt::internal::copy(v.Get(), v.Get() + v.Length(), ctx.out());
+            return fmt::detail::copy_str<char>(v.Get(), v.Get() + v.Length(), ctx.out());
         }
     };
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "VolumeParticleMaterialShader.h"
 #include "MaterialShaderFeatures.h"
@@ -15,23 +15,15 @@
 #include "Engine/Particles/Graph/CPU/ParticleEmitterGraph.CPU.h"
 
 PACK_STRUCT(struct VolumeParticleMaterialShaderData {
-    Matrix ViewProjectionMatrix;
     Matrix InverseViewProjectionMatrix;
-    Matrix ViewMatrix;
     Matrix WorldMatrix;
     Matrix WorldMatrixInverseTransposed;
-    Vector3 ViewPos;
-    float ViewFar;
-    Vector3 ViewDir;
-    float TimeParam;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
-    Vector3 GridSize;
+    Float3 GridSize;
     float PerInstanceRandom;
     float Dummy0;
     float VolumetricFogMaxDistance;
-    int ParticleStride;
-    int ParticleIndex;
+    int32 ParticleStride;
+    int32 ParticleIndex;
     });
 
 DrawPass VolumeParticleMaterialShader::GetDrawModes() const
@@ -43,7 +35,7 @@ void VolumeParticleMaterialShader::Bind(BindParameters& params)
 {
     // Prepare
     auto context = params.GPUContext;
-    auto& view = params.RenderContext.View;
+    const RenderView& view = params.RenderContext.View;
     auto& drawCall = *params.FirstDrawCall;
     Span<byte> cb(_cbData.Get(), _cbData.Count());
     ASSERT_LOW_LAYER(cb.Length() >= sizeof(VolumeParticleMaterialShaderData));
@@ -83,17 +75,9 @@ void VolumeParticleMaterialShader::Bind(BindParameters& params)
 
     // Setup material constants
     {
-        Matrix::Transpose(view.Frustum.GetMatrix(), materialData->ViewProjectionMatrix);
         Matrix::Transpose(view.IVP, materialData->InverseViewProjectionMatrix);
-        Matrix::Transpose(view.View, materialData->ViewMatrix);
         Matrix::Transpose(drawCall.World, materialData->WorldMatrix);
         Matrix::Invert(drawCall.World, materialData->WorldMatrixInverseTransposed);
-        materialData->ViewPos = view.Position;
-        materialData->ViewFar = view.Far;
-        materialData->ViewDir = view.Direction;
-        materialData->TimeParam = params.TimeParam;
-        materialData->ViewInfo = view.ViewInfo;
-        materialData->ScreenSize = view.ScreenSize;
         materialData->GridSize = customData->GridSize;
         materialData->PerInstanceRandom = drawCall.PerInstanceRandom;
         materialData->VolumetricFogMaxDistance = customData->VolumetricFogMaxDistance;

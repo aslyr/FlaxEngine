@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -17,7 +17,6 @@
 class MaterialInstanceUpgrader : public BinaryAssetUpgrader
 {
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="MaterialInstanceUpgrader"/> class.
     /// </summary>
@@ -32,7 +31,6 @@ public:
     }
 
 private:
-
     // ============================================
     //                  Version 4:
     // Designed: 5/18/2017

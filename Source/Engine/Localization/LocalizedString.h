@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 /// </summary>
 API_CLASS(Sealed) class FLAXENGINE_API LocalizedString
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(LocalizedString);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(LocalizedString);
 public:
     /// <summary>
     /// The localized string identifier. Used to lookup text value for a current language (via <see cref="Localization::GetString"/>).
@@ -34,9 +34,9 @@ public:
     LocalizedString& operator=(const StringView& value);
     LocalizedString& operator=(String&& value) noexcept;
 
-    friend bool operator==(const LocalizedString& a, const LocalizedString& b)
+    bool operator==(const LocalizedString& other) const
     {
-        return a.Id == b.Id && a.Value == b.Value;
+        return Id == other.Id && Value == other.Value;
     }
 
     friend bool operator!=(const LocalizedString& a, const LocalizedString& b)

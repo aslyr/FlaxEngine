@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Xml;
@@ -6,6 +6,7 @@ using FlaxEditor.Content;
 using FlaxEditor.CustomEditors;
 using FlaxEditor.Gizmo;
 using FlaxEditor.GUI;
+using FlaxEditor.GUI.Input;
 using FlaxEditor.SceneGraph;
 using FlaxEditor.Viewport;
 using FlaxEngine;
@@ -18,11 +19,12 @@ namespace FlaxEditor.Windows.Assets
     /// </summary>
     /// <seealso cref="Prefab" />
     /// <seealso cref="FlaxEditor.Windows.Assets.AssetEditorWindow" />
-    public sealed partial class PrefabWindow : AssetEditorWindowBase<Prefab>
+    public sealed partial class PrefabWindow : AssetEditorWindowBase<Prefab>, IPresenterOwner
     {
         private readonly SplitPanel _split1;
         private readonly SplitPanel _split2;
         private readonly TextBox _searchBox;
+        private readonly Panel _treePanel;
         private readonly PrefabTree _tree;
         private readonly PrefabWindowViewport _viewport;
         private readonly CustomEditorPresenter _propertiesEditor;
@@ -50,6 +52,11 @@ namespace FlaxEditor.Windows.Assets
         /// Gets the viewport.
         /// </summary>
         public PrefabWindowViewport Viewport => _viewport;
+
+        /// <summary>
+        /// Gets the prefab objects properties editor.
+        /// </summary>
+        public CustomEditorPresenter Presenter => _propertiesEditor;
 
         /// <summary>
         /// Gets the undo system used by this window for changes tracking.
@@ -87,6 +94,8 @@ namespace FlaxEditor.Windows.Assets
         public PrefabWindow(Editor editor, AssetItem item)
         : base(editor, item)
         {
+            var inputOptions = Editor.Options.Options.Input;
+
             // Undo
             _undo = new Undo();
             _undo.UndoDone += OnUndoEvent;
@@ -94,12 +103,16 @@ namespace FlaxEditor.Windows.Assets
             _undo.ActionDone += OnUndoEvent;
 
             // Split Panel 1
-            _split1 = new SplitPanel(Orientation.Horizontal, ScrollBars.Both, ScrollBars.None)
+            _split1 = new SplitPanel(Orientation.Horizontal, ScrollBars.None, ScrollBars.None)
             {
                 AnchorPreset = AnchorPresets.StretchAll,
                 Offsets = new Margin(0, 0, _toolstrip.Bottom, 0),
                 SplitterValue = 0.2f,
                 Parent = this
+            };
+            var sceneTreePanel = new SceneTreePanel(this)
+            {
+                Parent = _split1.Panel1,
             };
 
             // Split Panel 2
@@ -115,30 +128,40 @@ namespace FlaxEditor.Windows.Assets
             var headerPanel = new ContainerControl
             {
                 AnchorPreset = AnchorPresets.HorizontalStretchTop,
-                IsScrollable = true,
+                BackgroundColor = Style.Current.Background,
+                IsScrollable = false,
                 Offsets = new Margin(0, 0, 0, 18 + 6),
-                Parent = _split1.Panel1,
             };
-            _searchBox = new TextBox
+            _searchBox = new SearchBox()
             {
                 AnchorPreset = AnchorPresets.HorizontalStretchMiddle,
-                WatermarkText = "Search...",
                 Parent = headerPanel,
                 Bounds = new Rectangle(4, 4, headerPanel.Width - 8, 18),
             };
             _searchBox.TextChanged += OnSearchBoxTextChanged;
 
+            _treePanel = new Panel()
+            {
+                AnchorPreset = AnchorPresets.StretchAll,
+                Offsets = new Margin(0.0f, 0.0f, headerPanel.Bottom, 0.0f),
+                ScrollBars = ScrollBars.Both,
+                IsScrollable = true,
+                Parent = sceneTreePanel,
+            };
+
             // Prefab structure tree
             Graph = new LocalSceneGraph(new CustomRootNode(this));
+            Graph.Root.TreeNode.Expand(true);
             _tree = new PrefabTree
             {
-                Y = headerPanel.Bottom,
-                Margin = new Margin(0.0f, 0.0f, -16.0f, 0.0f), // Hide root node
+                Margin = new Margin(0.0f, 0.0f, -16.0f, _treePanel.ScrollBarsSize), // Hide root node
+                IsScrollable = true,
             };
             _tree.AddChild(Graph.Root.TreeNode);
             _tree.SelectedChanged += OnTreeSelectedChanged;
             _tree.RightClick += OnTreeRightClick;
-            _tree.Parent = _split1.Panel1;
+            _tree.Parent = _treePanel;
+            headerPanel.Parent = sceneTreePanel;
 
             // Prefab viewport
             _viewport = new PrefabWindowViewport(this)
@@ -148,19 +171,19 @@ namespace FlaxEditor.Windows.Assets
             _viewport.TransformGizmo.ModeChanged += UpdateToolstrip;
 
             // Prefab properties editor
-            _propertiesEditor = new CustomEditorPresenter(_undo);
+            _propertiesEditor = new CustomEditorPresenter(_undo, null, this);
             _propertiesEditor.Panel.Parent = _split2.Panel2;
             _propertiesEditor.Modified += MarkAsEdited;
 
             // Toolstrip
             _saveButton = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Save64, Save).LinkTooltip("Save");
             _toolstrip.AddSeparator();
-            _toolStripUndo = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip("Undo (Ctrl+Z)");
-            _toolStripRedo = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip("Redo (Ctrl+Y)");
+            _toolStripUndo = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Undo64, _undo.PerformUndo).LinkTooltip($"Undo ({inputOptions.Undo})");
+            _toolStripRedo = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Redo64, _undo.PerformRedo).LinkTooltip($"Redo ({inputOptions.Redo})");
             _toolstrip.AddSeparator();
-            _toolStripTranslate = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Translate32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Translate).LinkTooltip("Change Gizmo tool mode to Translate (1)");
-            _toolStripRotate = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Rotate32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Rotate).LinkTooltip("Change Gizmo tool mode to Rotate (2)");
-            _toolStripScale = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Scale32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Scale).LinkTooltip("Change Gizmo tool mode to Scale (3)");
+            _toolStripTranslate = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Translate32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Translate).LinkTooltip($"Change Gizmo tool mode to Translate ({inputOptions.TranslateMode})");
+            _toolStripRotate = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Rotate32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Rotate).LinkTooltip($"Change Gizmo tool mode to Rotate ({inputOptions.RotateMode})");
+            _toolStripScale = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Scale32, () => _viewport.TransformGizmo.ActiveMode = TransformGizmoBase.Mode.Scale).LinkTooltip($"Change Gizmo tool mode to Scale ({inputOptions.ScaleMode})");
             _toolstrip.AddSeparator();
             _toolStripLiveReload = (ToolStripButton)_toolstrip.AddButton(Editor.Icons.Refresh64, () => LiveReload = !LiveReload).SetChecked(true).SetAutoCheck(true).LinkTooltip("Live changes preview (applies prefab changes on modification by auto)");
 
@@ -188,22 +211,70 @@ namespace FlaxEditor.Windows.Assets
             InputActions.Add(options => options.FocusSelection, _viewport.FocusSelection);
         }
 
+        /// <summary>
+        /// Enables or disables vertical and horizontal scrolling on the tree panel.
+        /// </summary>
+        /// <param name="enabled">The state to set scrolling to</param>
+        public void ScrollingOnTreeView(bool enabled)
+        {
+            if (_treePanel.VScrollBar != null)
+                _treePanel.VScrollBar.ThumbEnabled = enabled;
+            if (_treePanel.HScrollBar != null)
+                _treePanel.HScrollBar.ThumbEnabled = enabled;
+        }
+
+        /// <summary>
+        /// Scrolls to the selected node in the tree.
+        /// </summary>
+        public void ScrollToSelectedNode()
+        {
+            // Scroll to node
+            var nodeSelection = _tree.Selection;
+            if (nodeSelection.Count != 0)
+            {
+                var scrollControl = nodeSelection[nodeSelection.Count - 1];
+                _treePanel.ScrollViewTo(scrollControl);
+            }
+        }
+
         private void OnSearchBoxTextChanged()
         {
             // Skip events during setup or init stuff
             if (IsLayoutLocked)
                 return;
 
-            var root = Graph.Root;
-            root.TreeNode.LockChildrenRecursive();
+            _tree.LockChildrenRecursive();
 
             // Update tree
             var query = _searchBox.Text;
+            var root = Graph.Root;
             root.TreeNode.UpdateFilter(query);
 
-            root.TreeNode.UnlockChildrenRecursive();
+            _tree.UnlockChildrenRecursive();
             PerformLayout();
             PerformLayout();
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseUp(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseUp(location, button))
+                return true;
+
+            if (button == MouseButton.Right && _treePanel.ContainsPoint(ref location))
+            {
+                _tree.Deselect();
+                var locationCM = location + _searchBox.BottomLeft;
+                ShowContextMenu(Parent, ref locationCM);
+                return true;
+            }
+
+            if (button == MouseButton.Left && _treePanel.ContainsPoint(ref location))
+            {
+                _tree.Deselect();
+                return true;
+            }
+            return false;
         }
 
         private void OnScriptsReloadBegin()
@@ -249,7 +320,7 @@ namespace FlaxEditor.Windows.Assets
             Graph.MainActor = _viewport.Instance;
             Selection.Clear();
             Select(Graph.Main);
-            Graph.Root.TreeNode.ExpandAll(true);
+            Graph.Root.TreeNode.Expand(true);
             _undo.Clear();
             ClearEditedFlag();
         }
@@ -345,7 +416,7 @@ namespace FlaxEditor.Windows.Assets
             _focusCamera = true;
             Selection.Clear();
             Select(Graph.Main);
-            Graph.Root.TreeNode.ExpandAll(true);
+            Graph.Root.TreeNode.Expand(true);
 
             _undo.Clear();
             ClearEditedFlag();
@@ -369,6 +440,7 @@ namespace FlaxEditor.Windows.Assets
         {
             try
             {
+                FlaxEngine.Profiler.BeginEvent("PrefabWindow.Update");
                 if (Graph.Main != null)
                 {
                     // Due to fact that actors in prefab editor are only created but not added to gameplay 
@@ -397,6 +469,10 @@ namespace FlaxEditor.Windows.Assets
                     Graph.Root.TreeNode.ExpandAll(true);
                 }
             }
+            finally
+            {
+                FlaxEngine.Profiler.EndEvent();
+            }
 
             // Auto fit
             if (_focusCamera && _viewport.Task.FrameCount > 1)
@@ -420,8 +496,8 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutSerialize(XmlWriter writer)
         {
-            writer.WriteAttributeString("Split1", _split1.SplitterValue.ToString());
-            writer.WriteAttributeString("Split2", _split2.SplitterValue.ToString());
+            LayoutSerializeSplitter(writer, "Split1", _split1);
+            LayoutSerializeSplitter(writer, "Split2", _split2);
             writer.WriteAttributeString("LiveReload", LiveReload.ToString());
             writer.WriteAttributeString("GizmoMode", Viewport.TransformGizmo.ActiveMode.ToString());
         }
@@ -429,15 +505,10 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutDeserialize(XmlElement node)
         {
-            if (float.TryParse(node.GetAttribute("Split1"), out float value1))
-                _split1.SplitterValue = value1;
-
-            if (float.TryParse(node.GetAttribute("Split2"), out value1))
-                _split2.SplitterValue = value1;
-
+            LayoutDeserializeSplitter(node, "Split1", _split1);
+            LayoutDeserializeSplitter(node, "Split2", _split2);
             if (bool.TryParse(node.GetAttribute("LiveReload"), out bool value2))
                 LiveReload = value2;
-
             if (Enum.TryParse(node.GetAttribute("GizmoMode"), out TransformGizmoBase.Mode value3))
                 Viewport.TransformGizmo.ActiveMode = value3;
         }
@@ -447,7 +518,7 @@ namespace FlaxEditor.Windows.Assets
         {
             _split1.SplitterValue = 0.2f;
             _split2.SplitterValue = 0.6f;
-            LiveReload = true;
+            LiveReload = false;
         }
 
         /// <inheritdoc />
@@ -462,5 +533,8 @@ namespace FlaxEditor.Windows.Assets
 
             base.OnDestroy();
         }
+
+        /// <inheritdoc />
+        public EditorViewport PresenterViewport => _viewport;
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
@@ -18,7 +18,7 @@ namespace Flax.Build.Platforms
         public static readonly AndroidSdk Instance = new AndroidSdk();
 
         /// <inheritdoc />
-        public override TargetPlatform[] Platforms => new []
+        public override TargetPlatform[] Platforms => new[]
         {
             TargetPlatform.Windows,
             TargetPlatform.Linux,
@@ -33,7 +33,9 @@ namespace Flax.Build.Platforms
                 return;
 
             // Find Android SDK folder path
-            var sdkPath = Environment.GetEnvironmentVariable("ANDROID_SDK");
+            var sdkPath = Environment.GetEnvironmentVariable("ANDROID_HOME");
+            if (string.IsNullOrEmpty(sdkPath))
+                sdkPath = Environment.GetEnvironmentVariable("ANDROID_SDK");
             if (string.IsNullOrEmpty(sdkPath))
             {
                 // Look for adb in Android folders of some common locations
@@ -53,6 +55,8 @@ namespace Flax.Build.Platforms
                 foreach (string searchDir in searchDirs)
                 {
                     string androidDir = Path.Combine(searchDir, "Android");
+                    if (!Directory.Exists(androidDir))
+                        androidDir = Path.Combine(searchDir, "sdk");
                     if (Directory.Exists(androidDir))
                     {
                         string[] subDirs = Directory.GetDirectories(androidDir, "*sdk*", SearchOption.TopDirectoryOnly);
@@ -72,7 +76,7 @@ namespace Flax.Build.Platforms
             }
             else if (!Directory.Exists(sdkPath))
             {
-                Log.Warning(string.Format("Specified Android SDK folder in ANDROID_SDK env variable doesn't exist ({0})", sdkPath));
+                Log.Warning(string.Format("Specified Android SDK folder in ANDROID_HOME env variable doesn't exist ({0})", sdkPath));
             }
             if (string.IsNullOrEmpty(sdkPath))
             {

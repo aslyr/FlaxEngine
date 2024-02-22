@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.Gizmo;
 using FlaxEngine;
@@ -20,21 +20,18 @@ namespace FlaxEditor.Tools.Foliage
         public EditFoliageGizmoMode GizmoMode;
 
         /// <inheritdoc />
-        public override bool CanRender
+        public override bool CanRender()
         {
-            get
-            {
-                if (!HasDataReady)
-                    return false;
+            if (!HasDataReady)
+                return false;
 
-                var foliage = GizmoMode.SelectedFoliage;
-                if (!foliage)
-                    return false;
-                var instanceIndex = GizmoMode.SelectedInstanceIndex;
-                if (instanceIndex < 0 || instanceIndex >= foliage.InstancesCount)
-                    return false;
-                return true;
-            }
+            var foliage = GizmoMode.SelectedFoliage;
+            if (!foliage)
+                return false;
+            var instanceIndex = GizmoMode.SelectedInstanceIndex;
+            if (instanceIndex < 0 || instanceIndex >= foliage.InstancesCount)
+                return false;
+            return true;
         }
 
         /// <inheritdoc />

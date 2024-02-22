@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX11
 
@@ -43,12 +43,12 @@ bool GPUPipelineStateDX11::Init(const Description& desc)
         D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
         D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
     };
-    PrimitiveTopology = D3D11_primTypes[static_cast<int32>(desc.PrimitiveTopologyType)];
+    PrimitiveTopology = D3D11_primTypes[static_cast<int32>(desc.PrimitiveTopology)];
     if (HS)
         PrimitiveTopology = (D3D11_PRIMITIVE_TOPOLOGY)((int32)D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + (HS->GetControlPointsCount() - 1));
 
     // States
-    DepthStencilStateIndex = static_cast<int32>(desc.DepthFunc) + (desc.DepthTestEnable ? 0 : 9) + (desc.DepthWriteEnable ? 0 : 18);
+    DepthStencilStateIndex = static_cast<int32>(desc.DepthFunc) + (desc.DepthEnable ? 0 : 9) + (desc.DepthWriteEnable ? 0 : 18);
     RasterizerStateIndex = static_cast<int32>(desc.CullMode) + (desc.Wireframe ? 0 : 3) + (desc.DepthClipEnable ? 0 : 6);
     BlendState = _device->GetBlendState(desc.BlendMode);
 

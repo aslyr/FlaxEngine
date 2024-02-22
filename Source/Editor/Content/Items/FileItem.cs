@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEngine;
 
@@ -24,6 +24,9 @@ namespace FlaxEditor.Content
 
         /// <inheritdoc />
         public override ContentItemSearchFilter SearchFilter => ContentItemSearchFilter.Other;
+
+        /// <inheritdoc />
+        public override string TypeDescription => "File";
 
         /// <inheritdoc />
         public override SpriteHandle DefaultThumbnail => Editor.Instance.Icons.Document128;

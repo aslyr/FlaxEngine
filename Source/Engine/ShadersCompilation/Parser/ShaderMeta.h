@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -119,9 +119,8 @@ public:
 public:
 
     /// <summary>
-    /// Gets shader function meta stage type
+    /// Gets shader function meta stage type.
     /// </summary>
-    /// <returns>Shader Stage type</returns>
     virtual ShaderStage GetStage() const = 0;
 };
 

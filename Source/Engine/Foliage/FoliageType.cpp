@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "FoliageType.h"
 #include "Engine/Core/Collections/ArrayExtensions.h"
@@ -7,12 +7,11 @@
 #include "Foliage.h"
 
 FoliageType::FoliageType()
-    : PersistentScriptingObject(SpawnParams(Guid::New(), TypeInitializer))
+    : ScriptingObject(SpawnParams(Guid::New(), TypeInitializer))
     , Foliage(nullptr)
     , Index(-1)
 {
     _isReady = 0;
-    _canDraw = 0;
 
     ReceiveDecals = true;
     UseDensityScaling = false;
@@ -68,11 +67,10 @@ void FoliageType::SetMaterials(const Array<MaterialBase*>& value)
         Entries[i].Material = value[i];
 }
 
-Vector3 FoliageType::GetRandomScale() const
+Float3 FoliageType::GetRandomScale() const
 {
-    Vector3 result;
+    Float3 result;
     float tmp;
-
     switch (PaintScaling)
     {
     case FoliageScalingModes::Uniform:
@@ -104,7 +102,6 @@ Vector3 FoliageType::GetRandomScale() const
         result.Z = Math::Lerp(PaintScaleMin.Z, PaintScaleMax.Z, tmp);
         break;
     }
-
     return result;
 }
 
@@ -133,7 +130,7 @@ void FoliageType::Serialize(SerializeStream& stream, const void* otherObj)
 
     SERIALIZE(Model);
 
-    const std::function<bool(const ModelInstanceEntry&)> IsValidMaterial = [](const ModelInstanceEntry& e) -> bool
+    const Function<bool(const ModelInstanceEntry&)> IsValidMaterial = [](const ModelInstanceEntry& e) -> bool
     {
         return e.Material;
     };

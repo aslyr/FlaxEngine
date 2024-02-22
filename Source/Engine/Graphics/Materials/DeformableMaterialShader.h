@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,11 +10,13 @@
 class DeformableMaterialShader : public MaterialShader
 {
 private:
-
     struct Cache
     {
         PipelineStateCache Default;
         PipelineStateCache Depth;
+#if USE_EDITOR
+        PipelineStateCache QuadOverdraw;
+#endif
 
         FORCE_INLINE PipelineStateCache* GetPS(const DrawPass pass)
         {
@@ -23,8 +25,14 @@ private:
             case DrawPass::Depth:
                 return &Depth;
             case DrawPass::GBuffer:
+            case DrawPass::GBuffer | DrawPass::GlobalSurfaceAtlas:
+            case DrawPass::GlobalSurfaceAtlas:
             case DrawPass::Forward:
                 return &Default;
+#if USE_EDITOR
+            case DrawPass::QuadOverdraw:
+                return &QuadOverdraw;
+#endif
             default:
                 return nullptr;
             }
@@ -34,30 +42,29 @@ private:
         {
             Default.Release();
             Depth.Release();
+#if USE_EDITOR
+            QuadOverdraw.Release();
+#endif
         }
     };
 
 private:
-
     Cache _cache;
     DrawPass _drawModes = DrawPass::None;
 
 public:
-
     DeformableMaterialShader(const StringView& name)
         : MaterialShader(name)
     {
     }
 
 public:
-
     // [MaterialShader]
     DrawPass GetDrawModes() const override;
     void Bind(BindParameters& params) override;
     void Unload() override;
 
 protected:
-
     // [MaterialShader]
     bool Load() override;
 };

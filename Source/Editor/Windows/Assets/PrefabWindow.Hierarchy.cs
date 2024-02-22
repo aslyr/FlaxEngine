@@ -1,10 +1,14 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using FlaxEditor.Content;
 using FlaxEditor.GUI.ContextMenu;
+using FlaxEditor.GUI.Drag;
 using FlaxEditor.GUI.Tree;
 using FlaxEditor.SceneGraph;
+using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
 
@@ -53,6 +57,161 @@ namespace FlaxEditor.Windows.Assets
             public PrefabTree()
             : base(true)
             {
+            }
+        }
+
+        private class SceneTreePanel : Panel
+        {
+            private PrefabWindow _window;
+            private DragAssets _dragAssets;
+            private DragActorType _dragActorType;
+            private DragScriptItems _dragScriptItems;
+            private DragHandlers _dragHandlers;
+
+            public SceneTreePanel(PrefabWindow window)
+            : base(ScrollBars.None)
+            {
+                _window = window;
+                Offsets = Margin.Zero;
+                AnchorPreset = AnchorPresets.StretchAll;
+            }
+
+            private bool ValidateDragAsset(AssetItem assetItem)
+            {
+                return assetItem.OnEditorDrag(this);
+            }
+
+            private static bool ValidateDragActorType(ScriptType actorType)
+            {
+                return true;
+            }
+
+            private static bool ValidateDragScriptItem(ScriptItem script)
+            {
+                return Editor.Instance.CodeEditing.Actors.Get(script);
+            }
+
+            /// <inheritdoc />
+            public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
+            {
+                var result = base.OnDragEnter(ref location, data);
+                if (result == DragDropEffect.None)
+                {
+                    if (_dragHandlers == null)
+                        _dragHandlers = new DragHandlers();
+                    if (_dragAssets == null)
+                    {
+                        _dragAssets = new DragAssets(ValidateDragAsset);
+                        _dragHandlers.Add(_dragAssets);
+                    }
+                    if (_dragAssets.OnDragEnter(data))
+                        return _dragAssets.Effect;
+                    if (_dragActorType == null)
+                    {
+                        _dragActorType = new DragActorType(ValidateDragActorType);
+                        _dragHandlers.Add(_dragActorType);
+                    }
+                    if (_dragActorType.OnDragEnter(data))
+                        return _dragActorType.Effect;
+                    if (_dragScriptItems == null)
+                    {
+                        _dragScriptItems = new DragScriptItems(ValidateDragScriptItem);
+                        _dragHandlers.Add(_dragScriptItems);
+                    }
+                    if (_dragScriptItems.OnDragEnter(data))
+                        return _dragScriptItems.Effect;
+                }
+                return result;
+            }
+
+            /// <inheritdoc />
+            public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
+            {
+                var result = base.OnDragMove(ref location, data);
+                if (result == DragDropEffect.None && _dragHandlers != null)
+                    result = _dragHandlers.Effect;
+                return result;
+            }
+
+            /// <inheritdoc />
+            public override void OnDragLeave()
+            {
+                base.OnDragLeave();
+
+                _dragHandlers?.OnDragLeave();
+            }
+
+            /// <inheritdoc />
+            public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
+            {
+                var result = base.OnDragDrop(ref location, data);
+                if (result == DragDropEffect.None)
+                {
+                    // Drag assets
+                    if (_dragAssets != null && _dragAssets.HasValidDrag)
+                    {
+                        for (int i = 0; i < _dragAssets.Objects.Count; i++)
+                        {
+                            var item = _dragAssets.Objects[i];
+                            var actor = item.OnEditorDrop(this);
+                            actor.Name = item.ShortName;
+                            _window.Spawn(actor);
+                        }
+                        result = DragDropEffect.Move;
+                    }
+                    // Drag actor type
+                    else if (_dragActorType != null && _dragActorType.HasValidDrag)
+                    {
+                        for (int i = 0; i < _dragActorType.Objects.Count; i++)
+                        {
+                            var item = _dragActorType.Objects[i];
+                            var actor = item.CreateInstance() as Actor;
+                            if (actor == null)
+                            {
+                                Editor.LogWarning("Failed to spawn actor of type " + item.TypeName);
+                                continue;
+                            }
+                            actor.Name = item.Name;
+                            _window.Spawn(actor);
+                        }
+                        result = DragDropEffect.Move;
+                    }
+                    // Drag script item
+                    else if (_dragScriptItems != null && _dragScriptItems.HasValidDrag)
+                    {
+                        for (int i = 0; i < _dragScriptItems.Objects.Count; i++)
+                        {
+                            var item = _dragScriptItems.Objects[i];
+                            var actorType = Editor.Instance.CodeEditing.Actors.Get(item);
+                            if (actorType != ScriptType.Null)
+                            {
+                                var actor = actorType.CreateInstance() as Actor;
+                                if (actor == null)
+                                {
+                                    Editor.LogWarning("Failed to spawn actor of type " + actorType.TypeName);
+                                    continue;
+                                }
+                                actor.Name = actorType.Name;
+                                _window.Spawn(actor);
+                            }
+                        }
+                        result = DragDropEffect.Move;
+                    }
+                    _dragHandlers.OnDragDrop(null);
+                }
+                return result;
+            }
+
+            public override void OnDestroy()
+            {
+                _window = null;
+                _dragAssets = null;
+                _dragActorType = null;
+                _dragScriptItems = null;
+                _dragHandlers?.Clear();
+                _dragHandlers = null;
+
+                base.OnDestroy();
             }
         }
 
@@ -109,7 +268,7 @@ namespace FlaxEditor.Windows.Assets
 
             contextMenu.AddSeparator();
 
-            b = contextMenu.AddButton("Create Prefab", () => Editor.Prefabs.CreatePrefab(Selection));
+            b = contextMenu.AddButton("Create Prefab", () => Editor.Prefabs.CreatePrefab(Selection, this));
             b.Enabled = isSingleActorSelected &&
                         (Selection[0] as ActorNode).CanCreatePrefab &&
                         Editor.Windows.ContentWin.CurrentViewFolder.CanHaveAssets;
@@ -120,30 +279,77 @@ namespace FlaxEditor.Windows.Assets
             // Spawning actors options
 
             contextMenu.AddSeparator();
-            var spawnMenu = contextMenu.AddChildMenu("New");
-            var newActorCm = spawnMenu.ContextMenu;
-            for (int i = 0; i < SceneTreeWindow.SpawnActorsGroups.Length; i++)
-            {
-                var group = SceneTreeWindow.SpawnActorsGroups[i];
 
-                if (group.Types.Length == 1)
+            // Go through each actor and add it to the context menu if it has the ActorContextMenu attribute
+            foreach (var actorType in Editor.CodeEditing.Actors.Get())
+            {
+                if (actorType.IsAbstract)
+                    continue;
+                ActorContextMenuAttribute attribute = null;
+                foreach (var e in actorType.GetAttributes(false))
                 {
-                    var type = group.Types[0].Value;
-                    newActorCm.AddButton(group.Types[0].Key, () => Spawn(type));
-                }
-                else
-                {
-                    var groupCm = newActorCm.AddChildMenu(group.Name).ContextMenu;
-                    for (int j = 0; j < group.Types.Length; j++)
+                    if (e is ActorContextMenuAttribute actorContextMenuAttribute)
                     {
-                        var type = group.Types[j].Value;
-                        groupCm.AddButton(group.Types[j].Key, () => Spawn(type));
+                        attribute = actorContextMenuAttribute;
+                        break;
+                    }
+                }
+                if (attribute == null)
+                    continue;
+                var parts = attribute.Path.Split('/');
+                ContextMenuChildMenu childCM = null;
+                bool mainCM = true;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    var part = parts[i].Trim();
+                    if (i == parts.Length - 1)
+                    {
+                        if (mainCM)
+                        {
+                            contextMenu.AddButton(part, () => Spawn(actorType.Type));
+                            mainCM = false;
+                        }
+                        else if (childCM != null)
+                        {
+                            childCM.ContextMenu.AddButton(part, () => Spawn(actorType.Type));
+                            childCM.ContextMenu.AutoSort = true;
+                        }
+                    }
+                    else
+                    {
+                        if (mainCM)
+                        {
+                            childCM = contextMenu.GetOrAddChildMenu(part);
+                            childCM.ContextMenu.AutoSort = true;
+                            mainCM = false;
+                        }
+                        else if (childCM != null)
+                        {
+                            childCM = childCM.ContextMenu.GetOrAddChildMenu(part);
+                            childCM.ContextMenu.AutoSort = true;
+                        }
                     }
                 }
             }
 
             // Custom options
-
+            bool showCustomNodeOptions = Selection.Count == 1;
+            if (!showCustomNodeOptions && Selection.Count != 0)
+            {
+                showCustomNodeOptions = true;
+                for (int i = 1; i < Selection.Count; i++)
+                {
+                    if (Selection[0].GetType() != Selection[i].GetType())
+                    {
+                        showCustomNodeOptions = false;
+                        break;
+                    }
+                }
+            }
+            if (showCustomNodeOptions)
+            {
+                Selection[0].OnContextMenu(contextMenu, this);
+            }
             ContextMenuShow?.Invoke(contextMenu);
 
             return contextMenu;
@@ -154,7 +360,7 @@ namespace FlaxEditor.Windows.Assets
         /// </summary>
         /// <param name="parent">The parent control.</param>
         /// <param name="location">The location (within a given control).</param>
-        private void ShowContextMenu(Control parent, ref Vector2 location)
+        private void ShowContextMenu(Control parent, ref Float2 location)
         {
             var contextMenu = CreateContextMenu();
 
@@ -168,7 +374,7 @@ namespace FlaxEditor.Windows.Assets
             {
                 if (selection.Count != 0)
                     Select(actor);
-                actor.TreeNode.StartRenaming();
+                actor.TreeNode.StartRenaming(this, _treePanel);
             }
         }
 
@@ -191,11 +397,13 @@ namespace FlaxEditor.Windows.Assets
             }
             if (parentActor != null)
             {
-                // Use the same location
-                actor.Transform = parentActor.Transform;
+                // Match the parent
+                actor.LocalTransform = Transform.Identity;
+                actor.StaticFlags = parentActor.StaticFlags;
+                actor.Layer = parentActor.Layer;
 
                 // Rename actor to identify it easily
-                actor.Name = StringUtils.IncrementNameNumber(actor.GetType().Name, x => parentActor.GetChild(x) == null);
+                actor.Name = Utilities.Utils.IncrementNameNumber(actor.Name, x => parentActor.GetChild(x) == null);
             }
 
             // Spawn it
@@ -213,6 +421,7 @@ namespace FlaxEditor.Windows.Assets
 
             // Spawn it
             Spawn(actor);
+            Rename();
         }
 
         /// <summary>
@@ -242,9 +451,10 @@ namespace FlaxEditor.Windows.Assets
             // Create undo action
             var action = new CustomDeleteActorsAction(new List<SceneGraphNode>(1) { actorNode }, true);
             Undo.AddAction(action);
+            Select(actorNode);
         }
 
-        private void OnTreeRightClick(TreeNode node, Vector2 location)
+        private void OnTreeRightClick(TreeNode node, Float2 location)
         {
             // Skip if it's loading data
             if (Graph.Main == null)
@@ -255,8 +465,9 @@ namespace FlaxEditor.Windows.Assets
 
         private void Update(ActorNode actorNode)
         {
-            actorNode.TreeNode.OnNameChanged();
-            actorNode.TreeNode.OnOrderInParentChanged();
+            actorNode.TreeNode.UpdateText();
+            if (actorNode.TreeNode.IsCollapsed)
+                return;
 
             for (int i = 0; i < actorNode.ChildNodes.Count; i++)
             {

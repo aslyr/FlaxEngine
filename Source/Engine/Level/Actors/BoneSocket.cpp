@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "BoneSocket.h"
 #include "Engine/Level/SceneObjectsFactory.h"
@@ -104,7 +104,7 @@ void BoneSocket::OnParentChanged()
 {
     // Base
     Actor::OnParentChanged();
-    
+
     if (!IsDuringPlay())
         return;
 

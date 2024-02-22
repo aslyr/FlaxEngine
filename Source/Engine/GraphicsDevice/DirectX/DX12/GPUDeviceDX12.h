@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -16,6 +16,11 @@
 #else
 #define DX12_BACK_BUFFER_COUNT 2
 #endif
+
+#define DX12_ROOT_SIGNATURE_CB 0
+#define DX12_ROOT_SIGNATURE_SR (GPU_MAX_CB_BINDED+0)
+#define DX12_ROOT_SIGNATURE_UA (GPU_MAX_CB_BINDED+1)
+#define DX12_ROOT_SIGNATURE_SAMPLER (GPU_MAX_CB_BINDED+2)
 
 class Engine;
 class WindowsWindow;
@@ -158,8 +163,8 @@ public:
     }
 
 #if PLATFORM_XBOX_SCARLETT ||PLATFORM_XBOX_ONE
-    void OnSuspend();
-    void OnResume();
+    void OnSuspended();
+    void OnResumed();
 #endif
 
 private:
@@ -192,6 +197,7 @@ public:
     GPUBuffer* CreateBuffer(const StringView& name) override;
     GPUSampler* CreateSampler() override;
     GPUSwapChain* CreateSwapChain(Window* window) override;
+    GPUConstantBuffer* CreateConstantBuffer(uint32 size, const StringView& name) override;
 };
 
 /// <summary>

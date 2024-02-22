@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "AmbientOcclusionPass.h"
 #include "RenderList.h"
@@ -206,20 +206,12 @@ void AmbientOcclusionPass::Render(RenderContext& renderContext)
     if (renderContext.List == nullptr)
         return;
     auto& aoSettings = renderContext.List->Settings.AmbientOcclusion;
-    if (aoSettings.Enabled == false || (renderContext.View.Flags & ViewFlags::AO) == 0)
+    if (aoSettings.Enabled == false ||
+        (renderContext.View.Flags & ViewFlags::AO) == ViewFlags::None ||
+        renderContext.View.IsOrthographicProjection() || // TODO: add support for SSAO in ortho projection
+        Math::Min(renderContext.Buffers->GetWidth(), renderContext.Buffers->GetHeight()) < 16 ||
+        checkIfSkipPass())
         return;
-
-    // TODO: add support for SSAO in ortho projection
-    if (renderContext.View.IsOrthographicProjection())
-        return;
-
-    // Ensure to have valid data
-    if (checkIfSkipPass())
-    {
-        // Resources are missing. Do not perform rendering.
-        return;
-    }
-
     PROFILE_GPU_CPU("Ambient Occlusion");
 
     settings.Radius = aoSettings.Radius * 0.006f;
@@ -307,13 +299,17 @@ void AmbientOcclusionPass::InitRTs(const RenderContext& renderContext)
         // TODO: maybe instead of using whole mip chain request only SSAO_DEPTH_MIP_LEVELS?
         tempDesc = GPUTextureDescription::New2D((int32)m_halfSizeX, (int32)m_halfSizeY, 0, SSAO_DEPTH_FORMAT, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
         m_halfDepths[i] = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(m_halfDepths[i], "SSAO.HalfDepth");
     }
     tempDesc = GPUTextureDescription::New2D((int32)m_halfSizeX, (int32)m_halfSizeY, SSAO_AO_RESULT_FORMAT);
     m_pingPongHalfResultA = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(m_pingPongHalfResultA, "SSAO.ResultsHalfA");
     tempDesc = GPUTextureDescription::New2D((int32)m_halfSizeX, (int32)m_halfSizeY, SSAO_AO_RESULT_FORMAT);
     m_pingPongHalfResultB = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(m_pingPongHalfResultA, "SSAO.ResultsHalfB");
     tempDesc = GPUTextureDescription::New2D((int32)m_halfSizeX, (int32)m_halfSizeY, SSAO_AO_RESULT_FORMAT, GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget, 4);
     m_finalResults = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(m_finalResults, "SSAO.Results");
 }
 
 void AmbientOcclusionPass::ReleaseRTs(const RenderContext& renderContext)
@@ -341,11 +337,11 @@ void AmbientOcclusionPass::UpdateCB(const RenderContext& renderContext, GPUConte
     GBufferPass::SetInputs(view, _constantsBufferData.GBuffer);
     Matrix::Transpose(view.View, _constantsBufferData.ViewMatrix);
 
-    _constantsBufferData.ViewportPixelSize = Vector2(1.0f / m_sizeX, 1.0f / m_sizeY);
-    _constantsBufferData.HalfViewportPixelSize = Vector2(1.0f / m_halfSizeX, 1.0f / m_halfSizeY);
+    _constantsBufferData.ViewportPixelSize = Float2(1.0f / m_sizeX, 1.0f / m_sizeY);
+    _constantsBufferData.HalfViewportPixelSize = Float2(1.0f / m_halfSizeX, 1.0f / m_halfSizeY);
 
-    _constantsBufferData.Viewport2xPixelSize = Vector2(_constantsBufferData.ViewportPixelSize.X * 2.0f, _constantsBufferData.ViewportPixelSize.Y * 2.0f);
-    _constantsBufferData.Viewport2xPixelSize_x_025 = Vector2(_constantsBufferData.Viewport2xPixelSize.X * 0.25f, _constantsBufferData.Viewport2xPixelSize.Y * 0.25f);
+    _constantsBufferData.Viewport2xPixelSize = Float2(_constantsBufferData.ViewportPixelSize.X * 2.0f, _constantsBufferData.ViewportPixelSize.Y * 2.0f);
+    _constantsBufferData.Viewport2xPixelSize_x_025 = Float2(_constantsBufferData.Viewport2xPixelSize.X * 0.25f, _constantsBufferData.Viewport2xPixelSize.Y * 0.25f);
 
     const float tanHalfFOVY = 1.0f / proj.Values[1][1];
 
@@ -403,7 +399,7 @@ void AmbientOcclusionPass::UpdateCB(const RenderContext& renderContext, GPUConte
         const float sa = Math::Sin(angle0);
 
         const float scale = 1.0f + (a - 1.5f + (b - (subPassCount - 1.0f) * 0.5f) / static_cast<float>(subPassCount)) * 0.07f;
-        _constantsBufferData.PatternRotScaleMatrices[subPass] = Vector4(scale * ca, scale * -sa, -scale * sa, -scale * ca);
+        _constantsBufferData.PatternRotScaleMatrices[subPass] = Float4(scale * ca, scale * -sa, -scale * sa, -scale * ca);
     }
 
     // Update buffer

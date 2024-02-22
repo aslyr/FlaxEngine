@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -82,7 +82,7 @@ namespace FlaxEditor.Windows
 
                 // Copy camera view parameters for the scene rendering
                 var view = sceneTask.View;
-                var viewport = new FlaxEngine.Viewport(Vector2.Zero, sceneTask.Buffers.Size);
+                var viewport = new FlaxEngine.Viewport(Float2.Zero, sceneTask.Buffers.Size);
                 view.CopyFrom(Camera, ref viewport);
                 sceneTask.View = view;
             }
@@ -107,7 +107,7 @@ namespace FlaxEditor.Windows
                 base.Draw();
 
                 // Draw frame
-                Render2D.DrawRectangle(new Rectangle(Vector2.Zero, Size), Color.Black);
+                Render2D.DrawRectangle(new Rectangle(Float2.Zero, Size), Color.Black);
             }
 
             /// <inheritdoc />
@@ -150,7 +150,21 @@ namespace FlaxEditor.Windows
             };
             Viewport.Task.ViewFlags = ViewFlags.DefaultEditor;
 
+            Editor.SceneEditing.SelectionChanged += OnSelectionChanged;
             Editor.Scene.ActorRemoved += SceneOnActorRemoved;
+        }
+
+        /// <inheritdoc />
+        public override void OnEditorStateChanged()
+        {
+            base.OnEditorStateChanged();
+
+            UpdateCameraPreview();
+        }
+
+        private void OnSelectionChanged()
+        {
+            UpdateCameraPreview();
         }
 
         /// <summary>
@@ -303,11 +317,11 @@ namespace FlaxEditor.Windows
                 const float maxWidth = maxHeight * aspectRatio;
                 const float viewSpaceMaxPercentage = 0.7f;
                 const float margin = 10;
-                Vector2 totalSize = Size * viewSpaceMaxPercentage - margin;
-                Vector2 singleSize = totalSize / count - count * margin;
+                var totalSize = Size * viewSpaceMaxPercentage - margin;
+                var singleSize = totalSize / count - count * margin;
                 float sizeX = Mathf.Clamp(singleSize.X, minWidth, maxWidth);
                 float sizeY = sizeX / aspectRatio;
-                singleSize = new Vector2(sizeX, sizeY);
+                singleSize = new Float2(sizeX, sizeY);
                 int countPerX = Mathf.FloorToInt(totalSize.X / singleSize.X);
                 int countPerY = Mathf.FloorToInt(totalSize.Y / singleSize.Y);
                 int index = 0;
@@ -318,7 +332,7 @@ namespace FlaxEditor.Windows
                         if (index == count)
                             break;
 
-                        var pos = Size - (singleSize + margin) * new Vector2(x, y);
+                        var pos = Size - (singleSize + margin) * new Float2(x, y);
                         _previews[index++].Bounds = new Rectangle(pos, singleSize);
                     }
 
@@ -376,9 +390,6 @@ namespace FlaxEditor.Windows
         /// <inheritdoc />
         public override void Update(float deltaTime)
         {
-            // TODO: call camera preview update only on selection change, or state change
-            UpdateCameraPreview();
-
             if (Root.GetKeyDown(KeyboardKeys.F12))
             {
                 Viewport.TakeScreenshot();
@@ -419,7 +430,7 @@ namespace FlaxEditor.Windows
             writer.WriteAttributeString("MovementSpeed", Viewport.MovementSpeed.ToString());
             writer.WriteAttributeString("OrthographicScale", Viewport.OrthographicScale.ToString());
             writer.WriteAttributeString("UseOrthographicProjection", Viewport.UseOrthographicProjection.ToString());
-            writer.WriteAttributeString("ViewFlags", ((long)Viewport.Task.View.Flags).ToString());
+            writer.WriteAttributeString("ViewFlags", ((ulong)Viewport.Task.View.Flags).ToString());
         }
 
         /// <inheritdoc />
@@ -452,7 +463,7 @@ namespace FlaxEditor.Windows
             if (bool.TryParse(node.GetAttribute("UseOrthographicProjection"), out value1))
                 Viewport.UseOrthographicProjection = value1;
 
-            if (long.TryParse(node.GetAttribute("ViewFlags"), out long value3))
+            if (ulong.TryParse(node.GetAttribute("ViewFlags"), out ulong value3))
                 Viewport.Task.ViewFlags = (ViewFlags)value3;
 
             // Reset view flags if opening with different engine version (ViewFlags enum could be modified)

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX11
 
@@ -19,16 +19,21 @@ GPUBufferView* GPUBufferDX11::View() const
 
 void* GPUBufferDX11::Map(GPUResourceMapMode mode)
 {
-    if (!IsInMainThread())
+    const bool isMainThread = IsInMainThread();
+    if (!isMainThread)
         _device->Locker.Lock();
+    ASSERT(!_mapped);
 
     D3D11_MAPPED_SUBRESOURCE map;
     map.pData = nullptr;
     D3D11_MAP mapType;
+    UINT mapFlags = 0;
     switch (mode)
     {
     case GPUResourceMapMode::Read:
         mapType = D3D11_MAP_READ;
+        if (_desc.Usage == GPUResourceUsage::StagingReadback && isMainThread)
+            mapFlags = D3D11_MAP_FLAG_DO_NOT_WAIT;
         break;
     case GPUResourceMapMode::Write:
         mapType = D3D11_MAP_WRITE_DISCARD;
@@ -37,19 +42,25 @@ void* GPUBufferDX11::Map(GPUResourceMapMode mode)
         mapType = D3D11_MAP_READ_WRITE;
         break;
     default:
-        CRASH;
         return nullptr;
     }
 
-    const HRESULT result = _device->GetIM()->Map(_resource, 0, mapType, 0, &map);
-    LOG_DIRECTX_RESULT(result);
+    const HRESULT result = _device->GetIM()->Map(_resource, 0, mapType, mapFlags, &map);
+    if (result != DXGI_ERROR_WAS_STILL_DRAWING)
+        LOG_DIRECTX_RESULT(result);
+
+    _mapped = map.pData != nullptr;
+    if (!_mapped && !isMainThread)
+        _device->Locker.Unlock();
+
     return map.pData;
 }
 
 void GPUBufferDX11::Unmap()
 {
+    ASSERT(_mapped);
+    _mapped = false;
     _device->GetIM()->Unmap(_resource, 0);
-
     if (!IsInMainThread())
         _device->Locker.Unlock();
 }
@@ -67,21 +78,20 @@ bool GPUBufferDX11::OnInit()
     bufferDesc.CPUAccessFlags = RenderToolsDX::GetDX11CpuAccessFlagsFromUsage(_desc.Usage);
     bufferDesc.MiscFlags = 0;
     bufferDesc.StructureByteStride = 0;
-    //
-    if (_desc.Flags & GPUBufferFlags::VertexBuffer)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::VertexBuffer))
         bufferDesc.BindFlags |= D3D11_BIND_VERTEX_BUFFER;
-    if (_desc.Flags & GPUBufferFlags::IndexBuffer)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::IndexBuffer))
         bufferDesc.BindFlags |= D3D11_BIND_INDEX_BUFFER;
     if (useSRV)
         bufferDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
     if (useUAV)
         bufferDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
-    //
-    if (_desc.Flags & GPUBufferFlags::Argument)
+
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Argument))
         bufferDesc.MiscFlags |= D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
-    if (_desc.Flags & GPUBufferFlags::RawBuffer)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
         bufferDesc.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
-    if (_desc.Flags & GPUBufferFlags::Structured)
+    if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
     {
         bufferDesc.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
         bufferDesc.StructureByteStride = _desc.Stride;
@@ -95,7 +105,7 @@ bool GPUBufferDX11::OnInit()
         data.SysMemPitch = bufferDesc.ByteWidth;
         data.SysMemSlicePitch = 0;
     }
-    VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateBuffer(&bufferDesc, _desc.InitData ? &data : nullptr, &_resource));
+    VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateBuffer(&bufferDesc, _desc.InitData ? &data : nullptr, &_resource));
 
     // Set state
     DX_SET_DEBUG_NAME(_resource, GetName());
@@ -106,7 +116,7 @@ bool GPUBufferDX11::OnInit()
     if (useSRV)
     {
         D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-        if (_desc.Flags & GPUBufferFlags::RawBuffer)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
         {
             srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
             srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
@@ -116,7 +126,7 @@ bool GPUBufferDX11::OnInit()
         }
         else
         {
-            if (_desc.Flags & GPUBufferFlags::Structured)
+            if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
                 srvDesc.Format = DXGI_FORMAT_UNKNOWN;
             else
                 srvDesc.Format = RenderToolsDX::ToDxgiFormat(PixelFormatExtensions::FindShaderResourceFormat(_desc.Format, false));
@@ -125,7 +135,7 @@ bool GPUBufferDX11::OnInit()
             srvDesc.Buffer.NumElements = numElements;
         }
         ID3D11ShaderResourceView* srv;
-        VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateShaderResourceView(_resource, &srvDesc, &srv));
+        VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateShaderResourceView(_resource, &srvDesc, &srv));
         _view.SetSRV(srv);
     }
     if (useUAV)
@@ -135,18 +145,18 @@ bool GPUBufferDX11::OnInit()
         uavDesc.Buffer.FirstElement = 0;
         uavDesc.Buffer.NumElements = numElements;
         uavDesc.Buffer.Flags = 0;
-        if (_desc.Flags & GPUBufferFlags::RawBuffer)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::RawBuffer))
             uavDesc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_RAW;
-        if (_desc.Flags & GPUBufferFlags::Append)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Append))
             uavDesc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_APPEND;
-        if (_desc.Flags & GPUBufferFlags::Counter)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Counter))
             uavDesc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_COUNTER;
-        if (_desc.Flags & GPUBufferFlags::Structured)
+        if (EnumHasAnyFlags(_desc.Flags, GPUBufferFlags::Structured))
             uavDesc.Format = DXGI_FORMAT_UNKNOWN;
         else
             uavDesc.Format = RenderToolsDX::ToDxgiFormat(PixelFormatExtensions::FindUnorderedAccessFormat(_desc.Format));
         ID3D11UnorderedAccessView* uav;
-        VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateUnorderedAccessView(_resource, &uavDesc, &uav));
+        VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateUnorderedAccessView(_resource, &uavDesc, &uav));
         _view.SetUAV(uav);
     }
 

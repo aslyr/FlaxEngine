@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -11,7 +11,7 @@
 /// </summary>
 API_STRUCT() struct FLAXENGINE_API GamepadVibrationState
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(GamepadVibrationState);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(GamepadVibrationState);
 
     /// <summary>
     /// The left large motor vibration.
@@ -61,7 +61,7 @@ struct FLAXENGINE_API GamepadLayout
     /// <summary>
     /// The axis ranges mapping (X is scale, Y is offset. Eg. mappedVal = X * value + Y). It allows to invert any axis or map axis range.
     /// </summary>
-    Vector2 AxisMap[(int32)GamepadAxis::MAX];
+    Float2 AxisMap[(int32)GamepadAxis::MAX];
 
     /// <summary>
     /// Initializes layout with default values.
@@ -74,9 +74,8 @@ struct FLAXENGINE_API GamepadLayout
 /// </summary>
 API_CLASS(NoSpawn, Sealed) class FLAXENGINE_API Gamepad : public InputDevice
 {
-DECLARE_SCRIPTING_TYPE_NO_SPAWN(Gamepad);
+    DECLARE_SCRIPTING_TYPE_NO_SPAWN(Gamepad);
 public:
-
     /// <summary>
     /// The universal gamepad state description. All hardware gamepad device handlers should map input to match this structure.
     /// Later on, each gamepad may use individual layout for a game.
@@ -103,7 +102,6 @@ public:
     };
 
 protected:
-
     Guid _productId;
     State _state;
     State _mappedState;
@@ -112,14 +110,12 @@ protected:
     explicit Gamepad(const Guid& productId, const String& name);
 
 public:
-
     /// <summary>
     /// The gamepad layout.
     /// </summary>
     GamepadLayout Layout;
 
 public:
-
     /// <summary>
     /// Gets the gamepad device type identifier.
     /// </summary>
@@ -169,6 +165,11 @@ public:
     }
 
     /// <summary>
+    /// Checks if any gamepad button is currently pressed.
+    /// </summary>
+    API_PROPERTY() bool IsAnyButtonDown() const;
+
+    /// <summary>
     /// Gets the gamepad button up state (true if was released during the current frame).
     /// </summary>
     /// <param name="button">Gamepad button to check</param>
@@ -179,7 +180,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Sets the state of the gamepad vibration. Ignored if controller does not support this.
     /// </summary>
@@ -204,7 +204,6 @@ public:
     }
 
 public:
-
     // [InputDevice]
     void ResetState() override;
     bool Update(EventQueue& queue) final override;

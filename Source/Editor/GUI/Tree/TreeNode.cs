@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEngine;
@@ -37,7 +37,7 @@ namespace FlaxEditor.GUI.Tree
         private bool _textChanged;
         private bool _isMouseDown;
         private float _mouseDownTime;
-        private Vector2 _mouseDownPos;
+        private Float2 _mouseDownPos;
         private Color _cachedTextColor;
 
         private DragItemPositioning _dragOverMode;
@@ -148,7 +148,6 @@ namespace FlaxEditor.GUI.Tree
                     else if (Parent is Tree tree)
                         _tree = tree;
                 }
-
                 return _tree;
             }
         }
@@ -218,7 +217,7 @@ namespace FlaxEditor.GUI.Tree
         /// <summary>
         /// Gets the arrow rectangle.
         /// </summary>
-        public Rectangle ArrowRect => new Rectangle(_xOffset + 2 + _margin.Left, 2, 12, 12);
+        public Rectangle ArrowRect => CustomArrowRect.HasValue ? CustomArrowRect.Value : new Rectangle(_xOffset + 2 + _margin.Left, 2, 12, 12);
 
         /// <summary>
         /// Gets the header rectangle.
@@ -250,6 +249,12 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <summary>
+        /// Custom arrow rectangle within node.
+        /// </summary>
+        [HideInEditor, NoSerialize]
+        public Rectangle? CustomArrowRect;
+
+        /// <summary>
         /// Gets the drag over action type.
         /// </summary>
         public DragItemPositioning DragOverMode => _dragOverMode;
@@ -278,7 +283,7 @@ namespace FlaxEditor.GUI.Tree
         /// Initializes a new instance of the <see cref="TreeNode"/> class.
         /// </summary>
         public TreeNode()
-        : this(false)
+        : this(false, SpriteHandle.Invalid, SpriteHandle.Invalid)
         {
         }
 
@@ -325,23 +330,18 @@ namespace FlaxEditor.GUI.Tree
             ExpandAllParents(noAnimation);
 
             // Change state
+            if (_opened && _animationProgress >= 1.0f)
+                return;
             bool prevState = _opened;
             _opened = true;
-            if (prevState != _opened)
-                _animationProgress = 1.0f - _animationProgress;
-
             if (noAnimation)
-            {
-                // Speed up an animation
                 _animationProgress = 1.0f;
-            }
+            else if (prevState != _opened)
+                _animationProgress = 1.0f - _animationProgress;
 
             // Update
             OnExpandedChanged();
-            if (HasParent)
-                Parent.PerformLayout();
-            else
-                PerformLayout();
+            OnExpandAnimationChanged();
         }
 
         /// <summary>
@@ -351,23 +351,18 @@ namespace FlaxEditor.GUI.Tree
         public void Collapse(bool noAnimation = false)
         {
             // Change state
+            if (!_opened && _animationProgress >= 1.0f)
+                return;
             bool prevState = _opened;
             _opened = false;
-            if (prevState != _opened)
-                _animationProgress = 1.0f - _animationProgress;
-
             if (noAnimation)
-            {
-                // Speed up an animation
                 _animationProgress = 1.0f;
-            }
+            else if (prevState != _opened)
+                _animationProgress = 1.0f - _animationProgress;
 
             // Update
             OnExpandedChanged();
-            if (HasParent)
-                Parent.PerformLayout();
-            else
-                PerformLayout();
+            OnExpandAnimationChanged();
         }
 
         /// <summary>
@@ -433,7 +428,7 @@ namespace FlaxEditor.GUI.Tree
             if (_animationProgress < 1.0f)
             {
                 _animationProgress = 1.0f;
-                PerformLayout();
+                OnExpandAnimationChanged();
             }
         }
 
@@ -495,13 +490,16 @@ namespace FlaxEditor.GUI.Tree
         /// <param name="location">The mouse location.</param>
         /// <param name="button">The button.</param>
         /// <returns>True if event has been handled.</returns>
-        protected virtual bool OnMouseDoubleClickHeader(ref Vector2 location, MouseButton button)
+        protected virtual bool OnMouseDoubleClickHeader(ref Float2 location, MouseButton button)
         {
-            // Toggle open state
-            if (_opened)
-                Collapse();
-            else
-                Expand();
+            if (HasAnyVisibleChild)
+            {
+                // Toggle open state
+                if (_opened)
+                    Collapse();
+                else
+                    Expand();
+            }
 
             // Handled
             return true;
@@ -522,11 +520,24 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <summary>
+        /// Called when expand/collapse animation progress changes.
+        /// </summary>
+        protected virtual void OnExpandAnimationChanged()
+        {
+            if (ParentTree != null)
+                ParentTree.PerformLayout();
+            else if (Parent != null)
+                Parent.PerformLayout();
+            else
+                PerformLayout();
+        }
+
+        /// <summary>
         /// Tests the header hit.
         /// </summary>
         /// <param name="location">The location.</param>
         /// <returns>True if hits it.</returns>
-        protected virtual bool TestHeaderHit(ref Vector2 location)
+        protected virtual bool TestHeaderHit(ref Float2 location)
         {
             return _headerRect.Contains(ref location);
         }
@@ -535,7 +546,7 @@ namespace FlaxEditor.GUI.Tree
         /// Updates the drag over mode based on the given mouse location.
         /// </summary>
         /// <param name="location">The location.</param>
-        private void UpdateDrawPositioning(ref Vector2 location)
+        private void UpdateDrawPositioning(ref Float2 location)
         {
             if (new Rectangle(_headerRect.X, _headerRect.Y - DefaultDragInsertPositionMargin - DefaultNodeOffsetY, _headerRect.Width, DefaultDragInsertPositionMargin * 2.0f).Contains(location))
                 _dragOverMode = DragItemPositioning.Above;
@@ -595,7 +606,7 @@ namespace FlaxEditor.GUI.Tree
                 }
 
                 // Arrange controls
-                PerformLayout();
+                OnExpandAnimationChanged();
             }
 
             // Check for long press
@@ -609,12 +620,6 @@ namespace FlaxEditor.GUI.Tree
             if (_opened)
             {
                 base.Update(deltaTime);
-            }
-            else
-            {
-                // Manually update tooltip
-                if (TooltipText != null && IsMouseOver)
-                    Tooltip.OnMouseOverControl(this, deltaTime);
             }
         }
 
@@ -654,20 +659,23 @@ namespace FlaxEditor.GUI.Tree
             Render2D.DrawText(TextFont.GetFont(), _text, textRect, _cachedTextColor, TextAlignment.Near, TextAlignment.Center);
 
             // Draw drag and drop effect
-            if (IsDragOver)
+            if (IsDragOver && _tree.DraggedOverNode == this)
             {
-                Color dragOverColor = style.BackgroundSelected * 0.6f;
+                Color dragOverColor = style.BackgroundSelected;
                 Rectangle rect;
                 switch (_dragOverMode)
                 {
                 case DragItemPositioning.At:
+                    dragOverColor *= 0.6f;
                     rect = textRect;
                     break;
                 case DragItemPositioning.Above:
-                    rect = new Rectangle(textRect.X, textRect.Y - DefaultDragInsertPositionMargin - DefaultNodeOffsetY, textRect.Width, DefaultDragInsertPositionMargin * 2.0f);
+                    dragOverColor *= 1.2f;
+                    rect = new Rectangle(textRect.X, textRect.Top - DefaultDragInsertPositionMargin - DefaultNodeOffsetY - _margin.Top, textRect.Width, DefaultDragInsertPositionMargin * 2.0f);
                     break;
                 case DragItemPositioning.Below:
-                    rect = new Rectangle(textRect.X, textRect.Bottom - DefaultDragInsertPositionMargin, textRect.Width, DefaultDragInsertPositionMargin * 2.0f);
+                    dragOverColor *= 1.2f;
+                    rect = new Rectangle(textRect.X, textRect.Bottom + _margin.Bottom - DefaultDragInsertPositionMargin, textRect.Width, DefaultDragInsertPositionMargin * 2.0f);
                     break;
                 default:
                     rect = Rectangle.Empty;
@@ -693,8 +701,10 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
+            UpdateMouseOverFlags(location);
+
             // Check if mouse hits bar and node isn't a root
             if (_mouseOverHeader)
             {
@@ -721,8 +731,10 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
+            UpdateMouseOverFlags(location);
+
             // Clear flag for left button
             if (button == MouseButton.Left)
             {
@@ -750,6 +762,10 @@ namespace FlaxEditor.GUI.Tree
                         // Add/Remove
                         tree.AddOrRemoveSelection(this);
                     }
+                    else if (button == MouseButton.Right && tree.Selection.Contains(this))
+                    {
+                        // Do nothing
+                    }
                     else
                     {
                         // Select
@@ -758,13 +774,22 @@ namespace FlaxEditor.GUI.Tree
                 }
 
                 // Check if mouse hits arrow
-                if (HasAnyVisibleChild && _mouseOverArrow)
+                if (_mouseOverArrow && HasAnyVisibleChild)
                 {
-                    // Toggle open state
-                    if (_opened)
-                        Collapse();
+                    if (ParentTree.Root.GetKey(KeyboardKeys.Alt))
+                    {
+                        if (_opened)
+                            CollapseAll();
+                        else
+                            ExpandAll();
+                    }
                     else
-                        Expand();
+                    {
+                        if (_opened)
+                            Collapse();
+                        else
+                            Expand();
+                    }
                 }
 
                 // Check if mouse hits bar
@@ -789,7 +814,7 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             // Check if mouse hits bar
             if (TestHeaderHit(ref location))
@@ -808,26 +833,12 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
-            // Cache flags
-            _mouseOverArrow = HasAnyVisibleChild && ArrowRect.Contains(location);
-            _mouseOverHeader = new Rectangle(0, 0, Width, _headerHeight - 1).Contains(location);
-            if (_mouseOverHeader)
-            {
-                // Allow non-scrollable controls to stay on top of the header and override the mouse behaviour
-                for (int i = 0; i < Children.Count; i++)
-                {
-                    if (!Children[i].IsScrollable && IntersectsChildContent(Children[i], location, out _))
-                    {
-                        _mouseOverHeader = false;
-                        break;
-                    }
-                }
-            }
+            UpdateMouseOverFlags(location);
 
             // Check if start drag and drop
-            if (_isMouseDown && Vector2.Distance(_mouseDownPos, location) > 10.0f)
+            if (_isMouseDown && Float2.Distance(_mouseDownPos, location) > 10.0f)
             {
                 // Clear flag
                 _isMouseDown = false;
@@ -844,6 +855,25 @@ namespace FlaxEditor.GUI.Tree
                 // Base
                 if (_opened)
                     base.OnMouseMove(location);
+            }
+        }
+
+        private void UpdateMouseOverFlags(Vector2 location)
+        {
+            // Cache flags
+            _mouseOverArrow = HasAnyVisibleChild && ArrowRect.Contains(location);
+            _mouseOverHeader = new Rectangle(0, 0, Width, _headerHeight - 1).Contains(location);
+            if (_mouseOverHeader)
+            {
+                // Allow non-scrollable controls to stay on top of the header and override the mouse behaviour
+                for (int i = 0; i < Children.Count; i++)
+                {
+                    if (!Children[i].IsScrollable && IntersectsChildContent(Children[i], location, out _))
+                    {
+                        _mouseOverHeader = false;
+                        break;
+                    }
+                }
             }
         }
 
@@ -889,21 +919,17 @@ namespace FlaxEditor.GUI.Tree
         /// <inheritdoc />
         public override void OnChildResized(Control control)
         {
+            // Optimize if child is tree node that is not visible
+            if (!_opened && control is TreeNode)
+                return;
+
             PerformLayout();
-            ParentTree.UpdateSize();
+
             base.OnChildResized(control);
         }
 
         /// <inheritdoc />
-        public override void OnParentResized()
-        {
-            base.OnParentResized();
-
-            Width = Parent.Width;
-        }
-
-        /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             var result = base.OnDragEnter(ref location, data);
 
@@ -912,6 +938,8 @@ namespace FlaxEditor.GUI.Tree
             if (result == DragDropEffect.None)
             {
                 UpdateDrawPositioning(ref location);
+                if (ParentTree != null)
+                    ParentTree.DraggedOverNode = this;
 
                 // Check if mouse is over header
                 _isDragOverHeader = TestHeaderHit(ref location);
@@ -935,7 +963,7 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             var result = base.OnDragMove(ref location, data);
 
@@ -970,7 +998,7 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
 
@@ -989,6 +1017,8 @@ namespace FlaxEditor.GUI.Tree
             // Clear cache
             _isDragOverHeader = false;
             _dragOverMode = DragItemPositioning.None;
+            if (ParentTree != null)
+                ParentTree.DraggedOverNode = null;
 
             return result;
         }
@@ -1008,6 +1038,21 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
+        public override bool OnTestTooltipOverControl(ref Float2 location)
+        {
+            return TestHeaderHit(ref location) && ShowTooltip;
+        }
+
+        /// <inheritdoc />
+        public override bool OnShowTooltip(out string text, out Float2 location, out Rectangle area)
+        {
+            text = TooltipText;
+            location = _headerRect.Size * new Float2(0.5f, 1.0f);
+            area = new Rectangle(Float2.Zero, _headerRect.Size);
+            return ShowTooltip;
+        }
+
+        /// <inheritdoc />
         protected override void OnSizeChanged()
         {
             base.OnSizeChanged();
@@ -1018,65 +1063,97 @@ namespace FlaxEditor.GUI.Tree
         /// <inheritdoc />
         public override void PerformLayout(bool force = false)
         {
-            // Check if update is locked
-            if (IsLayoutLocked && !force)
+            if (_isLayoutLocked && !force)
                 return;
 
-            // Update the nodes nesting level before the actual positioning
-            float xOffset = _xOffset + ChildrenIndent;
-            for (int i = 0; i < _children.Count; i++)
+            bool wasLocked = _isLayoutLocked;
+            if (!wasLocked)
+                LockChildrenRecursive();
+
+            // Auto-size tree nodes to match the parent size
+            var parent = Parent;
+            var width = parent is TreeNode ? parent.Width : Width;
+
+            // Optimize layout logic if node is collapsed
+            if (_opened || _animationProgress < 1.0f)
             {
-                if (_children[i] is TreeNode node && node.Visible)
-                    node._xOffset = xOffset;
+                Width = width;
+                PerformLayoutBeforeChildren();
+                for (int i = 0; i < _children.Count; i++)
+                    _children[i].PerformLayout(true);
+                PerformLayoutAfterChildren();
+            }
+            else
+            {
+                // TODO: perform layout for any non-TreeNode controls
+                _cachedHeight = _headerHeight;
+                _cachedTextColor = CacheTextColor();
+                Size = new Float2(width, _headerHeight);
             }
 
-            base.PerformLayout(force);
+            if (!wasLocked)
+                UnlockChildrenRecursive();
+        }
+
+        /// <inheritdoc />
+        protected override void PerformLayoutBeforeChildren()
+        {
+            if (_opened)
+            {
+                // Update the nodes nesting level before the actual positioning
+                float xOffset = _xOffset + ChildrenIndent;
+                for (int i = 0; i < _children.Count; i++)
+                {
+                    if (_children[i] is TreeNode node)
+                        node._xOffset = xOffset;
+                }
+            }
+
+            base.PerformLayoutBeforeChildren();
         }
 
         /// <inheritdoc />
         protected override void PerformLayoutAfterChildren()
         {
-            _cachedTextColor = CacheTextColor();
-
-            // Prepare
             float y = _headerHeight;
             float height = _headerHeight;
             float xOffset = _xOffset + ChildrenIndent;
-            y -= _cachedHeight * (_opened ? 1.0f - _animationProgress : _animationProgress);
 
-            // Arrange children
-            for (int i = 0; i < _children.Count; i++)
+            // Skip full layout if it's fully collapsed
+            if (_opened || _animationProgress < 1.0f)
             {
-                if (_children[i] is TreeNode node && node.Visible)
+                y -= _cachedHeight * (_opened ? 1.0f - _animationProgress : _animationProgress);
+                for (int i = 0; i < _children.Count; i++)
                 {
-                    node._xOffset = xOffset;
-                    node.Location = new Vector2(0, y);
-                    float nodeHeight = node.Height + DefaultNodeOffsetY;
-                    y += nodeHeight;
-                    height += nodeHeight;
+                    if (_children[i] is TreeNode node && node.Visible)
+                    {
+                        node._xOffset = xOffset;
+                        node.Location = new Float2(0, y);
+                        float nodeHeight = node.Height + DefaultNodeOffsetY;
+                        y += nodeHeight;
+                        height += nodeHeight;
+                    }
                 }
             }
 
-            // Cache calculated height
             _cachedHeight = height;
-
-            // Force to be closed
-            if (_animationProgress >= 1.0f && !_opened)
-            {
-                y = _headerHeight;
-            }
-
-            // Set height
+            _cachedTextColor = CacheTextColor();
             Height = Mathf.Max(_headerHeight, y);
+        }
+
+        /// <inheritdoc />
+        protected override bool CanNavigateChild(Control child)
+        {
+            // Closed tree node skips navigation for hidden children
+            if (IsCollapsed && child is TreeNode)
+                return false;
+            return base.CanNavigateChild(child);
         }
 
         /// <inheritdoc />
         protected override void OnParentChangedInternal()
         {
-            // Clear cached tree
             _tree = null;
-            if (Parent != null)
-                Width = Parent.Width;
 
             base.OnParentChangedInternal();
         }

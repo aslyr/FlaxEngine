@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -56,6 +56,9 @@ namespace FlaxEditor.Content.GUI
 
         private float _viewScale = 1.0f;
         private ContentViewType _viewType = ContentViewType.Tiles;
+        private bool _isRubberBandSpanning = false;
+        private Float2 _mousePresslocation;
+        private Rectangle _rubberBandRectangle;
 
         #region External Events
 
@@ -220,8 +223,9 @@ namespace FlaxEditor.Content.GUI
             // Remove references and unlink items
             for (int i = 0; i < _items.Count; i++)
             {
-                _items[i].Parent = null;
-                _items[i].RemoveReference(this);
+                var item = _items[i];
+                item.Parent = null;
+                item.RemoveReference(this);
             }
             _items.Clear();
 
@@ -235,8 +239,9 @@ namespace FlaxEditor.Content.GUI
         /// </summary>
         /// <param name="items">The items to show.</param>
         /// <param name="sortType">The sort method for items.</param>
-        /// <param name="additive">If set to <c>true</c> items will be added to the current selection. Otherwise selection will be cleared before.</param>
-        public void ShowItems(List<ContentItem> items, SortType sortType, bool additive = false)
+        /// <param name="additive">If set to <c>true</c> items will be added to the current list. Otherwise items list will be cleared before.</param>
+        /// <param name="keepSelection">If set to <c>true</c> selected items list will be preserved. Otherwise selection will be cleared before.</param>
+        public void ShowItems(List<ContentItem> items, SortType sortType, bool additive = false, bool keepSelection = false)
         {
             if (items == null)
                 throw new ArgumentNullException();
@@ -253,22 +258,34 @@ namespace FlaxEditor.Content.GUI
             // Lock layout
             var wasLayoutLocked = IsLayoutLocked;
             IsLayoutLocked = true;
+            var selection = !additive && keepSelection ? _selection.ToArray() : null;
 
             // Deselect items if need to
             if (!additive)
                 ClearItems();
 
             // Add references and link items
-            _items.AddRange(items);
             for (int i = 0; i < items.Count; i++)
             {
-                items[i].Parent = this;
-                items[i].AddReference(this);
+                var item = items[i];
+                if (item.Visible && !_items.Contains(item))
+                {
+                    item.Parent = this;
+                    item.AddReference(this);
+                    _items.Add(item);
+                }
+            }
+            if (selection != null)
+            {
+                _selection.Clear();
+                _selection.AddRange(selection);
             }
 
             // Sort items depending on sortMethod parameter
             _children.Sort(((control, control1) =>
                                {
+                                   if (control == null || control1 == null)
+                                       return 0;
                                    if (sortType == SortType.AlphabeticReverse)
                                    {
                                        if (control.CompareTo(control1) > 0)
@@ -506,12 +523,12 @@ namespace FlaxEditor.Content.GUI
                     Select(item, true);
             }
             // Range select
-            else if (Root.GetKey(KeyboardKeys.Shift))
+            else if (_selection.Count != 0 && Root.GetKey(KeyboardKeys.Shift))
             {
                 int min = _selection.Min(x => x.IndexInParent);
                 int max = _selection.Max(x => x.IndexInParent);
-                min = Mathf.Min(min, item.IndexInParent);
-                max = Mathf.Max(max, item.IndexInParent);
+                min = Mathf.Max(Mathf.Min(min, item.IndexInParent), 0);
+                max = Mathf.Min(Mathf.Max(max, item.IndexInParent), _children.Count - 1);
                 var selection = new List<ContentItem>(_selection);
                 for (int i = min; i <= max; i++)
                 {
@@ -527,15 +544,6 @@ namespace FlaxEditor.Content.GUI
             {
                 Select(item);
             }
-        }
-
-        /// <summary>
-        /// Called when user wants to rename item.
-        /// </summary>
-        /// <param name="item">The item.</param>
-        public void OnItemDoubleClickName(ContentItem item)
-        {
-            OnRename?.Invoke(item);
         }
 
         /// <summary>
@@ -587,18 +595,77 @@ namespace FlaxEditor.Content.GUI
             // Check if drag is over
             if (IsDragOver && _validDragOver)
             {
-                Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), style.BackgroundSelected * 0.4f);
+                Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), style.BackgroundSelected * 0.4f);
             }
 
             // Check if it's an empty thing
             if (_items.Count == 0)
             {
-                Render2D.DrawText(style.FontSmall, IsSearching ? "No results" : "Empty", new Rectangle(Vector2.Zero, Size), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
+                Render2D.DrawText(style.FontSmall, IsSearching ? "No results" : "Empty", new Rectangle(Float2.Zero, Size), style.ForegroundDisabled, TextAlignment.Center, TextAlignment.Center);
+            }
+
+            if (_isRubberBandSpanning)
+            {
+                Render2D.FillRectangle(_rubberBandRectangle, Color.Orange * 0.4f);
+                Render2D.DrawRectangle(_rubberBandRectangle, Color.Orange);
             }
         }
 
         /// <inheritdoc />
-        public override bool OnMouseWheel(Vector2 location, float delta)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
+        {
+            if (base.OnMouseDown(location, button))
+                return true;
+
+            if (button == MouseButton.Left)
+            {
+                _mousePresslocation = location;
+                _rubberBandRectangle = new Rectangle(_mousePresslocation, 0, 0);
+                _isRubberBandSpanning = true;
+                StartMouseCapture();
+            }
+            return AutoFocus && Focus(this);
+        }
+
+        /// <inheritdoc />
+        public override void OnMouseMove(Float2 location)
+        {
+            if (_isRubberBandSpanning)
+            {
+                _rubberBandRectangle.Width = location.X - _mousePresslocation.X;
+                _rubberBandRectangle.Height = location.Y - _mousePresslocation.Y;
+            }
+
+            base.OnMouseMove(location);
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseUp(Float2 location, MouseButton button)
+        {
+            if (_isRubberBandSpanning)
+            {
+                _isRubberBandSpanning = false;
+                EndMouseCapture();
+                if (_rubberBandRectangle.Width < 0 || _rubberBandRectangle.Height < 0)
+                {
+                    // make sure we have a well-formed rectangle i.e. size is positive and X/Y is upper left corner
+                    var size = _rubberBandRectangle.Size;
+                    _rubberBandRectangle.X = Mathf.Min(_rubberBandRectangle.X, _rubberBandRectangle.X + _rubberBandRectangle.Width);
+                    _rubberBandRectangle.Y = Mathf.Min(_rubberBandRectangle.Y, _rubberBandRectangle.Y + _rubberBandRectangle.Height);
+                    size.X = Mathf.Abs(size.X);
+                    size.Y = Mathf.Abs(size.Y);
+                    _rubberBandRectangle.Size = size;
+                }
+                var itemsInRectangle = _items.Where(t => _rubberBandRectangle.Intersects(t.Bounds)).ToList();
+                Select(itemsInRectangle, Input.GetKey(KeyboardKeys.Shift) || Input.GetKey(KeyboardKeys.Control));
+                return true;
+            }
+
+            return base.OnMouseUp(location, button);
+        }
+
+        /// <inheritdoc />
+        public override bool OnMouseWheel(Float2 location, float delta)
         {
             // Check if pressing control key
             if (Root.GetKey(KeyboardKeys.Control))
@@ -632,7 +699,7 @@ namespace FlaxEditor.Content.GUI
                 // Open
                 if (key == KeyboardKeys.Return && _selection.Count != 0)
                 {
-                    foreach (var e in _selection)
+                    foreach (var e in _selection.ToArray())
                         OnOpen?.Invoke(e);
                     return true;
                 }
@@ -640,26 +707,26 @@ namespace FlaxEditor.Content.GUI
                 // Movement with arrows
                 {
                     var root = _selection[0];
-                    Vector2 size = root.Size;
-                    Vector2 offset = Vector2.Minimum;
+                    var size = root.Size;
+                    var offset = Float2.Minimum;
                     ContentItem item = null;
                     if (key == KeyboardKeys.ArrowUp)
                     {
-                        offset = new Vector2(0, -size.Y);
+                        offset = new Float2(0, -size.Y);
                     }
                     else if (key == KeyboardKeys.ArrowDown)
                     {
-                        offset = new Vector2(0, size.Y);
+                        offset = new Float2(0, size.Y);
                     }
                     else if (key == KeyboardKeys.ArrowRight)
                     {
-                        offset = new Vector2(size.X, 0);
+                        offset = new Float2(size.X, 0);
                     }
                     else if (key == KeyboardKeys.ArrowLeft)
                     {
-                        offset = new Vector2(-size.X, 0);
+                        offset = new Float2(-size.X, 0);
                     }
-                    if (offset != Vector2.Minimum)
+                    if (offset != Float2.Minimum)
                     {
                         item = GetChildAt(root.Location + size / 2 + offset) as ContentItem;
                     }
@@ -675,10 +742,37 @@ namespace FlaxEditor.Content.GUI
         }
 
         /// <inheritdoc />
+        public override bool OnCharInput(char c)
+        {
+            if (base.OnCharInput(c))
+                return true;
+
+            if (char.IsLetterOrDigit(c) && _items.Count != 0)
+            {
+                // Jump to the item starting with this character
+                c = char.ToLowerInvariant(c);
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var item = _items[i];
+                    var name = item.ShortName;
+                    if (!string.IsNullOrEmpty(name) && char.ToLowerInvariant(name[0]) == c)
+                    {
+                        Select(item);
+                        if (Parent is Panel panel)
+                            panel.ScrollViewTo(item, true);
+                        break;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <inheritdoc />
         protected override void PerformLayoutBeforeChildren()
         {
             float width = GetClientArea().Width;
-            float x = 0, y = 0;
+            float x = 0, y = 1;
             float viewScale = _viewScale * 0.97f;
 
             switch (ViewType)
@@ -686,19 +780,25 @@ namespace FlaxEditor.Content.GUI
             case ContentViewType.Tiles:
             {
                 float defaultItemsWidth = ContentItem.DefaultWidth * viewScale;
-                int itemsToFit = Mathf.FloorToInt(width / defaultItemsWidth);
-                float itemsWidth = width / Mathf.Max(itemsToFit, 1);
+                int itemsToFit = Mathf.FloorToInt(width / defaultItemsWidth) - 1;
+                if (itemsToFit < 1)
+                    itemsToFit = 1;
+                int xSpace = 4;
+                float itemsWidth = width / Mathf.Max(itemsToFit, 1) - xSpace;
                 float itemsHeight = itemsWidth / defaultItemsWidth * (ContentItem.DefaultHeight * viewScale);
+                var flooredItemsWidth = Mathf.Floor(itemsWidth);
+                var flooredItemsHeight = Mathf.Floor(itemsHeight);
+                x = itemsToFit == 1 ? 1 : itemsWidth / itemsToFit + xSpace;
                 for (int i = 0; i < _children.Count; i++)
                 {
                     var c = _children[i];
-                    c.Bounds = new Rectangle(x, y, itemsWidth, itemsHeight);
+                    c.Bounds = new Rectangle(Mathf.Floor(x), Mathf.Floor(y), flooredItemsWidth, flooredItemsHeight);
 
-                    x += itemsWidth;
+                    x += (itemsWidth + xSpace) + (itemsWidth + xSpace) / itemsToFit;
                     if (x + itemsWidth > width)
                     {
-                        x = 0;
-                        y += itemsHeight + 1;
+                        x = itemsToFit == 1 ? 1 : itemsWidth / itemsToFit + xSpace;
+                        y += itemsHeight + 7;
                     }
                 }
                 if (x > 0)

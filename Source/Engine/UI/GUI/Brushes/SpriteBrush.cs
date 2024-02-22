@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -37,7 +37,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public Vector2 Size => Sprite.IsValid ? Sprite.Size : Vector2.Zero;
+        public Float2 Size => Sprite.IsValid ? Sprite.Size : Float2.Zero;
 
         /// <inheritdoc />
         public void Draw(Rectangle rect, Color color)
@@ -95,14 +95,14 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public Vector2 Size => Sprite.IsValid ? Sprite.Size : Vector2.Zero;
+        public Float2 Size => Sprite.IsValid ? Sprite.Size : Float2.Zero;
 
         /// <inheritdoc />
         public unsafe void Draw(Rectangle rect, Color color)
         {
             var border = Border;
-            var borderUV = *(Vector4*)&border;
-            var borderSize = borderUV * new Vector4(BorderSize, BorderSize, BorderSize, BorderSize);
+            var borderUV = *(Float4*)&border;
+            var borderSize = borderUV * new Float4(BorderSize, BorderSize, BorderSize, BorderSize);
             if (Filter == BrushFilter.Point)
                 Render2D.Draw9SlicingSpritePoint(Sprite, rect, borderSize, borderUV, color);
             else

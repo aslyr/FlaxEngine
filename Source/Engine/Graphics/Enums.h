@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -70,6 +70,11 @@ API_ENUM() enum class RendererType
     /// </summary>
     PS4 = 11,
 
+    /// <summary>
+    /// PlayStation 5
+    /// </summary>
+    PS5 = 12,
+
     API_ENUM(Attributes="HideInEditor")
     MAX
 };
@@ -120,6 +125,11 @@ API_ENUM() enum class ShaderProfile
     /// DirectX (Shader Model 6 compatible)
     /// </summary>
     DirectX_SM6 = 7,
+
+    /// <summary>
+    /// PlayStation 5
+    /// </summary>
+    PS5 = 8,
 
     API_ENUM(Attributes="HideInEditor")
     MAX
@@ -225,6 +235,27 @@ API_ENUM(Attributes="Flags") enum class ShadowsCastingMode
 };
 
 DECLARE_ENUM_OPERATORS(ShadowsCastingMode);
+
+/// <summary>
+/// The partitioning mode for shadow cascades.
+/// </summary>
+API_ENUM() enum class PartitionMode
+{
+    /// <summary>
+    /// Internally defined cascade splits.
+    /// </summary>
+    Manual = 0,
+
+    /// <summary>
+    /// Logarithmic cascade splits.
+    /// </summary>
+    Logarithmic = 1,
+
+    /// <summary>
+    /// PSSM cascade splits.
+    /// </summary>
+    PSSM = 2,
+};
 
 /// <summary>
 /// Identifies expected GPU resource use during rendering. The usage directly reflects whether a resource is accessible by the CPU and/or the GPU.	
@@ -350,9 +381,9 @@ API_ENUM() enum class CullMode : byte
 /// <summary>
 /// Render target blending mode descriptor.
 /// </summary>
-API_STRUCT() struct BlendingMode
+API_STRUCT() struct FLAXENGINE_API BlendingMode
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(BlendingMode);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(BlendingMode);
 
     /// <summary>
     /// Blending mode.
@@ -421,6 +452,9 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(BlendingMode);
     /// </summary>
     API_ENUM() enum class ColorWrite
     {
+        // No color writing.
+        None = 0,
+
         // Allow data to be stored in the red component.
         Red = 1,
         // Allow data to be stored in the green component.
@@ -441,7 +475,6 @@ DECLARE_SCRIPTING_TYPE_MINIMAL(BlendingMode);
     };
 
 public:
-
     /// <summary>
     /// Render target blending mode descriptor.
     /// </summary>
@@ -488,11 +521,9 @@ public:
     API_FIELD() ColorWrite RenderTargetWriteMask;
 
 public:
-
     bool operator==(const BlendingMode& other) const;
 
 public:
-
     /// <summary>
     /// Gets the opaque rendering (default). No blending is being performed.
     /// </summary>
@@ -504,7 +535,7 @@ public:
     API_FIELD(ReadOnly) static BlendingMode Additive;
 
     /// <summary>
-    /// Gets the alpha blending.
+    /// Gets the alpha blending. Source alpha controls the output color (0 - use destination color, 1 - use source color).
     /// </summary>
     API_FIELD(ReadOnly) static BlendingMode AlphaBlend;
 
@@ -581,34 +612,39 @@ API_ENUM() enum class Quality : byte
 API_ENUM() enum class MaterialPostFxLocation : byte
 {
     /// <summary>
-    /// The after post processing pass using LDR input frame.
+    /// Render the material after the post processing pass using *LDR* input frame.
     /// </summary>
     AfterPostProcessingPass = 0,
 
     /// <summary>
-    /// The before post processing pass using HDR input frame.
+    /// Render the material before the post processing pass using *HDR* input frame.
     /// </summary>
     BeforePostProcessingPass = 1,
 
     /// <summary>
-    /// The before forward pass but after GBuffer with HDR input frame.
+    /// Render the material before the forward pass but after *GBuffer* with *HDR* input frame.
     /// </summary>
     BeforeForwardPass = 2,
 
     /// <summary>
-    /// The after custom post effects.
+    /// Render the material after custom post effects (scripted).
     /// </summary>
     AfterCustomPostEffects = 3,
 
     /// <summary>
-    /// The 'before' Reflections pass. After the Light pass. Can be used to implement a custom light types that accumulate lighting to the light buffer.
+    /// Render the material before the reflections pass but after the lighting pass using *HDR* input frame. It can be used to implement a custom light types that accumulate lighting to the light buffer.
     /// </summary>
     BeforeReflectionsPass = 4,
 
     /// <summary>
-    /// The 'after' AA filter pass. Rendering is done to the output backbuffer.
+    /// Render the material after anti-aliasing into the output backbuffer.
     /// </summary>
     AfterAntiAliasingPass = 5,
+
+    /// <summary>
+    /// Render the material after the forward pass but before any post processing.
+    /// </summary>
+    AfterForwardPass = 6,
 
     API_ENUM(Attributes="HideInEditor")
     MAX,
@@ -625,7 +661,7 @@ API_ENUM() enum class PostProcessEffectLocation
     Default = 0,
 
     /// <summary>
-    ///The 'before' in-build PostFx pass (bloom, color grading, etc.). After Forward Pass (transparency) and fog effects.
+    /// The 'before' in-build PostFx pass (bloom, color grading, etc.). After Forward Pass (transparency) and fog effects.
     /// </summary>
     BeforePostProcessingPass = 1,
 
@@ -648,6 +684,16 @@ API_ENUM() enum class PostProcessEffectLocation
     /// The custom frame up-scaling that replaces default implementation. Rendering is done to the output backbuffer (use OutputView and OutputViewport as render destination).
     /// </summary>
     CustomUpscale = 5,
+
+    /// <summary>
+    /// The 'after' GBuffer rendering pass. Can be used to render custom geometry into GBuffer. Output is light buffer, single-target only (no output).
+    /// </summary>
+    AfterGBufferPass = 6,
+
+    /// <summary>
+    /// The 'after' forward pass but before any post processing.
+    /// </summary>
+    AfterForwardPass = 7,
 
     API_ENUM(Attributes="HideInEditor")
     MAX,
@@ -690,16 +736,32 @@ API_ENUM(Attributes="Flags") enum class DrawPass : int32
     MotionVectors = 1 << 4,
 
     /// <summary>
+    /// The Global Sign Distance Field (SDF) rendering pass. Used for software raytracing though the scene on a GPU.
+    /// </summary>
+    GlobalSDF = 1 << 5,
+
+    /// <summary>
+    /// The Global Surface Atlas rendering pass. Used for software raytracing though the scene on a GPU to evaluate the object surface material properties.
+    /// </summary>
+    GlobalSurfaceAtlas = 1 << 6,
+
+    /// <summary>
+    /// The debug quad overdraw rendering (editor-only).
+    /// </summary>
+    API_ENUM(Attributes="HideInEditor")
+    QuadOverdraw = 1 << 20,
+
+    /// <summary>
     /// The default set of draw passes for the scene objects.
     /// </summary>
     API_ENUM(Attributes="HideInEditor")
-    Default = Depth | GBuffer | Forward | Distortion | MotionVectors,
+    Default = Depth | GBuffer | Forward | Distortion | MotionVectors | GlobalSDF | GlobalSurfaceAtlas,
 
     /// <summary>
     /// The all draw passes combined into a single mask.
     /// </summary>
     API_ENUM(Attributes="HideInEditor")
-    All = Depth | GBuffer | Forward | Distortion | MotionVectors,
+    All = Depth | GBuffer | Forward | Distortion | MotionVectors | GlobalSDF | GlobalSurfaceAtlas,
 };
 
 DECLARE_ENUM_OPERATORS(DrawPass);
@@ -813,12 +875,42 @@ API_ENUM() enum class ViewMode
     /// Draw physics colliders debug view
     /// </summary>
     PhysicsColliders = 20,
+
+    /// <summary>
+    /// Draw Level Of Detail number as colors to debug LOD switches.
+    /// </summary>
+    LODPreview = 21,
+
+    /// <summary>
+    /// Draw material shaders complexity to visualize performance of pixels rendering.
+    /// </summary>
+    MaterialComplexity = 22,
+
+    /// <summary>
+    /// Draw geometry overdraw to visualize performance of pixels rendering.
+    /// </summary>
+    QuadOverdraw = 23,
+
+    /// <summary>
+    /// Draw Global Sign Distant Field (SDF) preview.
+    /// </summary>
+    GlobalSDF = 24,
+
+    /// <summary>
+    /// Draw Global Surface Atlas preview.
+    /// </summary>
+    GlobalSurfaceAtlas = 25,
+
+    /// <summary>
+    /// Draw Global Illumination debug preview (eg. irradiance probes).
+    /// </summary>
+    GlobalIllumination = 26,
 };
 
 /// <summary>
 /// Frame rendering flags used to switch between graphics features.
 /// </summary>
-API_ENUM(Attributes="Flags") enum class ViewFlags : int64
+API_ENUM(Attributes="Flags") enum class ViewFlags : uint64
 {
     /// <summary>
     /// Nothing.
@@ -951,19 +1043,34 @@ API_ENUM(Attributes="Flags") enum class ViewFlags : int64
     ContactShadows = 1 << 24,
 
     /// <summary>
+    /// Shows/hides the Global Sign Distant Fields rendering.
+    /// </summary>
+    GlobalSDF = 1 << 25,
+
+    /// <summary>
+    /// Shows/hides the Sky/Skybox rendering.
+    /// </summary>
+    Sky = 1 << 26,
+
+    /// <summary>
+    /// Shows/hides light debug shapes.
+    /// </summary>
+    LightsDebug = 1 << 27,
+
+    /// <summary>
     /// Default flags for Game.
     /// </summary>
-    DefaultGame = Reflections | DepthOfField | Fog | Decals | MotionBlur | SSR | AO | GI | DirectionalLights | PointLights | SpotLights | SkyLights | Shadows | SpecularLight | AntiAliasing | CustomPostProcess | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | ContactShadows,
+    DefaultGame = Reflections | DepthOfField | Fog | Decals | MotionBlur | SSR | AO | GI | DirectionalLights | PointLights | SpotLights | SkyLights | Shadows | SpecularLight | AntiAliasing | CustomPostProcess | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | ContactShadows | GlobalSDF | Sky,
 
     /// <summary>
     /// Default flags for Editor.
     /// </summary>
-    DefaultEditor = Reflections | Fog | Decals | DebugDraw | SSR | AO | GI | DirectionalLights | PointLights | SpotLights | SkyLights | Shadows | SpecularLight | AntiAliasing | CustomPostProcess | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | EditorSprites | ContactShadows,
+    DefaultEditor = Reflections | Fog | Decals | DebugDraw | SSR | AO | GI | DirectionalLights | PointLights | SpotLights | SkyLights | Shadows | SpecularLight | AntiAliasing | CustomPostProcess | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | EditorSprites | ContactShadows | GlobalSDF | Sky,
 
     /// <summary>
     /// Default flags for materials/models previews generating.
     /// </summary>
-    DefaultAssetPreview = Reflections | Decals | GI | DirectionalLights | PointLights | SpotLights | SkyLights | SpecularLight | AntiAliasing | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | ContactShadows,
+    DefaultAssetPreview = Reflections | Decals | DirectionalLights | PointLights | SpotLights | SkyLights | SpecularLight | AntiAliasing | Bloom | ToneMapping | EyeAdaptation | CameraArtifacts | LensFlares | ContactShadows | Sky,
 };
 
 DECLARE_ENUM_OPERATORS(ViewFlags);
@@ -1021,3 +1128,26 @@ enum class ShaderFlags : uint32
 };
 
 DECLARE_ENUM_OPERATORS(ShaderFlags);
+
+/// <summary>
+/// The environment probes cubemap texture resolutions.
+/// </summary>
+API_ENUM() enum class ProbeCubemapResolution
+{
+    // Graphics Settings default option.
+    UseGraphicsSettings = 0,
+    // Cubemap with 32x32.
+    _32 = 32,
+    // Cubemap with 64x64.
+    _64 = 64,
+    // Cubemap with 128x128.
+    _128 = 128,
+    // Cubemap with 256x256.
+    _256 = 256,
+    // Cubemap with 512x512.
+    _512 = 512,
+    // Cubemap with 1024x1024.
+    _1024 = 1024,
+    // Cubemap with 2048x2048.
+    _2048 = 2048,
+};

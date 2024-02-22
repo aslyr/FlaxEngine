@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ProjectInfo.h"
 #include "Engine/Platform/FileSystem.h"
@@ -154,7 +154,8 @@ bool ProjectInfo::LoadProject(const String& projectPath)
             Version = ::Version(
                 JsonTools::GetInt(version, "Major", 0),
                 JsonTools::GetInt(version, "Minor", 0),
-                JsonTools::GetInt(version, "Build", 0));
+                JsonTools::GetInt(version, "Build", -1),
+                JsonTools::GetInt(version, "Revision", -1));
         }
     }
     if (Version.Revision() == 0)
@@ -188,7 +189,7 @@ bool ProjectInfo::LoadProject(const String& projectPath)
                 // Relative to project root
                 referencePath = ProjectFolderPath / reference.Name.Substring(15);
             }
-            else if (!FileSystem::IsRelative(reference.Name))
+            else if (FileSystem::IsRelative(reference.Name))
             {
                 // Relative to workspace
                 referencePath = Globals::StartupFolder / reference.Name;

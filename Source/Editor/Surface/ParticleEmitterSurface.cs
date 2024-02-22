@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -87,13 +87,13 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override bool CanUseNodeType(NodeArchetype nodeArchetype)
+        public override bool CanUseNodeType(GroupArchetype groupArchetype, NodeArchetype nodeArchetype)
         {
-            return (nodeArchetype.Flags & NodeFlags.ParticleEmitterGraph) != 0 && base.CanUseNodeType(nodeArchetype);
+            return (nodeArchetype.Flags & NodeFlags.ParticleEmitterGraph) != 0 && base.CanUseNodeType(groupArchetype, nodeArchetype);
         }
 
         /// <inheritdoc />
-        protected override NodeArchetype GetParameterGetterNodeArchetype(out ushort groupId)
+        protected internal override NodeArchetype GetParameterGetterNodeArchetype(out ushort groupId)
         {
             groupId = 6;
             return Archetypes.Parameters.Nodes[1];

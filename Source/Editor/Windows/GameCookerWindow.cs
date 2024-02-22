@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -28,13 +28,14 @@ namespace FlaxEditor.Windows
         /// <summary>
         /// Proxy object for the Build tab.
         /// </summary>
+        [HideInEditor]
         [CustomEditor(typeof(BuildTabProxy.Editor))]
         private class BuildTabProxy
         {
             public readonly GameCookerWindow GameCookerWin;
             public readonly PlatformSelector Selector;
 
-            private readonly Dictionary<PlatformType, Platform> PerPlatformOptions = new Dictionary<PlatformType, Platform>
+            internal readonly Dictionary<PlatformType, Platform> PerPlatformOptions = new Dictionary<PlatformType, Platform>
             {
                 { PlatformType.Windows, new Windows() },
                 { PlatformType.XboxOne, new XboxOne() },
@@ -44,6 +45,9 @@ namespace FlaxEditor.Windows
                 { PlatformType.XboxScarlett, new XboxScarlett() },
                 { PlatformType.Android, new Android() },
                 { PlatformType.Switch, new Switch() },
+                { PlatformType.PS5, new PS5() },
+                { PlatformType.Mac, new Mac() },
+                { PlatformType.iOS, new iOS() },
             };
 
             public BuildTabProxy(GameCookerWindow win, PlatformSelector platformSelector)
@@ -59,9 +63,13 @@ namespace FlaxEditor.Windows
                 PerPlatformOptions[PlatformType.XboxScarlett].Init("Output/XboxScarlett", "XboxScarlett");
                 PerPlatformOptions[PlatformType.Android].Init("Output/Android", "Android");
                 PerPlatformOptions[PlatformType.Switch].Init("Output/Switch", "Switch");
+                PerPlatformOptions[PlatformType.PS5].Init("Output/PS5", "PS5");
+                PerPlatformOptions[PlatformType.Mac].Init("Output/Mac", "Mac");
+                PerPlatformOptions[PlatformType.iOS].Init("Output/iOS", "iOS");
             }
 
-            abstract class Platform
+            [HideInEditor]
+            internal abstract class Platform
             {
                 [HideInEditor]
                 public bool IsSupported;
@@ -100,11 +108,35 @@ namespace FlaxEditor.Windows
 
                     // Check if can build on that platform
 #if PLATFORM_WINDOWS
-                    IsSupported = true;
+                    switch (BuildPlatform)
+                    {
+                    case BuildPlatform.MacOSx64:
+                    case BuildPlatform.MacOSARM64:
+                    case BuildPlatform.iOSARM64:
+                        IsSupported = false;
+                        break;
+                    default:
+                        IsSupported = true;
+                        break;
+                    }
 #elif PLATFORM_LINUX
                     switch (BuildPlatform)
                     {
                     case BuildPlatform.LinuxX64:
+                    case BuildPlatform.AndroidARM64:
+                        IsSupported = true;
+                        break;
+                    default:
+                        IsSupported = false;
+                        break;
+                    }
+#elif PLATFORM_MAC
+                    switch (BuildPlatform)
+                    {
+                    case BuildPlatform.MacOSx64:
+                    case BuildPlatform.MacOSARM64:
+                    case BuildPlatform.iOSARM64:
+                    case BuildPlatform.AndroidARM64:
                         IsSupported = true;
                         break;
                     default:
@@ -123,29 +155,42 @@ namespace FlaxEditor.Windows
 
                 public virtual void OnNotAvailableLayout(LayoutElementsContainer layout)
                 {
-                    layout.Label("Missing platform data tools for the target platform.", TextAlignment.Center);
+                    string text = "Missing platform data tools for the target platform.";
                     if (FlaxEditor.Editor.IsOfficialBuild())
                     {
                         switch (BuildPlatform)
                         {
+#if PLATFORM_WINDOWS
                         case BuildPlatform.Windows32:
                         case BuildPlatform.Windows64:
                         case BuildPlatform.UWPx86:
                         case BuildPlatform.UWPx64:
                         case BuildPlatform.LinuxX64:
                         case BuildPlatform.AndroidARM64:
-                            layout.Label("Use Flax Launcher and download the required package.", TextAlignment.Center);
+                            text += "\nUse Flax Launcher and download the required package.";
                             break;
+#endif
                         default:
-                            layout.Label("Engine source is required to target this platform.", TextAlignment.Center);
+                            text += "\nEngine source is required to target this platform.";
                             break;
                         }
                     }
                     else
                     {
-                        var label = layout.Label("To target this platform separate engine source package is required.\nTo get access please contact via https://flaxengine.com/contact", TextAlignment.Center);
-                        label.Label.AutoHeight = true;
+                        text += "\nTo target this platform separate engine source package is required.";
+                        switch (BuildPlatform)
+                        {
+                        case BuildPlatform.XboxOne:
+                        case BuildPlatform.XboxScarlett:
+                        case BuildPlatform.PS4:
+                        case BuildPlatform.PS5:
+                        case BuildPlatform.Switch:
+                            text += "\nTo get access please contact via https://flaxengine.com/contact";
+                            break;
+                        }
                     }
+                    var label = layout.Label(text, TextAlignment.Center);
+                    label.Label.AutoHeight = true;
                 }
 
                 public virtual void Build()
@@ -195,6 +240,32 @@ namespace FlaxEditor.Windows
                 protected override BuildPlatform BuildPlatform => BuildPlatform.Switch;
             }
 
+            class PS5 : Platform
+            {
+                protected override BuildPlatform BuildPlatform => BuildPlatform.PS5;
+            }
+
+            class Mac : Platform
+            {
+                public enum Archs
+                {
+                    [EditorDisplay(null, "arm64")]
+                    ARM64,
+
+                    [EditorDisplay(null, "x64")]
+                    x64,
+                }
+
+                public Archs CPU = Archs.ARM64;
+
+                protected override BuildPlatform BuildPlatform => CPU == Archs.ARM64 ? BuildPlatform.MacOSARM64 : BuildPlatform.MacOSx64;
+            }
+
+            class iOS : Platform
+            {
+                protected override BuildPlatform BuildPlatform => BuildPlatform.iOSARM64;
+            }
+
             class Editor : CustomEditor
             {
                 private PlatformType _platform;
@@ -223,6 +294,7 @@ namespace FlaxEditor.Windows
                             break;
                         case PlatformType.UWP:
                             name = "Windows Store";
+                            layout.Label("UWP (Windows Store) platform has been deprecated and is no longer supported", TextAlignment.Center).Label.TextColor = Color.Red;
                             break;
                         case PlatformType.Linux:
                             name = "Linux";
@@ -239,8 +311,17 @@ namespace FlaxEditor.Windows
                         case PlatformType.Switch:
                             name = "Switch";
                             break;
+                        case PlatformType.PS5:
+                            name = "PlayStation 5";
+                            break;
+                        case PlatformType.Mac:
+                            name = "Mac";
+                            break;
+                        case PlatformType.iOS:
+                            name = "iOS";
+                            break;
                         default:
-                            name = CustomEditorsUtil.GetPropertyNameUI(_platform.ToString());
+                            name = Utilities.Utils.GetPropertyNameUI(_platform.ToString());
                             break;
                         }
                         var group = layout.Group(name);
@@ -347,8 +428,8 @@ namespace FlaxEditor.Windows
                 base.Draw();
 
                 var color = Style.Current.Background * 0.8f;
-                Render2D.DrawLine(new Vector2(Width, 0), new Vector2(Width, Height), color);
-                Render2D.DrawLine(new Vector2(0, 48), new Vector2(Width, 48), color);
+                Render2D.DrawLine(new Float2(Width, 0), new Float2(Width, Height), color);
+                Render2D.DrawLine(new Float2(0, 48), new Float2(Width, 48), color);
             }
         }
 
@@ -450,10 +531,12 @@ namespace FlaxEditor.Windows
         {
             public string PresetName;
             public BuildTarget Target;
+            public BuildOptions Options;
         }
 
         private PresetsColumn _presets;
         private TargetsColumn _targets;
+        private BuildTabProxy _buildTabProxy;
         private int _selectedPresetIndex = -1;
         private int _selectedTargetIndex = -1;
         private CustomEditorPresenter _targetSettings;
@@ -477,7 +560,7 @@ namespace FlaxEditor.Windows
                 Orientation = Orientation.Vertical,
                 AnchorPreset = AnchorPresets.StretchAll,
                 Offsets = Margin.Zero,
-                TabsSize = new Vector2(120, 32),
+                TabsSize = new Float2(120, 32),
                 Parent = this
             };
 
@@ -524,7 +607,13 @@ namespace FlaxEditor.Windows
             {
                 var tmpBat = StringUtils.CombinePaths(Globals.TemporaryFolder, Guid.NewGuid().ToString("N") + ".bat");
                 File.WriteAllText(tmpBat, command);
-                Platform.StartProcess(tmpBat, null, null, true, true);
+                var procSettings = new CreateProcessSettings
+                {
+                    FileName = tmpBat,
+                    HiddenWindow = true,
+                    WaitForEnd = true,
+                };
+                Platform.CreateProcess(ref procSettings);
                 File.Delete(tmpBat);
             }
             catch (Exception ex)
@@ -537,6 +626,18 @@ namespace FlaxEditor.Windows
         internal void ExitOnBuildQueueEnd()
         {
             _exitOnBuildEnd = true;
+        }
+
+        /// <summary>
+        /// Returns true if can build for the given platform (both supported and available).
+        /// </summary>
+        /// <param name="platformType">The platform.</param>
+        /// <returns>True if can build, otherwise false.</returns>
+        public bool CanBuild(PlatformType platformType)
+        {
+            if (_buildTabProxy.PerPlatformOptions.TryGetValue(platformType, out var platform))
+                return platform.IsAvailable && platform.IsSupported;
+            return false;
         }
 
         /// <summary>
@@ -575,6 +676,56 @@ namespace FlaxEditor.Windows
                 PresetName = preset.Name,
                 Target = target.DeepClone(),
             });
+        }
+
+        /// <summary>
+        /// Builds the target for this platform and runs it on this device.
+        /// </summary>
+        public void BuildAndRun()
+        {
+            Editor.Log("Building and running");
+            GameCooker.GetCurrentPlatform(out var platform, out var buildPlatform, out var buildConfiguration);
+            var numberOfClients = Editor.Options.Options.Interface.NumberOfGameClientsToLaunch;
+            for (int i = 0; i < numberOfClients; i++)
+            {
+                var buildOptions = BuildOptions.AutoRun;
+                if (i > 0)
+                    buildOptions |= BuildOptions.NoCook;
+
+                _buildingQueue.Enqueue(new QueueItem
+                {
+                    Target = new BuildTarget
+                    {
+                        Output = _buildTabProxy.PerPlatformOptions[platform].Output,
+                        Platform = buildPlatform,
+                        Mode = buildConfiguration,
+                    },
+                    Options = buildOptions,
+                });
+            }
+        }
+
+        /// <summary>
+        /// Runs the cooked game for this platform on this device.
+        /// </summary>
+        public void RunCooked()
+        {
+            Editor.Log("Running cooked build");
+            GameCooker.GetCurrentPlatform(out var platform, out var buildPlatform, out var buildConfiguration);
+            var numberOfClients = Editor.Options.Options.Interface.NumberOfGameClientsToLaunch;
+            for (int i = 0; i < numberOfClients; i++)
+            {
+                _buildingQueue.Enqueue(new QueueItem
+                {
+                    Target = new BuildTarget
+                    {
+                        Output = _buildTabProxy.PerPlatformOptions[platform].Output,
+                        Platform = buildPlatform,
+                        Mode = buildConfiguration,
+                    },
+                    Options = BuildOptions.AutoRun | BuildOptions.NoCook,
+                });
+            }
         }
 
         private void BuildTarget()
@@ -779,16 +930,24 @@ namespace FlaxEditor.Windows
                 BackgroundColor = Style.Current.LightBackground,
                 Parent = tab,
             };
+            platformSelector.SizeChanged += OnPlatformSelectorSizeChanged;
             var panel = new Panel(ScrollBars.Vertical)
             {
                 AnchorPreset = AnchorPresets.StretchAll,
                 Offsets = new Margin(0, 0, platformSelector.Offsets.Height, 0),
-                Parent = tab
+                Parent = tab,
             };
 
             var settings = new CustomEditorPresenter(null);
             settings.Panel.Parent = panel;
-            settings.Select(new BuildTabProxy(this, platformSelector));
+            _buildTabProxy = new BuildTabProxy(this, platformSelector);
+            settings.Select(_buildTabProxy);
+        }
+
+        private void OnPlatformSelectorSizeChanged(Control platformSelector)
+        {
+            var panel = platformSelector.Parent.Children[platformSelector.IndexInParent + 1];
+            panel.Offsets = new Margin(0, 0, platformSelector.Offsets.Height, 0);
         }
 
         /// <summary>
@@ -847,7 +1006,12 @@ namespace FlaxEditor.Windows
                     _preBuildAction = target.PreBuildAction;
                     _postBuildAction = target.PostBuildAction;
 
-                    GameCooker.Build(target.Platform, target.Mode, target.Output, BuildOptions.None, target.CustomDefines, item.PresetName, target.Name);
+                    bool failed = GameCooker.Build(target.Platform, target.Mode, target.Output, item.Options, target.CustomDefines, item.PresetName, target.Name);
+                    if (failed && _exitOnBuildEnd)
+                    {
+                        _exitOnBuildEnd = false;
+                        Engine.RequestExit(1);
+                    }
                 }
                 else if (_exitOnBuildEnd)
                 {
@@ -861,6 +1025,7 @@ namespace FlaxEditor.Windows
         public override void OnDestroy()
         {
             GameCooker.Event -= OnGameCookerEvent;
+            _buildTabProxy = null;
 
             base.OnDestroy();
         }

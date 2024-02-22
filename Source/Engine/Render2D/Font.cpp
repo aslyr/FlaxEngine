@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Font.h"
 #include "FontAsset.h"
@@ -7,7 +7,9 @@
 #include "Engine/Threading/Threading.h"
 #include "IncludeFreeType.h"
 
-Font::Font(FontAsset* parentAsset, int32 size)
+Array<AssetReference<FontAsset>, HeapAllocation> Font::FallbackFonts;
+
+Font::Font(FontAsset* parentAsset, float size)
     : ManagedScriptingObject(SpawnParams(Guid::New(), Font::TypeInitializer))
     , _asset(parentAsset)
     , _size(size)
@@ -32,7 +34,7 @@ Font::~Font()
         _asset->_fonts.Remove(this);
 }
 
-void Font::GetCharacter(Char c, FontCharacterEntry& result)
+void Font::GetCharacter(Char c, FontCharacterEntry& result, bool enableFallback)
 {
     // Try to get the character or cache it if cannot be found
     if (!_characters.TryGet(c, result))
@@ -44,8 +46,23 @@ void Font::GetCharacter(Char c, FontCharacterEntry& result)
         if (_characters.TryGet(c, result))
             return;
 
+        // Try to use fallback font if character is missing
+        if (enableFallback && !_asset->ContainsChar(c))
+        {
+            for (int32 fallbackIndex = 0; fallbackIndex < FallbackFonts.Count(); fallbackIndex++)
+            {
+                FontAsset* fallbackFont = FallbackFonts.Get()[fallbackIndex].Get();
+                if (fallbackFont && fallbackFont->ContainsChar(c))
+                {
+                    fallbackFont->CreateFont(GetSize())->GetCharacter(c, result, enableFallback);
+                    return;
+                }
+            }
+        }
+
         // Create character cache
         FontManager::AddNewEntry(this, c, result);
+        ASSERT(result.Font);
 
         // Add to the dictionary
         _characters.Add(c, result);
@@ -87,7 +104,7 @@ void Font::CacheText(const StringView& text)
     FontCharacterEntry entry;
     for (int32 i = 0; i < text.Length(); i++)
     {
-        GetCharacter(text[i], entry);
+        GetCharacter(text[i], entry, false);
     }
 }
 
@@ -104,22 +121,24 @@ void Font::Invalidate()
 
 void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines, const TextLayoutOptions& layout)
 {
+    int32 textLength = text.Length();
+    if (textLength == 0)
+        return;
     float cursorX = 0;
     int32 kerning;
     FontLineCache tmpLine;
     FontCharacterEntry entry;
     FontCharacterEntry previous;
-    int32 textLength = text.Length();
     float scale = layout.Scale / FontManager::FontScale;
     float boundsWidth = layout.Bounds.GetWidth();
     float baseLinesDistance = static_cast<float>(_height) * layout.BaseLinesGapScale * scale;
-    tmpLine.Location = Vector2::Zero;
-    tmpLine.Size = Vector2::Zero;
+    tmpLine.Location = Float2::Zero;
+    tmpLine.Size = Float2::Zero;
     tmpLine.FirstCharIndex = 0;
     tmpLine.LastCharIndex = -1;
 
-    int32 lastWhitespaceIndex = INVALID_INDEX;
-    float lastWhitespaceX = 0;
+    int32 lastWrapCharIndex = INVALID_INDEX;
+    float lastWrapCharX = 0;
     bool lastMoveLine = false;
 
     // Process each character to split text into single lines
@@ -131,14 +150,14 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
 
         // Cache current character
         const Char currentChar = text[currentIndex];
-
-        // Check if character is a whitespace
         const bool isWhitespace = StringUtils::IsWhitespace(currentChar);
-        if (isWhitespace)
+
+        // Check if character can wrap words
+        const bool isWrapChar = !StringUtils::IsAlnum(currentChar) || isWhitespace || StringUtils::IsUpper(currentChar);
+        if (isWrapChar && currentIndex != 0)
         {
-            // Cache line break point
-            lastWhitespaceIndex = currentIndex;
-            lastWhitespaceX = cursorX;
+            lastWrapCharIndex = currentIndex;
+            lastWrapCharX = cursorX;
         }
 
         // Check if it's a newline character
@@ -157,7 +176,7 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
             // Get kerning
             if (!isWhitespace && previous.IsValid)
             {
-                kerning = GetKerning(previous.Character, entry.Character);
+                kerning = entry.Font->GetKerning(previous.Character, entry.Character);
             }
             else
             {
@@ -175,23 +194,32 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
             }
             else if (layout.TextWrapping == TextWrapping::WrapWords)
             {
-                // Move line but back to the last after-whitespace character
-                moveLine = true;
-                if (lastWhitespaceIndex != INVALID_INDEX)
+                if (lastWrapCharIndex != INVALID_INDEX)
                 {
-                    // Back
-                    cursorX = lastWhitespaceX;
-                    tmpLine.LastCharIndex = lastWhitespaceIndex - 1;
-                    currentIndex = lastWhitespaceIndex + 1;
-                    nextCharIndex = currentIndex;
-                }
-                else
-                {
-                    nextCharIndex = currentIndex;
-
                     // Skip moving twice for the same character
-                    if (lastMoveLine)
-                        break;
+                    int32 lastLineLastCharIndex = outputLines.HasItems() ? outputLines.Last().LastCharIndex : -10000;
+                    if (lastLineLastCharIndex == lastWrapCharIndex || lastLineLastCharIndex == lastWrapCharIndex - 1 || lastLineLastCharIndex == lastWrapCharIndex - 2)
+                    {
+                        currentIndex = nextCharIndex;
+                        lastMoveLine = moveLine;
+                        continue;
+                    }
+
+                    // Move line
+                    const Char wrapChar = text[lastWrapCharIndex];
+                    moveLine = true;
+                    cursorX = lastWrapCharX;
+                    if (StringUtils::IsWhitespace(wrapChar))
+                    {
+                        // Skip whitespaces
+                        tmpLine.LastCharIndex = lastWrapCharIndex - 1;
+                        nextCharIndex = currentIndex = lastWrapCharIndex + 1;
+                    }
+                    else
+                    {
+                        tmpLine.LastCharIndex = lastWrapCharIndex - 1;
+                        nextCharIndex = currentIndex = lastWrapCharIndex;
+                    }
                 }
             }
             else if (layout.TextWrapping == TextWrapping::WrapChars)
@@ -220,10 +248,8 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
             tmpLine.FirstCharIndex = currentIndex;
             tmpLine.LastCharIndex = currentIndex - 1;
             cursorX = 0;
-
-            lastWhitespaceIndex = INVALID_INDEX;
-            lastWhitespaceX = 0;
-
+            lastWrapCharIndex = INVALID_INDEX;
+            lastWrapCharX = 0;
             previous.IsValid = false;
         }
 
@@ -231,6 +257,7 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
         lastMoveLine = moveLine;
     }
 
+    // Check if an additional line should be created
     if (tmpLine.LastCharIndex >= tmpLine.FirstCharIndex || text[textLength - 1] == '\n')
     {
         // Add line
@@ -248,7 +275,7 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
 
     float totalHeight = tmpLine.Location.Y;
 
-    Vector2 offset = Vector2::Zero;
+    Float2 offset = Float2::Zero;
     if (layout.VerticalAlignment == TextAlignment::Center)
     {
         offset.Y += (layout.Bounds.GetHeight() - totalHeight) * 0.5f;
@@ -260,7 +287,7 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
     for (int32 i = 0; i < outputLines.Count(); i++)
     {
         FontLineCache& line = outputLines[i];
-        Vector2 rootPos = line.Location + offset;
+        Float2 rootPos = line.Location + offset;
 
         // Fix upper left line corner to match desire text alignment
         if (layout.HorizontalAlignment == TextAlignment::Center)
@@ -276,28 +303,28 @@ void Font::ProcessText(const StringView& text, Array<FontLineCache>& outputLines
     }
 }
 
-Vector2 Font::MeasureText(const StringView& text, const TextLayoutOptions& layout)
+Float2 Font::MeasureText(const StringView& text, const TextLayoutOptions& layout)
 {
     // Check if there is no need to do anything
     if (text.IsEmpty())
-        return Vector2::Zero;
+        return Float2::Zero;
 
     // Process text
     Array<FontLineCache> lines;
     ProcessText(text, lines, layout);
 
     // Calculate bounds
-    Vector2 max = Vector2::Zero;
+    Float2 max = Float2::Zero;
     for (int32 i = 0; i < lines.Count(); i++)
     {
         const FontLineCache& line = lines[i];
-        max = Vector2::Max(max, line.Location + line.Size);
+        max = Float2::Max(max, line.Location + line.Size);
     }
 
     return max;
 }
 
-int32 Font::HitTestText(const StringView& text, const Vector2& location, const TextLayoutOptions& layout)
+int32 Font::HitTestText(const StringView& text, const Float2& location, const TextLayoutOptions& layout)
 {
     // Check if there is no need to do anything
     if (text.Length() <= 0)
@@ -311,8 +338,8 @@ int32 Font::HitTestText(const StringView& text, const Vector2& location, const T
     float baseLinesDistance = static_cast<float>(_height) * layout.BaseLinesGapScale * scale;
 
     // Offset position to match lines origin space
-    Vector2 rootOffset = layout.Bounds.Location + lines.First().Location;
-    Vector2 testPoint = location - rootOffset;
+    Float2 rootOffset = layout.Bounds.Location + lines.First().Location;
+    Float2 testPoint = location - rootOffset;
 
     // Get line which may intersect with the position (it's possible because lines have fixed height)
     int32 lineIndex = Math::Clamp(Math::FloorToInt(testPoint.Y / baseLinesDistance), 0, lines.Count() - 1);
@@ -334,7 +361,7 @@ int32 Font::HitTestText(const StringView& text, const Vector2& location, const T
         // Apply kerning
         if (!isWhitespace && previous.IsValid)
         {
-            x += GetKerning(previous.Character, entry.Character);
+            x += entry.Font->GetKerning(previous.Character, entry.Character);
         }
         previous = entry;
 
@@ -371,7 +398,7 @@ int32 Font::HitTestText(const StringView& text, const Vector2& location, const T
     return smallestIndex;
 }
 
-Vector2 Font::GetCharPosition(const StringView& text, int32 index, const TextLayoutOptions& layout)
+Float2 Font::GetCharPosition(const StringView& text, int32 index, const TextLayoutOptions& layout)
 {
     // Check if there is no need to do anything
     if (text.IsEmpty())
@@ -383,7 +410,7 @@ Vector2 Font::GetCharPosition(const StringView& text, int32 index, const TextLay
     ASSERT(lines.HasItems());
     float scale = layout.Scale / FontManager::FontScale;
     float baseLinesDistance = static_cast<float>(_height) * layout.BaseLinesGapScale * scale;
-    Vector2 rootOffset = layout.Bounds.Location + lines.First().Location;
+    Float2 rootOffset = layout.Bounds.Location + lines.First().Location;
 
     // Find line with that position
     FontCharacterEntry previous;
@@ -408,7 +435,7 @@ Vector2 Font::GetCharPosition(const StringView& text, int32 index, const TextLay
                 // Apply kerning
                 if (!isWhitespace && previous.IsValid)
                 {
-                    x += GetKerning(previous.Character, entry.Character);
+                    x += entry.Font->GetKerning(previous.Character, entry.Character);
                 }
                 previous = entry;
 
@@ -417,19 +444,19 @@ Vector2 Font::GetCharPosition(const StringView& text, int32 index, const TextLay
             }
 
             // Upper left corner of the character
-            return rootOffset + Vector2(x, static_cast<float>(lineIndex * baseLinesDistance));
+            return rootOffset + Float2(x, static_cast<float>(lineIndex * baseLinesDistance));
         }
     }
 
     // Position after last character in the last line
-    return rootOffset + Vector2(lines.Last().Size.X, static_cast<float>((lines.Count() - 1) * baseLinesDistance));
+    return rootOffset + Float2(lines.Last().Size.X, static_cast<float>((lines.Count() - 1) * baseLinesDistance));
 }
 
 void Font::FlushFaceSize() const
 {
     // Set the character size
     const FT_Face face = _asset->GetFTFace();
-    const FT_Error error = FT_Set_Char_Size(face, 0, ConvertPixelTo26Dot6<FT_F26Dot6>((float)_size * FontManager::FontScale), DefaultDPI, DefaultDPI);
+    const FT_Error error = FT_Set_Char_Size(face, 0, ConvertPixelTo26Dot6<FT_F26Dot6>(_size * FontManager::FontScale), DefaultDPI, DefaultDPI);
     if (error)
     {
         LOG_FT_ERROR(error);

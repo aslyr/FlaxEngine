@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -55,6 +55,11 @@ public:
     static Action LateUpdate;
 
     /// <summary>
+    /// Event called after engine update.
+    /// </summary>
+    static Action LateFixedUpdate;
+
+    /// <summary>
     /// Event called during frame rendering and can be used to invoke custom rendering with GPUDevice.
     /// </summary>
     static Action Draw;
@@ -108,6 +113,11 @@ public:
     static void OnLateUpdate();
 
     /// <summary>
+    /// Late fixed update callback.
+    /// </summary>
+    static void OnLateFixedUpdate();
+
+    /// <summary>
     /// Draw callback.
     /// </summary>
     static void OnDraw();
@@ -152,6 +162,11 @@ public:
     // The main window handle
 
     static Window* MainWindow;
+
+    /// <summary>
+    /// Brings focused to the game viewport (game can receive input).
+    /// </summary>
+    API_FUNCTION() static void FocusGameViewport();
 
     /// <summary>
     /// Checks whenever the game viewport is focused by the user (eg. can receive input).

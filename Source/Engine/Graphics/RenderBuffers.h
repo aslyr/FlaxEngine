@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,9 +6,6 @@
 #include "Engine/Core/Collections/Array.h"
 #include "Engine/Scripting/ScriptingObject.h"
 #include "Engine/Graphics/Textures/GPUTexture.h"
-
-// Default motion vectors buffer pixel format (can fallback to other format if not supported)
-#define MOTION_VECTORS_PIXEL_FORMAT PixelFormat::R16G16_Float
 
 // GBuffer render targets formats
 #define GBUFFER0_FORMAT PixelFormat::R8G8B8A8_UNorm
@@ -19,35 +16,47 @@
 /// <summary>
 /// The scene rendering buffers container.
 /// </summary>
-API_CLASS() class FLAXENGINE_API RenderBuffers : public PersistentScriptingObject
+API_CLASS() class FLAXENGINE_API RenderBuffers : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE(RenderBuffers);
-protected:
+    DECLARE_SCRIPTING_TYPE(RenderBuffers);
 
+    /// <summary>
+    /// The custom rendering state.
+    /// </summary>
+    class FLAXENGINE_API CustomBuffer : public Object
+    {
+    public:
+        String Name;
+        uint64 LastFrameUsed = 0;
+
+        String ToString() const override;
+    };
+
+protected:
     int32 _width = 0;
     int32 _height = 0;
     float _aspectRatio = 0.0f;
+    bool _useAlpha = false;
     Viewport _viewport;
-
     Array<GPUTexture*, FixedAllocation<32>> _resources;
 
 public:
-
     union
     {
         struct
         {
-            GPUTexture* GBuffer0;
-            GPUTexture* GBuffer1;
-            GPUTexture* GBuffer2;
-            GPUTexture* GBuffer3;
+            /// <summary>Gets the GBuffer texture 0. RGB: Color, A: AO</summary>
+            API_FIELD(ReadOnly) GPUTexture* GBuffer0;
+            /// <summary>Gets the GBuffer texture 1. RGB: Normal, A: ShadingModel</summary>
+            API_FIELD(ReadOnly) GPUTexture* GBuffer1;
+            /// <summary>Gets the GBuffer texture 2. R: Roughness, G: Metalness, B:Specular</summary>
+            API_FIELD(ReadOnly) GPUTexture* GBuffer2;
+            /// <summary>Gets the GBuffer texture 3. RGBA: Custom Data</summary>
+            API_FIELD(ReadOnly) GPUTexture* GBuffer3;
         };
 
         GPUTexture* GBuffer[4];
     };
-
-    GPUTexture* RT1_FloatRGB;
-    GPUTexture* RT2_FloatRGB;
 
     // Helper target for the eye adaptation
     float LastEyeAdaptationTime = 0.0f;
@@ -60,12 +69,10 @@ public:
     GPUTexture* LocalShadowedLightScattering = nullptr;
     uint64 LastFrameVolumetricFog = 0;
 
-    struct VolumetricFogData
+    struct
     {
         float MaxDistance;
-    };
-
-    VolumetricFogData VolumetricFogData;
+    } VolumetricFogData;
 
     // Helper buffer with half-resolution depth buffer shared by effects (eg. SSR, Motion Blur). Valid only during frame rendering and on request (see RequestHalfResDepth).
     // Should be released if not used for a few frames.
@@ -82,15 +89,16 @@ public:
     GPUTexture* TemporalAA = nullptr;
     uint64 LastFrameTemporalAA = 0;
 
-public:
+    // Maps the custom buffer type into the object that holds the state.
+    Array<CustomBuffer*, HeapAllocation> CustomBuffers;
 
+public:
     /// <summary>
     /// Finalizes an instance of the <see cref="RenderBuffers"/> class.
     /// </summary>
     ~RenderBuffers();
 
 public:
-
     /// <summary>
     /// Prepares buffers for rendering a scene. Called before rendering so other parts can reuse calculated value.
     /// </summary>
@@ -104,7 +112,6 @@ public:
     GPUTexture* RequestHalfResDepth(GPUContext* context);
 
 public:
-
     /// <summary>
     /// Gets the buffers width (in pixels).
     /// </summary>
@@ -124,9 +131,9 @@ public:
     /// <summary>
     /// Gets the buffers width and height (in pixels).
     /// </summary>
-    API_PROPERTY() FORCE_INLINE Vector2 GetSize() const
+    API_PROPERTY() FORCE_INLINE Float2 GetSize() const
     {
-        return Vector2((float)_width, (float)_height);
+        return Float2((float)_width, (float)_height);
     }
 
     /// <summary>
@@ -143,6 +150,44 @@ public:
     API_PROPERTY() FORCE_INLINE Viewport GetViewport() const
     {
         return _viewport;
+    }
+
+    /// <summary>
+    /// Gets the output buffers format (R11G11B10 or R16G16B16A16 depending on UseAlpha property).
+    /// </summary>
+    API_PROPERTY() PixelFormat GetOutputFormat() const;
+
+    /// <summary>
+    /// True if support alpha output in the rendering buffers and pass-though alpha mask of the scene during rendering (at cost of reduced performance).
+    /// </summary>
+    API_PROPERTY() bool GetUseAlpha() const;
+
+    /// <summary>
+    /// True if support alpha output in the rendering buffers and pass-though alpha mask of the scene during rendering (at cost of reduced performance).
+    /// </summary>
+    API_PROPERTY() void SetUseAlpha(bool value);
+
+    const CustomBuffer* FindCustomBuffer(const StringView& name) const;
+
+    template<class T>
+    const T* FindCustomBuffer(const StringView& name) const
+    {
+        return (const T*)FindCustomBuffer(name);
+    }
+
+    template<class T>
+    T* GetCustomBuffer(const StringView& name)
+    {
+        if (LinkedCustomBuffers)
+            return LinkedCustomBuffers->GetCustomBuffer<T>(name);
+        CustomBuffer* result = (CustomBuffer*)FindCustomBuffer(name);
+        if (!result)
+        {
+            result = New<T>();
+            result->Name = name;
+            CustomBuffers.Add(result);
+        }
+        return (T*)result;
     }
 
     /// <summary>
@@ -163,8 +208,12 @@ public:
     /// </remarks>
     API_FIELD(ReadOnly) GPUTexture* MotionVectors;
 
-public:
+    /// <summary>
+    /// External Render Buffers used to redirect FindCustomBuffer/GetCustomBuffer calls. Can be linked to other rendering task (eg. main game viewport) to reuse graphics effect state from it (eg. use GI from main game view in in-game camera renderer).
+    /// </summary>
+    API_FIELD() RenderBuffers* LinkedCustomBuffers = nullptr;
 
+public:
     /// <summary>
     /// Allocates the buffers.
     /// </summary>
@@ -177,9 +226,4 @@ public:
     /// Release the buffers data.
     /// </summary>
     API_FUNCTION() void Release();
-
-public:
-
-    // [PersistentScriptingObject]
-    String ToString() const override;
 };

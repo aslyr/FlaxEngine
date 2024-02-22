@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_GPU_PARTICLES
 
@@ -6,8 +6,10 @@
 #include "Engine/Particles/ParticleEmitter.h"
 #include "Engine/Particles/ParticleEffect.h"
 #include "Engine/Graphics/RenderTask.h"
+#include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUBuffer.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Graphics/Shaders/GPUConstantBuffer.h"
 
@@ -18,18 +20,18 @@ PACK_STRUCT(struct GPUParticlesData {
     Matrix ViewMatrix;
     Matrix WorldMatrix;
     Matrix InvWorldMatrix;
-    Vector3 ViewPos;
+    Float3 ViewPos;
     float ViewFar;
-    Vector3 ViewDir;
+    Float3 ViewDir;
     float Time;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
-    Vector3 EffectPosition;
+    Float4 ViewInfo;
+    Float4 ScreenSize;
+    Float3 EffectPosition;
     float DeltaTime;
     Quaternion EffectRotation;
-    Vector3 EffectScale;
+    Float3 EffectScale;
     uint32 ParticleCounterOffset;
-    Vector3 Dummy0;
+    Float3 Dummy0;
     uint32 SpawnCount;
     });
 
@@ -167,7 +169,7 @@ void GPUParticles::Execute(GPUContext* context, ParticleEmitter* emitter, Partic
     if (viewTask)
     {
         bindMeta.Buffers = viewTask->Buffers;
-        bindMeta.CanSampleDepth = bindMeta.CanSampleGBuffer = true;
+        bindMeta.CanSampleDepth = bindMeta.CanSampleGBuffer = bindMeta.Buffers && bindMeta.Buffers->GetWidth() != 0;
     }
     else
     {
@@ -178,7 +180,7 @@ void GPUParticles::Execute(GPUContext* context, ParticleEmitter* emitter, Partic
     for (int32 i = 0; i < data.Parameters.Count(); i++)
     {
         // Copy instance parameters values
-        _params[i].SetValue(data.Parameters[i]);
+        _params[i].SetValue(data.Parameters.Get()[i]);
     }
     MaterialParamsLink link;
     link.This = &_params;
@@ -216,11 +218,11 @@ void GPUParticles::Execute(GPUContext* context, ParticleEmitter* emitter, Partic
             Matrix::Transpose(Matrix::Identity, cbData->InvViewProjectionMatrix);
             Matrix::Transpose(Matrix::Identity, cbData->InvViewMatrix);
             Matrix::Transpose(Matrix::Identity, cbData->ViewMatrix);
-            cbData->ViewPos = Vector3::Zero;
+            cbData->ViewPos = Float3::Zero;
             cbData->ViewFar = 0.0f;
-            cbData->ViewDir = Vector3::Forward;
-            cbData->ViewInfo = Vector4::Zero;
-            cbData->ScreenSize = Vector4::Zero;
+            cbData->ViewDir = Float3::Forward;
+            cbData->ViewInfo = Float4::Zero;
+            cbData->ScreenSize = Float4::Zero;
         }
         cbData->Time = data.Time;
         if (emitter->SimulationSpace == ParticlesSimulationSpace::World)
@@ -231,7 +233,9 @@ void GPUParticles::Execute(GPUContext* context, ParticleEmitter* emitter, Partic
         else
         {
             Matrix worldMatrix;
-            effect->GetWorld(&worldMatrix);
+            effect->GetLocalToWorldMatrix(worldMatrix);
+            if (viewTask)
+                viewTask->View.GetWorldMatrix(worldMatrix);
             Matrix::Transpose(worldMatrix, cbData->WorldMatrix);
             worldMatrix.Invert();
             Matrix::Transpose(worldMatrix, cbData->InvWorldMatrix);

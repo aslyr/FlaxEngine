@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Linq;
@@ -10,6 +10,7 @@ using FlaxEditor.SceneGraph;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
+using FlaxEngine.Utilities;
 using Object = FlaxEngine.Object;
 
 namespace FlaxEditor.CustomEditors.Editors
@@ -27,8 +28,8 @@ namespace FlaxEditor.CustomEditors.Editors
         private bool _supportsPickDropDown;
 
         private bool _isMouseDown;
-        private Vector2 _mouseDownPos;
-        private Vector2 _mousePos;
+        private Float2 _mouseDownPos;
+        private Float2 _mousePos;
 
         private bool _hasValidDragOver;
         private DragActors _dragActors;
@@ -47,7 +48,7 @@ namespace FlaxEditor.CustomEditors.Editors
             {
                 if (_type == value)
                     return;
-                if (value == ScriptType.Null || (value.Type != typeof(Object) && !value.IsSubclassOf(new ScriptType(typeof(Object)))))
+                if (value == ScriptType.Null || (value.Type != typeof(Object) && !value.IsSubclassOf(ScriptType.Object)))
                     throw new ArgumentException(string.Format("Invalid type for FlaxObjectRefEditor. Input type: {0}", value != ScriptType.Null ? value.TypeName : "null"));
 
                 _type = value;
@@ -132,7 +133,7 @@ namespace FlaxEditor.CustomEditors.Editors
         public FlaxObjectRefPickerControl()
         : base(0, 0, 50, 16)
         {
-            _type = new ScriptType(typeof(Object));
+            _type = ScriptType.Object;
         }
 
         private bool IsValid(Object obj)
@@ -146,7 +147,7 @@ namespace FlaxEditor.CustomEditors.Editors
             Focus();
             if (new ScriptType(typeof(Actor)).IsAssignableFrom(_type))
             {
-                ActorSearchPopup.Show(this, new Vector2(0, Height), IsValid, actor =>
+                ActorSearchPopup.Show(this, new Float2(0, Height), IsValid, actor =>
                 {
                     Value = actor;
                     RootWindow.Focus();
@@ -155,7 +156,7 @@ namespace FlaxEditor.CustomEditors.Editors
             }
             else
             {
-                ScriptSearchPopup.Show(this, new Vector2(0, Height), IsValid, script =>
+                ScriptSearchPopup.Show(this, new Float2(0, Height), IsValid, script =>
                 {
                     Value = script;
                     RootWindow.Focus();
@@ -191,7 +192,7 @@ namespace FlaxEditor.CustomEditors.Editors
             var button2Rect = new Rectangle(button1Rect.Right + 2, 1, 14, 14);
 
             // Draw frame
-            Render2D.DrawRectangle(frameRect, isEnabled && IsMouseOver ? style.BorderHighlighted : style.BorderNormal);
+            Render2D.DrawRectangle(frameRect, isEnabled && (IsMouseOver || IsNavFocused) ? style.BorderHighlighted : style.BorderNormal);
 
             // Check if has item selected
             if (isSelected)
@@ -219,14 +220,14 @@ namespace FlaxEditor.CustomEditors.Editors
 
             // Check if drag is over
             if (IsDragOver && _hasValidDragOver)
-                Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), style.BackgroundSelected * 0.4f);
+                Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), style.BackgroundSelected * 0.4f);
         }
 
         /// <inheritdoc />
-        public override void OnMouseEnter(Vector2 location)
+        public override void OnMouseEnter(Float2 location)
         {
             _mousePos = location;
-            _mouseDownPos = Vector2.Minimum;
+            _mouseDownPos = Float2.Minimum;
 
             base.OnMouseEnter(location);
         }
@@ -234,7 +235,7 @@ namespace FlaxEditor.CustomEditors.Editors
         /// <inheritdoc />
         public override void OnMouseLeave()
         {
-            _mousePos = Vector2.Minimum;
+            _mousePos = Float2.Minimum;
 
             // Check if start drag drop
             if (_isMouseDown)
@@ -250,12 +251,12 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             _mousePos = location;
 
             // Check if start drag drop
-            if (_isMouseDown && Vector2.Distance(location, _mouseDownPos) > 10.0f)
+            if (_isMouseDown && Float2.Distance(location, _mouseDownPos) > 10.0f)
             {
                 // Do the drag
                 DoDrag();
@@ -268,7 +269,7 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left)
             {
@@ -299,7 +300,7 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left)
             {
@@ -312,7 +313,7 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             Focus();
 
@@ -329,6 +330,16 @@ namespace FlaxEditor.CustomEditors.Editors
             }
 
             return base.OnMouseDoubleClick(location, button);
+        }
+
+        /// <inheritdoc />
+        public override void OnSubmit()
+        {
+            base.OnSubmit();
+
+            // Picker dropdown menu
+            if (_supportsPickDropDown)
+                ShowDropDownMenu();
         }
 
         private void DoDrag()
@@ -348,7 +359,7 @@ namespace FlaxEditor.CustomEditors.Editors
         private DragDropEffect DragEffect => _hasValidDragOver ? DragDropEffect.Move : DragDropEffect.None;
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             base.OnDragEnter(ref location, data);
 
@@ -407,7 +418,7 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             base.OnDragMove(ref location, data);
 
@@ -424,7 +435,7 @@ namespace FlaxEditor.CustomEditors.Editors
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = DragEffect;
 

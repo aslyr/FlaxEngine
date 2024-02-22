@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -14,37 +14,32 @@
 /// </summary>
 API_STRUCT(Namespace="FlaxEngine.Networking") struct FLAXENGINE_API NetworkMessage
 {
-DECLARE_SCRIPTING_TYPE_MINIMAL(NetworkMessage);
+    DECLARE_SCRIPTING_TYPE_MINIMAL(NetworkMessage);
 public:
     /// <summary>
     /// The raw message buffer.
     /// </summary>
-    API_FIELD()
-    uint8* Buffer = nullptr;
+    API_FIELD() uint8* Buffer = nullptr;
 
     /// <summary>
     /// The unique, internal message identifier.
     /// </summary>
-    API_FIELD()
-    uint32 MessageId = 0;
+    API_FIELD() uint32 MessageId = 0;
 
     /// <summary>
     /// The size in bytes of the buffer that this message has.
     /// </summary>
-    API_FIELD()
-    uint32 BufferSize = 0;
+    API_FIELD() uint32 BufferSize = 0;
 
     /// <summary>
     /// The length in bytes of this message.
     /// </summary>
-    API_FIELD()
-    uint32 Length = 0;
+    API_FIELD() uint32 Length = 0;
 
     /// <summary>
     /// The position in bytes in buffer where the next read/write will occur.
     /// </summary>
-    API_FIELD()
-    uint32 Position = 0;
+    API_FIELD() uint32 Position = 0;
 
 public:
     /// <summary>
@@ -55,12 +50,17 @@ public:
     /// <summary>
     /// Initializes values of the <seealso cref="NetworkMessage"/> structure.
     /// </summary>
-    NetworkMessage(uint8* buffer, uint32 messageId, uint32 bufferSize, uint32 length, uint32 position) :
-        Buffer(buffer), MessageId(messageId), BufferSize(bufferSize), Length(length), Position(position)
-    { }
+    NetworkMessage(uint8* buffer, uint32 messageId, uint32 bufferSize, uint32 length, uint32 position)
+        : Buffer(buffer)
+        , MessageId(messageId)
+        , BufferSize(bufferSize)
+        , Length(length)
+        , Position(position)
+    {
+    }
 
     ~NetworkMessage() = default;
-    
+
 public:
     /// <summary>
     /// Writes raw bytes into the message.
@@ -69,11 +69,12 @@ public:
     /// <param name="numBytes">The amount of bytes to write from the bytes pointer.</param>
     FORCE_INLINE void WriteBytes(uint8* bytes, const int numBytes)
     {
-        ASSERT(Position + numBytes < BufferSize);
+        ASSERT(Position + numBytes <= BufferSize);
         Platform::MemoryCopy(Buffer + Position, bytes, numBytes);
         Position += numBytes;
+        Length = Position;
     }
-    
+
     /// <summary>
     /// Reads raw bytes from the message into the given byte array.
     /// </summary>
@@ -82,18 +83,41 @@ public:
     /// Should be of the same length as length or longer.
     /// </param>
     /// <param name="numBytes">The minimal amount of bytes that the buffer contains.</param>
-    FORCE_INLINE void ReadBytes(uint8* bytes, const int numBytes)
+    FORCE_INLINE void ReadBytes(uint8* bytes, const int32 numBytes)
     {
-        ASSERT(Position + numBytes < BufferSize);
+        ASSERT(Position + numBytes <= BufferSize);
         Platform::MemoryCopy(bytes, Buffer + Position, numBytes);
         Position += numBytes;
+    }
+
+    /// <summary>
+    /// Skips bytes from the message.
+    /// </summary>
+    /// <param name="numBytes">Amount of bytes to skip.</param>
+    /// <returns>Pointer to skipped data beginning.</returns>
+    FORCE_INLINE void* SkipBytes(const int32 numBytes)
+    {
+        ASSERT(Position + numBytes <= BufferSize);
+        byte* result = Buffer + Position;
+        Position += numBytes;
+        return result;
+    }
+
+    template<typename T>
+    FORCE_INLINE void WriteStructure(const T& data)
+    {
+        WriteBytes((uint8*)&data, sizeof(data));
+    }
+
+    template<typename T>
+    FORCE_INLINE void ReadStructure(const T& data)
+    {
+        ReadBytes((uint8*)&data, sizeof(data));
     }
 
 #define DECL_READWRITE(type, name) \
     FORCE_INLINE void Write##name(type value) { WriteBytes(reinterpret_cast<uint8*>(&value), sizeof(type)); } \
     FORCE_INLINE type Read##name() { type value = 0; ReadBytes(reinterpret_cast<uint8*>(&value), sizeof(type)); return value; }
-
-public:
     DECL_READWRITE(int8, Int8)
     DECL_READWRITE(uint8, UInt8)
     DECL_READWRITE(int16, Int16)
@@ -105,15 +129,15 @@ public:
     DECL_READWRITE(float, Single)
     DECL_READWRITE(double, Double)
     DECL_READWRITE(bool, Boolean)
+#undef DECL_READWRITE
 
-public:
     /// <summary>
     /// Writes data of type Vector2 into the message.
     /// </summary>
     FORCE_INLINE void WriteVector2(const Vector2& value)
     {
-        WriteSingle(value.X);
-        WriteSingle(value.Y);
+        WriteSingle((float)value.X);
+        WriteSingle((float)value.Y);
     }
 
     /// <summary>
@@ -123,15 +147,15 @@ public:
     {
         return Vector2(ReadSingle(), ReadSingle());
     }
-    
+
     /// <summary>
     /// Writes data of type Vector3 into the message.
     /// </summary>
     FORCE_INLINE void WriteVector3(const Vector3& value)
     {
-        WriteSingle(value.X);
-        WriteSingle(value.Y);
-        WriteSingle(value.Z);
+        WriteSingle((float)value.X);
+        WriteSingle((float)value.Y);
+        WriteSingle((float)value.Z);
     }
 
     /// <summary>
@@ -147,10 +171,10 @@ public:
     /// </summary>
     FORCE_INLINE void WriteVector4(const Vector4& value)
     {
-        WriteSingle(value.X);
-        WriteSingle(value.Y);
-        WriteSingle(value.Z);
-        WriteSingle(value.W);
+        WriteSingle((float)value.X);
+        WriteSingle((float)value.Y);
+        WriteSingle((float)value.Z);
+        WriteSingle((float)value.W);
     }
 
     /// <summary>
@@ -160,7 +184,7 @@ public:
     {
         return Vector4(ReadSingle(), ReadSingle(), ReadSingle(), ReadSingle());
     }
-    
+
     /// <summary>
     /// Writes data of type Quaternion into the message.
     /// </summary>
@@ -180,7 +204,6 @@ public:
         return Quaternion(ReadSingle(), ReadSingle(), ReadSingle(), ReadSingle());
     }
 
-public:
     /// <summary>
     /// Writes data of type String into the message. UTF-16 encoded.
     /// </summary>
@@ -201,7 +224,7 @@ public:
         ReadBytes((uint8*)value.Get(), length * sizeof(Char));
         return value;
     }
-    
+
     /// <summary>
     /// Writes data of type Guid into the message.
     /// </summary>
@@ -215,7 +238,7 @@ public:
     /// </summary>
     FORCE_INLINE Guid ReadGuid()
     {
-        Guid value = Guid();
+        Guid value;
         ReadBytes((uint8*)&value, sizeof(Guid));
         return value;
     }
@@ -228,4 +251,10 @@ public:
     {
         return Buffer != nullptr && BufferSize > 0;
     }
+};
+
+template<>
+struct TIsPODType<NetworkMessage>
+{
+    enum { Value = true };
 };

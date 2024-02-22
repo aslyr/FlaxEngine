@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using FlaxEditor.GUI;
 using FlaxEditor.GUI.Drag;
 using FlaxEditor.Options;
@@ -38,6 +39,7 @@ namespace FlaxEditor.Surface
         private VisjectCM _activeVisjectCM;
         private GroupArchetype _customNodesGroup;
         private List<NodeArchetype> _customNodes;
+        private List<IUndoAction> _batchedUndoActions;
         private Action _onSave;
         private int _selectedConnectionIndex;
 
@@ -59,19 +61,29 @@ namespace FlaxEditor.Surface
         protected bool _rightMouseDown;
 
         /// <summary>
+        /// The middle mouse down flag.
+        /// </summary>
+        protected bool _middleMouseDown;
+
+        /// <summary>
         /// The left mouse down position.
         /// </summary>
-        protected Vector2 _leftMouseDownPos = Vector2.Minimum;
+        protected Float2 _leftMouseDownPos = Float2.Minimum;
 
         /// <summary>
         /// The right mouse down position.
         /// </summary>
-        protected Vector2 _rightMouseDownPos = Vector2.Minimum;
+        protected Float2 _rightMouseDownPos = Float2.Minimum;
+
+        /// <summary>
+        /// The middle mouse down position.
+        /// </summary>
+        protected Float2 _middleMouseDownPos = Float2.Minimum;
 
         /// <summary>
         /// The mouse position.
         /// </summary>
-        protected Vector2 _mousePos = Vector2.Minimum;
+        protected Float2 _mousePos = Float2.Minimum;
 
         /// <summary>
         /// The mouse movement amount.
@@ -86,7 +98,7 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// The moving selection view position.
         /// </summary>
-        protected Vector2 _movingSelectionViewPos;
+        protected Float2 _movingSelectionViewPos;
 
         /// <summary>
         /// The connection start.
@@ -106,12 +118,12 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// The context menu start position.
         /// </summary>
-        protected Vector2 _cmStartPos = Vector2.Minimum;
+        protected Float2 _cmStartPos = Float2.Minimum;
 
         /// <summary>
         /// Occurs when selection gets changed.
         /// </summary>
-        protected event Action SelectionChanged;
+        public event Action SelectionChanged;
 
         /// <summary>
         /// The surface owner.
@@ -163,7 +175,7 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// Gets or sets the view position (upper left corner of the view) in the surface space.
         /// </summary>
-        public Vector2 ViewPosition
+        public Float2 ViewPosition
         {
             get => _rootControl.Location / -ViewScale;
             set => _rootControl.Location = value * -ViewScale;
@@ -172,7 +184,7 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// Gets or sets the view center position (middle point of the view) in the surface space.
         /// </summary>
-        public Vector2 ViewCenterPosition
+        public Float2 ViewCenterPosition
         {
             get => (_rootControl.Location - Size * 0.5f) / -ViewScale;
             set => _rootControl.Location = Size * 0.5f + value * -ViewScale;
@@ -197,7 +209,7 @@ namespace FlaxEditor.Surface
                 }
 
                 // disable view scale animation
-                _rootControl.Scale = new Vector2(_targetScale);
+                _rootControl.Scale = new Float2(_targetScale);
             }
         }
 
@@ -251,6 +263,9 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// Gets the list of the selected nodes.
         /// </summary>
+        /// <remarks>
+        /// Don't call it too often. It does memory allocation and iterates over the surface controls to find selected nodes in the graph.
+        /// </remarks>
         public List<SurfaceNode> SelectedNodes
         {
             get
@@ -268,6 +283,9 @@ namespace FlaxEditor.Surface
         /// <summary>
         /// Gets the list of the selected controls (comments and nodes).
         /// </summary>
+        /// <remarks>
+        /// Don't call it too often. It does memory allocation and iterates over the surface controls to find selected nodes in the graph.
+        /// </remarks>
         public List<SurfaceControl> SelectedControls
         {
             get
@@ -321,6 +339,16 @@ namespace FlaxEditor.Surface
         public event Action<SurfaceNode> NodeBreakpointEdited;
 
         /// <summary>
+        /// Occurs when two nodes gets connected (via UI).
+        /// </summary>
+        public event Action<IConnectionInstigator, IConnectionInstigator> NodesConnected;
+
+        /// <summary>
+        /// Occurs when two nodes gets disconnected (via UI).
+        /// </summary>
+        public event Action<IConnectionInstigator, IConnectionInstigator> NodesDisconnected;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="VisjectSurface"/> class.
         /// </summary>
         /// <param name="owner">The owner.</param>
@@ -329,7 +357,7 @@ namespace FlaxEditor.Surface
         /// <param name="style">The custom surface style. Use null to create the default style.</param>
         /// <param name="groups">The custom surface node types. Pass null to use the default nodes set.</param>
         /// <param name="supportsDebugging">True if surface supports debugging features (breakpoints, etc.).</param>
-        public VisjectSurface(IVisjectSurfaceOwner owner, Action onSave, FlaxEditor.Undo undo = null, SurfaceStyle style = null, List<GroupArchetype> groups = null, bool supportsDebugging = false)
+        public VisjectSurface(IVisjectSurfaceOwner owner, Action onSave = null, FlaxEditor.Undo undo = null, SurfaceStyle style = null, List<GroupArchetype> groups = null, bool supportsDebugging = false)
         {
             AnchorPreset = AnchorPresets.StretchAll;
             Offsets = Margin.Zero;
@@ -377,17 +405,7 @@ namespace FlaxEditor.Surface
         /// <returns>The display name (for UI).</returns>
         public virtual string GetTypeName(ScriptType type)
         {
-            if (type == ScriptType.Null)
-                return null;
-            if (type.Type == typeof(float))
-                return "Float";
-            if (type.Type == typeof(int))
-                return "Int";
-            if (type.Type == typeof(uint))
-                return "Uint";
-            if (type.Type == typeof(bool))
-                return "Bool";
-            return type.Name;
+            return type == ScriptType.Null ? null : type.Name;
         }
 
         /// <summary>
@@ -517,11 +535,38 @@ namespace FlaxEditor.Surface
         public virtual bool CanSetParameters => false;
 
         /// <summary>
+        /// Gets a value indicating whether surface supports/allows live previewing graph modifications due to value sliders and color pickers. True by default but disabled for shader surfaces that generate and compile shader source at flight.
+        /// </summary>
+        public virtual bool CanLivePreviewValueChanges => true;
+
+        /// <summary>
         /// Determines whether the specified node archetype can be used in the surface.
         /// </summary>
+        /// <param name="groupID">The nodes group archetype identifier.</param>
+        /// <param name="typeID">The node archetype identifier.</param>
+        /// <returns>True if can use this node archetype, otherwise false.</returns>
+        public bool CanUseNodeType(ushort groupID, ushort typeID)
+        {
+            var result = false;
+            var nodeArchetypes = NodeArchetypes ?? NodeFactory.DefaultGroups;
+            if (NodeFactory.GetArchetype(nodeArchetypes, groupID, typeID, out var groupArchetype, out var nodeArchetype))
+            {
+                var flags = nodeArchetype.Flags;
+                nodeArchetype.Flags &= ~NodeFlags.NoSpawnViaGUI;
+                nodeArchetype.Flags &= ~NodeFlags.NoSpawnViaPaste;
+                result = CanUseNodeType(groupArchetype, nodeArchetype);
+                nodeArchetype.Flags = flags;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Determines whether the specified node archetype can be used in the surface.
+        /// </summary>
+        /// <param name="groupArchetype">The nodes group archetype.</param>
         /// <param name="nodeArchetype">The node archetype.</param>
         /// <returns>True if can use this node archetype, otherwise false.</returns>
-        public virtual bool CanUseNodeType(NodeArchetype nodeArchetype)
+        public virtual bool CanUseNodeType(GroupArchetype groupArchetype, NodeArchetype nodeArchetype)
         {
             return (nodeArchetype.Flags & NodeFlags.NoSpawnViaPaste) == 0;
         }
@@ -571,12 +616,17 @@ namespace FlaxEditor.Surface
         /// </summary>
         public void SelectAll()
         {
+            bool selectionChanged = false;
             for (int i = 0; i < _rootControl.Children.Count; i++)
             {
-                if (_rootControl.Children[i] is SurfaceControl control)
+                if (_rootControl.Children[i] is SurfaceControl control && !control.IsSelected)
+                {
                     control.IsSelected = true;
+                    selectionChanged = true;
+                }
             }
-            SelectionChanged?.Invoke();
+            if (selectionChanged)
+                SelectionChanged?.Invoke();
         }
 
         /// <summary>
@@ -584,12 +634,17 @@ namespace FlaxEditor.Surface
         /// </summary>
         public void ClearSelection()
         {
+            bool selectionChanged = false;
             for (int i = 0; i < _rootControl.Children.Count; i++)
             {
-                if (_rootControl.Children[i] is SurfaceControl control)
+                if (_rootControl.Children[i] is SurfaceControl control && control.IsSelected)
+                {
                     control.IsSelected = false;
+                    selectionChanged = true;
+                }
             }
-            SelectionChanged?.Invoke();
+            if (selectionChanged)
+                SelectionChanged?.Invoke();
         }
 
         /// <summary>
@@ -598,6 +653,8 @@ namespace FlaxEditor.Surface
         /// <param name="control">The control.</param>
         public void AddToSelection(SurfaceControl control)
         {
+            if (control.IsSelected)
+                return;
             control.IsSelected = true;
             SelectionChanged?.Invoke();
         }
@@ -608,9 +665,22 @@ namespace FlaxEditor.Surface
         /// <param name="control">The control.</param>
         public void Select(SurfaceControl control)
         {
-            ClearSelection();
-            control.IsSelected = true;
-            SelectionChanged?.Invoke();
+            bool selectionChanged = false;
+            for (int i = 0; i < _rootControl.Children.Count; i++)
+            {
+                if (_rootControl.Children[i] is SurfaceControl c && c != control && c.IsSelected)
+                {
+                    c.IsSelected = false;
+                    selectionChanged = true;
+                }
+            }
+            if (!control.IsSelected)
+            {
+                control.IsSelected = true;
+                selectionChanged = true;
+            }
+            if (selectionChanged)
+                SelectionChanged?.Invoke();
         }
 
         /// <summary>
@@ -619,11 +689,13 @@ namespace FlaxEditor.Surface
         /// <param name="controls">The controls.</param>
         public void Select(IEnumerable<SurfaceControl> controls)
         {
+            var newSelection = controls.ToList();
+            var prevSelection = SelectedControls;
+            if (Utils.ArraysEqual(newSelection, prevSelection))
+                return;
             ClearSelection();
-            foreach (var control in controls)
-            {
+            foreach (var control in newSelection)
                 control.IsSelected = true;
-            }
             SelectionChanged?.Invoke();
         }
 
@@ -633,6 +705,8 @@ namespace FlaxEditor.Surface
         /// <param name="control">The control.</param>
         public void Deselect(SurfaceControl control)
         {
+            if (!control.IsSelected)
+                return;
             control.IsSelected = false;
             SelectionChanged?.Invoke();
         }
@@ -647,7 +721,18 @@ namespace FlaxEditor.Surface
                 return null;
             Rectangle surfaceArea = GetNodesBounds(selection).MakeExpanded(80.0f);
 
-            return _context.CreateComment(ref surfaceArea, string.IsNullOrEmpty(text) ? "Comment" : text, new Color(1.0f, 1.0f, 1.0f, 0.2f));
+            // Order below other selected comments
+            bool hasCommentsSelected = false;
+            int lowestCommentOrder = int.MaxValue;
+            for (int i = 0; i < selection.Count; i++)
+            {
+                if (selection[i] is not SurfaceComment || selection[i].IndexInParent >= lowestCommentOrder)
+                    continue;
+                hasCommentsSelected = true;
+                lowestCommentOrder = selection[i].IndexInParent;
+            }
+
+            return _context.CreateComment(ref surfaceArea, string.IsNullOrEmpty(text) ? "Comment" : text, new Color(1.0f, 1.0f, 1.0f, 0.2f), hasCommentsSelected ? lowestCommentOrder : -1);
         }
 
         private static Rectangle GetNodesBounds(List<SurfaceNode> nodes)
@@ -671,11 +756,18 @@ namespace FlaxEditor.Surface
         /// <param name="withUndo">True if use undo/redo action for node removing.</param>
         public void Delete(IEnumerable<SurfaceControl> controls, bool withUndo = true)
         {
+            if (!CanEdit || controls == null || !controls.Any())
+                return;
+
             var selectionChanged = false;
             List<SurfaceNode> nodes = null;
             foreach (var control in controls)
             {
-                selectionChanged |= control.IsSelected;
+                if (control.IsSelected)
+                {
+                    selectionChanged = true;
+                    control.IsSelected = false;
+                }
 
                 if (control is SurfaceNode node)
                 {
@@ -683,19 +775,34 @@ namespace FlaxEditor.Surface
                     {
                         if (nodes == null)
                             nodes = new List<SurfaceNode>();
-                        nodes.Add(node);
+                        var sealedNodes = node.SealedNodes;
+                        if (sealedNodes != null)
+                        {
+                            foreach (var sealedNode in sealedNodes)
+                            {
+                                if (sealedNode != null)
+                                {
+                                    if (sealedNode.IsSelected)
+                                    {
+                                        selectionChanged = true;
+                                        sealedNode.IsSelected = false;
+                                    }
+                                    if (!nodes.Contains(sealedNode))
+                                        nodes.Add(sealedNode);
+                                }
+                            }
+                        }
+                        if (!nodes.Contains(node))
+                            nodes.Add(node);
                     }
                 }
                 else
                 {
-                    Context.OnControlDeleted(control);
+                    Context.OnControlDeleted(control, SurfaceNodeActions.User);
                 }
             }
-
             if (selectionChanged)
-            {
                 SelectionChanged?.Invoke();
-            }
 
             if (nodes != null)
             {
@@ -706,7 +813,7 @@ namespace FlaxEditor.Surface
                     {
                         node.RemoveConnections();
                         Nodes.Remove(node);
-                        Context.OnControlDeleted(node);
+                        Context.OnControlDeleted(node, SurfaceNodeActions.User);
                     }
                 }
                 else
@@ -730,7 +837,7 @@ namespace FlaxEditor.Surface
                         actions.Add(action);
                     }
 
-                    Undo.AddAction(new MultiUndoAction(actions, nodes.Count == 1 ? "Remove node" : "Remove nodes"));
+                    AddBatchedUndoAction(new MultiUndoAction(actions, nodes.Count == 1 ? "Remove node" : "Remove nodes"));
                 }
             }
 
@@ -746,54 +853,7 @@ namespace FlaxEditor.Surface
         {
             if (!CanEdit)
                 return;
-
-            var node = control as SurfaceNode;
-            if (node == null)
-            {
-                Context.OnControlDeleted(control);
-                MarkAsEdited();
-                return;
-            }
-
-            if ((node.Archetype.Flags & NodeFlags.NoRemove) != 0)
-                return;
-
-            if (control.IsSelected)
-            {
-                control.IsSelected = false;
-                SelectionChanged?.Invoke();
-            }
-
-            if (Undo == null || !withUndo)
-            {
-                // Remove node
-                node.RemoveConnections();
-                Nodes.Remove(node);
-                Context.OnControlDeleted(node);
-            }
-            else
-            {
-                var actions = new List<IUndoAction>();
-
-                // Break connections for node
-                {
-                    var action = new EditNodeConnections(Context, node);
-                    node.RemoveConnections();
-                    action.End();
-                    actions.Add(action);
-                }
-
-                // Remove node
-                {
-                    var action = new AddRemoveNodeAction(node, false);
-                    action.Do();
-                    actions.Add(action);
-                }
-
-                Undo.AddAction(new MultiUndoAction(actions, "Remove node"));
-            }
-
-            MarkAsEdited();
+            Delete(new[] { control }, withUndo);
         }
 
         /// <summary>
@@ -803,72 +863,7 @@ namespace FlaxEditor.Surface
         {
             if (!CanEdit)
                 return;
-            bool edited = false;
-
-            List<SurfaceNode> nodes = null;
-            for (int i = 0; i < _rootControl.Children.Count; i++)
-            {
-                if (_rootControl.Children[i] is SurfaceNode node)
-                {
-                    if (node.IsSelected && (node.Archetype.Flags & NodeFlags.NoRemove) == 0)
-                    {
-                        if (nodes == null)
-                            nodes = new List<SurfaceNode>();
-                        nodes.Add(node);
-                        edited = true;
-                    }
-                }
-                else if (_rootControl.Children[i] is SurfaceControl control && control.IsSelected)
-                {
-                    i--;
-                    Context.OnControlDeleted(control);
-                    edited = true;
-                }
-            }
-
-            if (nodes != null)
-            {
-                if (Undo == null)
-                {
-                    // Remove all nodes
-                    foreach (var node in nodes)
-                    {
-                        node.RemoveConnections();
-                        Nodes.Remove(node);
-                        Context.OnControlDeleted(node);
-                    }
-                }
-                else
-                {
-                    var actions = new List<IUndoAction>();
-
-                    // Break connections for all nodes
-                    foreach (var node in nodes)
-                    {
-                        var action = new EditNodeConnections(Context, node);
-                        node.RemoveConnections();
-                        action.End();
-                        actions.Add(action);
-                    }
-
-                    // Remove all nodes
-                    foreach (var node in nodes)
-                    {
-                        var action = new AddRemoveNodeAction(node, false);
-                        action.Do();
-                        actions.Add(action);
-                    }
-
-                    Undo.AddAction(new MultiUndoAction(actions, nodes.Count == 1 ? "Remove node" : "Remove nodes"));
-                }
-            }
-
-            if (edited)
-            {
-                MarkAsEdited();
-            }
-
-            SelectionChanged?.Invoke();
+            Delete(SelectedControls, true);
         }
 
         /// <summary>
@@ -903,6 +898,19 @@ namespace FlaxEditor.Surface
         }
 
         /// <summary>
+        /// Adds the undo action to be batched (eg. if multiple undo actions is performed in a sequence during single update).
+        /// </summary>
+        /// <param name="action">The action.</param>
+        public void AddBatchedUndoAction(IUndoAction action)
+        {
+            if (Undo == null || !Undo.Enabled)
+                return;
+            if (_batchedUndoActions == null)
+                _batchedUndoActions = new List<IUndoAction>();
+            _batchedUndoActions.Add(action);
+        }
+
+        /// <summary>
         /// Called when node gets spawned in the surface (via UI).
         /// </summary>
         public virtual void OnNodeSpawned(SurfaceNode node)
@@ -932,6 +940,23 @@ namespace FlaxEditor.Surface
         public virtual void OnNodeDeleted(SurfaceNode node)
         {
             NodeDeleted?.Invoke(node);
+        }
+
+        /// <summary>
+        /// Called when two nodes gets connected (via UI).
+        /// </summary>
+        public virtual void OnNodesConnected(IConnectionInstigator a, IConnectionInstigator b)
+        {
+            NodesConnected?.Invoke(a, b);
+            MarkAsEdited();
+        }
+
+        /// <summary>
+        /// Called when two nodes gets disconnected (via UI).
+        /// </summary>
+        public virtual void OnNodesDisconnected(IConnectionInstigator a, IConnectionInstigator b)
+        {
+            NodesDisconnected?.Invoke(a, b);
         }
 
         /// <inheritdoc />

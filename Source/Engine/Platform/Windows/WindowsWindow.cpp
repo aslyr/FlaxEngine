@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if PLATFORM_WINDOWS
 
@@ -10,8 +10,19 @@
 #include "Engine/Graphics/GPUSwapChain.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/GPUDevice.h"
+#if USE_EDITOR
+#include "Engine/Core/Collections/Array.h"
+#include "Engine/Platform/IGuiData.h"
+#include "Engine/Platform/Base/DragDropHelper.h"
+#include "Engine/Input/Input.h"
+#include "Engine/Input/Mouse.h"
+#endif
 #include "../Win32/IncludeWindowsHeaders.h"
 #include <propidl.h>
+#if USE_EDITOR
+#include <oleidl.h>
+#include <shellapi.h>
+#endif
 
 #define DefaultDPI 96
 
@@ -35,7 +46,11 @@ namespace
         const bool success = ::DwmIsCompositionEnabled(&result) == S_OK;
         return result && success;
     }
+}
+#endif
 
+namespace
+{
     bool IsWindowMaximized(HWND window)
     {
         WINDOWPLACEMENT placement;
@@ -44,7 +59,6 @@ namespace
         return placement.showCmd == SW_MAXIMIZE;
     }
 }
-#endif
 
 WindowsWindow::WindowsWindow(const CreateWindowSettings& settings)
     : WindowBase(settings)
@@ -58,7 +72,7 @@ WindowsWindow::WindowsWindow(const CreateWindowSettings& settings)
     int32 clientHeight = Math::TruncToInt(settings.Size.Y);
     int32 windowWidth = clientWidth;
     int32 windowHeight = clientHeight;
-    _clientSize = Vector2((float)clientWidth, (float)clientHeight);
+    _clientSize = Float2((float)clientWidth, (float)clientHeight);
 
     // Setup window style
     uint32 style = WS_POPUP, exStyle = 0;
@@ -105,7 +119,7 @@ WindowsWindow::WindowsWindow(const CreateWindowSettings& settings)
             style |= WS_BORDER | WS_CAPTION | WS_DLGFRAME | WS_SYSMENU | WS_THICKFRAME | WS_GROUP;
 #elif WINDOWS_USE_NEWER_BORDER_LESS
         if (settings.IsRegularWindow)
-            style |= WS_THICKFRAME | WS_SYSMENU;
+            style |= WS_THICKFRAME | WS_SYSMENU | WS_CAPTION;
 #endif
         exStyle |= WS_EX_WINDOWEDGE;
     }
@@ -124,13 +138,19 @@ WindowsWindow::WindowsWindow(const CreateWindowSettings& settings)
         nullptr,
         (HINSTANCE)Platform::Instance,
         nullptr);
+    if (_handle == nullptr)
+    {
+        LOG_WIN32_LAST_ERROR;
+        Platform::Fatal(TEXT("Cannot create window."));
+        return;
+    }
 
     // Query DPI
     _dpi = Platform::GetDpi();
     const HMODULE user32Dll = LoadLibraryW(L"user32.dll");
     if (user32Dll)
     {
-        typedef UINT (STDAPICALLTYPE* GetDpiForWindowProc)(HWND hwnd);
+        typedef UINT (STDAPICALLTYPE*GetDpiForWindowProc)(HWND hwnd);
         const GetDpiForWindowProc getDpiForWindowProc = (GetDpiForWindowProc)GetProcAddress(user32Dll, "GetDpiForWindow");
         if (getDpiForWindowProc)
         {
@@ -140,18 +160,11 @@ WindowsWindow::WindowsWindow(const CreateWindowSettings& settings)
     }
     _dpiScale = (float)_dpi / (float)DefaultDPI;
 
-    // Validate result
-    if (!HasHWND())
-    {
-        LOG_WIN32_LAST_ERROR;
-        Platform::Fatal(TEXT("Cannot create window."));
-    }
-
 #if WINDOWS_USE_NEWER_BORDER_LESS
     // Enable shadow
     if (_settings.IsRegularWindow && !_settings.HasBorder && IsCompositionEnabled())
     {
-        static const int margin[4] = { 1, 1, 1, 1 };
+        const int margin[4] = { 1, 1, 1, 1 };
         ::DwmExtendFrameIntoClientArea(_handle, margin);
     }
 #endif
@@ -213,6 +226,11 @@ void WindowsWindow::Show()
         {
             SetWindowPos(_handle, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         }
+#elif WINDOWS_USE_NEWER_BORDER_LESS
+        if (!_settings.HasBorder)
+        {
+            SetWindowPos(_handle, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+        }
 #endif
 
         // Base
@@ -236,16 +254,101 @@ void WindowsWindow::Hide()
 
 void WindowsWindow::Minimize()
 {
+    if (!_settings.AllowMinimize)
+        return;
     ASSERT(HasHWND());
     ShowWindow(_handle, SW_MINIMIZE);
 }
 
 void WindowsWindow::Maximize()
 {
+    if (!_settings.AllowMaximize)
+        return;
     ASSERT(HasHWND());
     _isDuringMaximize = true;
     ShowWindow(_handle, SW_MAXIMIZE);
     _isDuringMaximize = false;
+}
+
+void WindowsWindow::SetBorderless(bool isBorderless, bool maximized)
+{
+    ASSERT(HasHWND());
+
+    if (IsFullscreen())
+        SetIsFullscreen(false);
+
+    // Fixes issue of borderless window not going full screen
+    if (IsMaximized())
+        Restore();
+
+    _settings.HasBorder = !isBorderless;
+
+    BringToFront();
+
+    if (isBorderless)
+    {
+        LONG lStyle = GetWindowLong(_handle, GWL_STYLE);
+        lStyle &= ~(WS_THICKFRAME | WS_SYSMENU | WS_OVERLAPPED | WS_BORDER | WS_CAPTION);
+        lStyle |= WS_POPUP;
+        lStyle |= WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+#if WINDOWS_USE_NEW_BORDER_LESS
+        if (_settings.IsRegularWindow)
+            style |= WS_BORDER | WS_CAPTION | WS_DLGFRAME | WS_SYSMENU | WS_THICKFRAME | WS_GROUP;
+#elif WINDOWS_USE_NEWER_BORDER_LESS
+        if (_settings.IsRegularWindow)
+            lStyle |= WS_THICKFRAME | WS_SYSMENU;
+#endif
+
+        SetWindowLong(_handle, GWL_STYLE, lStyle);
+        SetWindowPos(_handle, HWND_TOP, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+        if (maximized)
+        {
+            ShowWindow(_handle, SW_SHOWMAXIMIZED);
+        }
+        else
+        {
+            ShowWindow(_handle, SW_SHOW);
+        }
+    }
+    else
+    {
+        LONG lStyle = GetWindowLong(_handle, GWL_STYLE);
+        lStyle &= ~(WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+        if (_settings.AllowMaximize)
+            lStyle |= WS_MAXIMIZEBOX;
+        if (_settings.AllowMinimize)
+            lStyle |= WS_MINIMIZEBOX;
+        if (_settings.HasSizingFrame)
+            lStyle |= WS_THICKFRAME;
+        lStyle |= WS_OVERLAPPED | WS_SYSMENU | WS_BORDER | WS_CAPTION;
+
+        SetWindowLong(_handle, GWL_STYLE, lStyle);
+        const Float2 clientSize = GetClientSize();
+        const Float2 desktopSize = Platform::GetDesktopSize();
+        // Move window and half size if it is larger than desktop size
+        if (clientSize.X >= desktopSize.X && clientSize.Y >= desktopSize.Y)
+        {
+            const Float2 halfSize = desktopSize * 0.5f;
+            const Float2 middlePos = halfSize * 0.5f;
+            SetWindowPos(_handle, nullptr, (int)middlePos.X, (int)middlePos.Y, (int)halfSize.X, (int)halfSize.Y, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        else
+        {
+            SetWindowPos(_handle, nullptr, 0, 0, (int)clientSize.X, (int)clientSize.Y, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
+        if (maximized)
+        {
+            Maximize();
+        }
+        else
+        {
+            ShowWindow(_handle, SW_SHOW);
+        }
+    }
+
+    CheckForWindowResize();
 }
 
 void WindowsWindow::Restore()
@@ -304,8 +407,8 @@ void WindowsWindow::SetClientBounds(const Rectangle& clientArea)
 
     // Check if position or/and size will change
     const auto rect = GetClientBounds();
-    const bool changeLocation = !Vector2::NearEqual(rect.Location, clientArea.Location);
-    const bool changeSize = !Vector2::NearEqual(rect.Size, clientArea.Size);
+    const bool changeLocation = !Float2::NearEqual(rect.Location, clientArea.Location);
+    const bool changeSize = !Float2::NearEqual(rect.Size, clientArea.Size);
     if (!changeLocation && !changeSize)
         return;
 
@@ -354,7 +457,7 @@ void WindowsWindow::SetClientBounds(const Rectangle& clientArea)
     }
 }
 
-void WindowsWindow::SetPosition(const Vector2& position)
+void WindowsWindow::SetPosition(const Float2& position)
 {
     ASSERT(HasHWND());
 
@@ -366,7 +469,7 @@ void WindowsWindow::SetPosition(const Vector2& position)
     SetWindowPos(_handle, nullptr, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
-void WindowsWindow::SetClientPosition(const Vector2& position)
+void WindowsWindow::SetClientPosition(const Float2& position)
 {
     ASSERT(HasHWND());
 
@@ -414,30 +517,30 @@ void WindowsWindow::SetIsFullscreen(bool isFullscreen)
     _isSwitchingFullScreen = false;
 }
 
-Vector2 WindowsWindow::GetPosition() const
+Float2 WindowsWindow::GetPosition() const
 {
     ASSERT(HasHWND());
 
     RECT rect;
     GetWindowRect(_handle, &rect);
-    return Vector2(static_cast<float>(rect.left), static_cast<float>(rect.top));
+    return Float2(static_cast<float>(rect.left), static_cast<float>(rect.top));
 }
 
-Vector2 WindowsWindow::GetSize() const
+Float2 WindowsWindow::GetSize() const
 {
     ASSERT(HasHWND());
 
     RECT rect;
     GetWindowRect(_handle, &rect);
-    return Vector2(static_cast<float>(rect.right - rect.left), static_cast<float>(rect.bottom - rect.top));
+    return Float2(static_cast<float>(rect.right - rect.left), static_cast<float>(rect.bottom - rect.top));
 }
 
-Vector2 WindowsWindow::GetClientSize() const
+Float2 WindowsWindow::GetClientSize() const
 {
     return _clientSize;
 }
 
-Vector2 WindowsWindow::ScreenToClient(const Vector2& screenPos) const
+Float2 WindowsWindow::ScreenToClient(const Float2& screenPos) const
 {
     ASSERT(HasHWND());
 
@@ -445,18 +548,24 @@ Vector2 WindowsWindow::ScreenToClient(const Vector2& screenPos) const
     p.x = static_cast<LONG>(screenPos.X);
     p.y = static_cast<LONG>(screenPos.Y);
     ::ScreenToClient(_handle, &p);
-    return Vector2(static_cast<float>(p.x), static_cast<float>(p.y));
+    return Float2(static_cast<float>(p.x), static_cast<float>(p.y));
 }
 
-Vector2 WindowsWindow::ClientToScreen(const Vector2& clientPos) const
+Float2 WindowsWindow::ClientToScreen(const Float2& clientPos) const
 {
     ASSERT(HasHWND());
+
+    if (_minimized)
+    {
+        // Return cached position when window is not on screen
+        return _minimizedScreenPosition + clientPos;
+    }
 
     POINT p;
     p.x = static_cast<LONG>(clientPos.X);
     p.y = static_cast<LONG>(clientPos.Y);
     ::ClientToScreen(_handle, &p);
-    return Vector2(static_cast<float>(p.x), static_cast<float>(p.y));
+    return Float2(static_cast<float>(p.x), static_cast<float>(p.y));
 }
 
 void WindowsWindow::FlashWindow()
@@ -507,7 +616,6 @@ void WindowsWindow::SetOpacity(const float opacity)
 void WindowsWindow::Focus()
 {
     ASSERT(HasHWND());
-
     if (GetFocus() != _handle)
     {
         SetFocus(_handle);
@@ -531,8 +639,10 @@ void WindowsWindow::StartTrackingMouse(bool useMouseScreenOffset)
     if (!_isTrackingMouse)
     {
         _isTrackingMouse = true;
-        _trackingMouseOffset = Vector2::Zero;
+        _trackingMouseOffset = Float2::Zero;
         _isUsingMouseOffset = useMouseScreenOffset;
+        _isHorizontalFlippingMouse = false;
+        _isVerticalFlippingMouse = false;
 
         int32 x = 0, y = 0, width = 0, height = 0;
         GetScreenInfo(x, y, width, height);
@@ -547,8 +657,36 @@ void WindowsWindow::EndTrackingMouse()
     if (_isTrackingMouse)
     {
         _isTrackingMouse = false;
+        _isHorizontalFlippingMouse = false;
+        _isVerticalFlippingMouse = false;
 
         ReleaseCapture();
+    }
+}
+
+void WindowsWindow::StartClippingCursor(const Rectangle& bounds)
+{
+    _isClippingCursor = true;
+    *(RECT*)_clipCursorRect = {
+        (LONG)bounds.GetUpperLeft().X,
+        (LONG)bounds.GetUpperLeft().Y,
+        (LONG)bounds.GetBottomRight().X,
+        (LONG)bounds.GetBottomRight().Y
+    };
+    if (IsFocused())
+    {
+        _clipCursorSet = true;
+        ClipCursor((RECT*)_clipCursorRect);
+    }
+}
+
+void WindowsWindow::EndClippingCursor()
+{
+    if (_isClippingCursor)
+    {
+        _isClippingCursor = false;
+        _clipCursorSet = false;
+        ClipCursor(nullptr);
     }
 }
 
@@ -601,9 +739,28 @@ void WindowsWindow::CheckForWindowResize()
     // Cache client size
     RECT rect;
     GetClientRect(_handle, &rect);
-    const int32 width = Math::Max(rect.right - rect.left, 0L);
-    const int32 height = Math::Max(rect.bottom - rect.top, 0L);
-    _clientSize = Vector2(static_cast<float>(width), static_cast<float>(height));
+    int32 width = Math::Max(rect.right - rect.left, 0L);
+    int32 height = Math::Max(rect.bottom - rect.top, 0L);
+
+    // Check for windows maximized size and see if it needs to adjust position if needed
+    if (_maximized)
+    {
+        // Pick the current monitor data for sizing
+        const HMONITOR monitor = MonitorFromWindow(_handle, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO monitorInfo;
+        monitorInfo.cbSize = sizeof(MONITORINFO);
+        GetMonitorInfoW(monitor, &monitorInfo);
+
+        auto cwidth = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
+        auto cheight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
+        if (width > cwidth && height > cheight)
+        {
+            width = cwidth;
+            height = cheight;
+            SetWindowPos(_handle, HWND_TOP, monitorInfo.rcWork.left, monitorInfo.rcWork.top, width, height, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+    }
+    _clientSize = Float2(static_cast<float>(width), static_cast<float>(height));
 
     // Check if window size has been changed
     if (width > 0 && height > 0 && (_swapChain == nullptr || width != _swapChain->GetWidth() || height != _swapChain->GetHeight()))
@@ -761,7 +918,6 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
             UpdateCursor();
             return true;
         }
-
         break;
     }
     case WM_MOUSEMOVE:
@@ -782,21 +938,21 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         if (_isTrackingMouse && _isUsingMouseOffset)
         {
             // Check if move mouse to another edge of the desktop
-            Vector2 desktopLocation = _mouseOffsetScreenSize.Location;
-            Vector2 desktopSize = _mouseOffsetScreenSize.GetBottomRight();
+            Float2 desktopLocation = _mouseOffsetScreenSize.Location;
+            Float2 desktopSize = _mouseOffsetScreenSize.GetBottomRight();
 
-            const Vector2 mousePos(static_cast<float>(WINDOWS_GET_X_LPARAM(lParam)), static_cast<float>(WINDOWS_GET_Y_LPARAM(lParam)));
-            Vector2 mousePosition = ClientToScreen(mousePos);
-            Vector2 newMousePosition = mousePosition;
-            if (mousePosition.X <= desktopLocation.X + 2)
-                newMousePosition.X = desktopSize.X - 2;
-            else if (mousePosition.X >= desktopSize.X - 1)
-                newMousePosition.X = desktopLocation.X + 2;
-            if (mousePosition.Y <= desktopLocation.Y + 2)
-                newMousePosition.Y = desktopSize.Y - 2;
-            else if (mousePosition.Y >= desktopSize.Y - 1)
-                newMousePosition.Y = desktopLocation.Y + 2;
-            if (!Vector2::NearEqual(mousePosition, newMousePosition))
+            const Float2 mousePos(static_cast<float>(WINDOWS_GET_X_LPARAM(lParam)), static_cast<float>(WINDOWS_GET_Y_LPARAM(lParam)));
+            Float2 mousePosition = ClientToScreen(mousePos);
+            Float2 newMousePosition = mousePosition;
+            if (_isHorizontalFlippingMouse = mousePosition.X <= desktopLocation.X + 2)
+                newMousePosition.X = desktopSize.X - 3;
+            else if (_isHorizontalFlippingMouse = mousePosition.X >= desktopSize.X - 1)
+                newMousePosition.X = desktopLocation.X + 3;
+            if (_isVerticalFlippingMouse = mousePosition.Y <= desktopLocation.Y + 2)
+                newMousePosition.Y = desktopSize.Y - 3;
+            else if (_isVerticalFlippingMouse = mousePosition.Y >= desktopSize.Y - 1)
+                newMousePosition.Y = desktopLocation.Y + 3;
+            if (!Float2::NearEqual(mousePosition, newMousePosition))
             {
                 _trackingMouseOffset -= newMousePosition - mousePosition;
                 SetMousePosition(ScreenToClient(newMousePosition));
@@ -847,10 +1003,10 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
             }
         }
 #elif WINDOWS_USE_NEWER_BORDER_LESS
-        if (wParam == TRUE && !_settings.HasBorder && _settings.IsRegularWindow)
+        if (wParam == TRUE && !_settings.HasBorder) // && _settings.IsRegularWindow)
         {
             // In maximized mode fill the whole work area of the monitor (excludes task bar)
-            if (::IsWindowMaximized(_handle))
+            if (IsWindowMaximized(_handle))
             {
                 HMONITOR monitor = ::MonitorFromWindow(_handle, MONITOR_DEFAULTTONULL);
                 if (monitor)
@@ -864,7 +1020,7 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
                     }
                 }
             }
-            SetWindowPos(_handle, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            //SetWindowPos(_handle, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             return 0;
         }
 #endif
@@ -876,7 +1032,7 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         if (IsFullscreen())
             return static_cast<int32>(WindowHitCodes::Client);
 
-        const Vector2 mouse(static_cast<float>(WINDOWS_GET_X_LPARAM(lParam)), static_cast<float>(WINDOWS_GET_Y_LPARAM(lParam)));
+        const Float2 mouse(static_cast<float>(WINDOWS_GET_X_LPARAM(lParam)), static_cast<float>(WINDOWS_GET_Y_LPARAM(lParam)));
         WindowHitCodes hit = WindowHitCodes::Client;
         bool handled = false;
         OnHitTest(mouse, hit, handled);
@@ -901,44 +1057,45 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
             Maximize();
         return 0;
     }
+#if WINDOWS_USE_NEWER_BORDER_LESS
     case WM_NCACTIVATE:
     {
         // Skip for border-less windows
-        if (!_settings.HasBorder)
+        if (!_settings.HasBorder && !IsCompositionEnabled())
             return 1;
         break;
     }
+#endif
+#if 0
     case WM_NCPAINT:
-    {
         // Skip for border-less windows
         if (!_settings.HasBorder)
             return 1;
         break;
-    }
+#endif
     case WM_ERASEBKGND:
-    {
         // Skip the window background erasing
         return 1;
-    }
     case WM_GETMINMAXINFO:
     {
         const auto minMax = reinterpret_cast<MINMAXINFO*>(lParam);
-
-        int32 borderWidth = 0, borderHeight = 0;
-        if (_settings.HasBorder)
-        {
-            const DWORD windowStyle = GetWindowLongW(_handle, GWL_STYLE);
-            const DWORD windowExStyle = GetWindowLongW(_handle, GWL_EXSTYLE);
-            RECT borderRect = { 0, 0, 0, 0 };
-            AdjustWindowRectEx(&borderRect, windowStyle, false, windowExStyle);
-            borderWidth = borderRect.right - borderRect.left;
-            borderHeight = borderRect.bottom - borderRect.top;
-        }
-
         minMax->ptMinTrackSize.x = (int32)_settings.MinimumSize.X;
         minMax->ptMinTrackSize.y = (int32)_settings.MinimumSize.Y;
-        minMax->ptMaxTrackSize.x = (int32)_settings.MaximumSize.X + borderWidth;
-        minMax->ptMaxTrackSize.y = (int32)_settings.MaximumSize.Y + borderHeight;
+        if (_settings.MaximumSize.SumValues() > 0)
+        {
+            int32 borderWidth = 0, borderHeight = 0;
+            if (_settings.HasBorder)
+            {
+                const DWORD windowStyle = GetWindowLongW(_handle, GWL_STYLE);
+                const DWORD windowExStyle = GetWindowLongW(_handle, GWL_EXSTYLE);
+                RECT borderRect = { 0, 0, 0, 0 };
+                AdjustWindowRectEx(&borderRect, windowStyle, false, windowExStyle);
+                borderWidth = borderRect.right - borderRect.left;
+                borderHeight = borderRect.bottom - borderRect.top;
+            }
+            minMax->ptMaxTrackSize.x = (int32)_settings.MaximumSize.X + borderWidth;
+            minMax->ptMaxTrackSize.y = (int32)_settings.MaximumSize.Y + borderHeight;
+        }
 
         // Include Windows task bar size into maximized tool window
         WINDOWPLACEMENT e;
@@ -963,7 +1120,6 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_SYSCOMMAND:
-    {
         // Prevent moving/sizing in full screen mode
         if (IsFullscreen())
         {
@@ -976,21 +1132,35 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
                 return 0;
             }
         }
-
         break;
-    }
     case WM_CREATE:
-    {
         return 0;
-    }
-    case WM_MOVE:
-    {
-        break;
-    }
     case WM_SIZE:
     {
         if (SIZE_MINIMIZED == wParam)
         {
+            // Get the minimized window position in workspace coordinates
+            WINDOWPLACEMENT placement;
+            placement.length = sizeof(WINDOWPLACEMENT);
+            GetWindowPlacement(_handle, &placement);
+
+            // Calculate client offsets from window borders and title bar
+            RECT winRect = { 0, 0, static_cast<LONG>(_clientSize.X), static_cast<LONG>(_clientSize.Y) };
+            LONG style = GetWindowLong(_handle, GWL_STYLE);
+            LONG exStyle = GetWindowLong(_handle, GWL_EXSTYLE);
+            AdjustWindowRectEx(&winRect, style, FALSE, exStyle);
+
+            // Calculate monitor offsets from taskbar position
+            const HMONITOR monitor = MonitorFromWindow(_handle, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO monitorInfo;
+            monitorInfo.cbSize = sizeof(MONITORINFO);
+            GetMonitorInfoW(monitor, &monitorInfo);
+
+            // Convert the workspace coordinates to screen space and store it
+            _minimizedScreenPosition = Float2(
+                static_cast<float>(placement.rcNormalPosition.left + monitorInfo.rcWork.left - monitorInfo.rcMonitor.left - winRect.left),
+                static_cast<float>(placement.rcNormalPosition.top + monitorInfo.rcWork.top - monitorInfo.rcMonitor.top - winRect.top));
+
             _minimized = true;
             _maximized = false;
         }
@@ -1029,6 +1199,10 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
                     // In this case, we don't resize yet -- we wait until the user stops dragging, and a WM_EXITSIZEMOVE message comes.
                     UpdateRegion();
                 }
+                else if (_isSwitchingFullScreen)
+                {
+                    // Ignored
+                }
                 else
                 {
                     // This WM_SIZE come from resizing the window via an API like SetWindowPos() so resize
@@ -1044,13 +1218,7 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         _dpi = HIWORD(wParam);
         _dpiScale = (float)_dpi / (float)DefaultDPI;
         RECT* windowRect = (RECT*)lParam;
-        SetWindowPos(_handle,
-                     nullptr,
-                     windowRect->left,
-                     windowRect->top,
-                     windowRect->right - windowRect->left,
-                     windowRect->bottom - windowRect->top,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(_handle, nullptr, windowRect->left, windowRect->top, windowRect->right - windowRect->left, windowRect->bottom - windowRect->top, SWP_NOZORDER | SWP_NOACTIVATE);
         // TODO: Recalculate fonts
         return 0;
     }
@@ -1060,16 +1228,24 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     }
     case WM_EXITSIZEMOVE:
-    {
         _isResizing = false;
         CheckForWindowResize();
         UpdateRegion();
         break;
-    }
     case WM_SETFOCUS:
         OnGotFocus();
+        if (_isClippingCursor && !_clipCursorSet)
+        {
+            _clipCursorSet = true;
+            ClipCursor((RECT*)_clipCursorRect);
+        }
         break;
     case WM_KILLFOCUS:
+        if (_clipCursorSet)
+        {
+            _clipCursorSet = false;
+            ClipCursor(nullptr);
+        }
         OnLostFocus();
         break;
     case WM_ACTIVATEAPP:
@@ -1090,15 +1266,19 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
         // A menu is active and the user presses a key that does not correspond to any mnemonic or accelerator key so just ignore and don't beep
         return MAKELRESULT(0, MNC_CLOSE);
     case WM_SYSKEYDOWN:
-    {
         if (wParam == VK_F4)
         {
             LOG(Info, "Alt+F4 pressed");
             Close(ClosingReason::User);
             return 0;
         }
-    }
-    break;
+        if (wParam == VK_RETURN)
+        {
+            LOG(Info, "Alt+Enter pressed");
+            SetIsFullscreen(!IsFullscreen());
+            return 0;
+        }
+        break;
     case WM_POWERBROADCAST:
         switch (wParam)
         {
@@ -1110,7 +1290,6 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
             return true;
         }
         break;
-
     case WM_CLOSE:
         Close(ClosingReason::User);
         return 0;
@@ -1140,5 +1319,611 @@ LRESULT WindowsWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam)
 
     return DefWindowProc(_handle, msg, wParam, lParam);
 }
+
+#if USE_EDITOR
+
+HGLOBAL duplicateGlobalMem(HGLOBAL hMem)
+{
+    auto len = GlobalSize(hMem);
+    auto source = GlobalLock(hMem);
+    auto dest = GlobalAlloc(GMEM_FIXED, len);
+    Platform::MemoryCopy(dest, source, len);
+    GlobalUnlock(hMem);
+    return dest;
+}
+
+DWORD dropEffect2OleEnum(DragDropEffect effect)
+{
+    DWORD result;
+    switch (effect)
+    {
+    case DragDropEffect::None:
+        result = DROPEFFECT_NONE;
+        break;
+    case DragDropEffect::Copy:
+        result = DROPEFFECT_COPY;
+        break;
+    case DragDropEffect::Move:
+        result = DROPEFFECT_MOVE;
+        break;
+    case DragDropEffect::Link:
+        result = DROPEFFECT_LINK;
+        break;
+    default:
+        result = DROPEFFECT_NONE;
+        break;
+    }
+    return result;
+}
+
+DragDropEffect dropEffectFromOleEnum(DWORD effect)
+{
+    DragDropEffect result;
+    switch (effect)
+    {
+    case DROPEFFECT_NONE:
+        result = DragDropEffect::None;
+        break;
+    case DROPEFFECT_COPY:
+        result = DragDropEffect::Copy;
+        break;
+    case DROPEFFECT_MOVE:
+        result = DragDropEffect::Move;
+        break;
+    case DROPEFFECT_LINK:
+        result = DragDropEffect::Link;
+        break;
+    default:
+        result = DragDropEffect::None;
+        break;
+    }
+    return result;
+}
+
+HANDLE StringToHandle(const StringView& str)
+{
+    // Allocate and lock a global memory buffer.
+    // Make it fixed data so we don't have to use GlobalLock
+    const int32 length = str.Length();
+    char* ptr = static_cast<char*>(GlobalAlloc(GMEM_FIXED, length + 1));
+
+    // Copy the string into the buffer as ANSI text
+    StringUtils::ConvertUTF162ANSI(str.Get(), ptr, length);
+    ptr[length] = '\0';
+
+    return ptr;
+}
+
+void DeepCopyFormatEtc(FORMATETC* dest, FORMATETC* source)
+{
+    // Copy the source FORMATETC into dest
+    *dest = *source;
+
+    if (source->ptd)
+    {
+        // Allocate memory for the DVTARGETDEVICE if necessary
+        dest->ptd = static_cast<DVTARGETDEVICE*>(CoTaskMemAlloc(sizeof(DVTARGETDEVICE)));
+
+        // Copy the contents of the source DVTARGETDEVICE into dest->ptd
+        *(dest->ptd) = *(source->ptd);
+    }
+}
+
+HRESULT CreateEnumFormatEtc(UINT nNumFormats, FORMATETC* pFormatEtc, IEnumFORMATETC** ppEnumFormatEtc);
+
+/// <summary>
+/// GUI data for Windows platform
+/// </summary>
+class WindowsGuiData : public IGuiData
+{
+private:
+    Type _type;
+    Array<String> _data;
+
+public:
+    /// <summary>
+    /// Init
+    /// </summary>
+    WindowsGuiData()
+        : _type(Type::Unknown)
+        , _data(1)
+    {
+    }
+
+public:
+    /// <summary>
+    /// Init from Ole IDataObject
+    /// </summary>
+    /// <param name="pDataObj">Object</param>
+    void Init(IDataObject* pDataObj)
+    {
+        // Temporary data
+        FORMATETC fmtetc;
+        STGMEDIUM stgmed;
+
+        // Clear
+        _type = Type::Unknown;
+        _data.Clear();
+
+        // Check type
+        fmtetc = { CF_TEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+        if (pDataObj->GetData(&fmtetc, &stgmed) == S_OK)
+        {
+            // Text
+            _type = Type::Text;
+
+            // Get data
+            char* text = static_cast<char*>(GlobalLock(stgmed.hGlobal));
+            _data.Add(String(text));
+            GlobalUnlock(stgmed.hGlobal);
+            ReleaseStgMedium(&stgmed);
+        }
+        else
+        {
+            fmtetc = { CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            if (pDataObj->GetData(&fmtetc, &stgmed) == S_OK)
+            {
+                // Unicode Text
+                _type = Type::Text;
+
+                // Get data
+                Char* text = static_cast<Char*>(GlobalLock(stgmed.hGlobal));
+                _data.Add(String(text));
+                GlobalUnlock(stgmed.hGlobal);
+                ReleaseStgMedium(&stgmed);
+            }
+            else
+            {
+                fmtetc = { CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                if (pDataObj->GetData(&fmtetc, &stgmed) == S_OK)
+                {
+                    // Files
+                    _type = Type::Files;
+
+                    // Get data
+                    Char item[MAX_PATH];
+                    HDROP hdrop = static_cast<HDROP>(GlobalLock(stgmed.hGlobal));
+                    UINT filesCount = DragQueryFileW(hdrop, 0xFFFFFFFF, nullptr, 0);
+                    for (UINT i = 0; i < filesCount; i++)
+                    {
+                        if (DragQueryFileW(hdrop, i, item, MAX_PATH) != 0)
+                        {
+                            _data.Add(String(item));
+                        }
+                    }
+                    GlobalUnlock(stgmed.hGlobal);
+                    ReleaseStgMedium(&stgmed);
+                }
+            }
+        }
+    }
+
+public:
+    // [IGuiData]
+    Type GetType() const override
+    {
+        return _type;
+    }
+    String GetAsText() const override
+    {
+        String result;
+        if (_type == Type::Text)
+        {
+            result = _data[0];
+        }
+        return result;
+    }
+    void GetAsFiles(Array<String>* files) const override
+    {
+        if (_type == Type::Files)
+        {
+            files->Add(_data);
+        }
+    }
+};
+
+/// <summary>
+/// Tool class for Windows Ole support
+/// </summary>
+class WindowsEnumFormatEtc : public IEnumFORMATETC
+{
+private:
+    ULONG _refCount;
+    ULONG _index;
+    ULONG _formatsCount;
+    FORMATETC* _formatEtc;
+
+public:
+    WindowsEnumFormatEtc(FORMATETC* pFormatEtc, int32 nNumFormats)
+        : _refCount(1)
+        , _index(0)
+        , _formatsCount(nNumFormats)
+        , _formatEtc(nullptr)
+    {
+        // Allocate memory
+        _formatEtc = new FORMATETC[nNumFormats];
+
+        // Copy the FORMATETC structures
+        for (int32 i = 0; i < nNumFormats; i++)
+        {
+            DeepCopyFormatEtc(&_formatEtc[i], &pFormatEtc[i]);
+        }
+    }
+
+    ~WindowsEnumFormatEtc()
+    {
+        if (_formatEtc)
+        {
+            for (uint32 i = 0; i < _formatsCount; i++)
+            {
+                if (_formatEtc[i].ptd)
+                {
+                    CoTaskMemFree(_formatEtc[i].ptd);
+                }
+            }
+
+            delete[] _formatEtc;
+        }
+    }
+
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, _COM_Outptr_ void __RPC_FAR *__RPC_FAR * ppvObject) override
+    {
+        // Check to see what interface has been requested
+        if (riid == IID_IEnumFORMATETC || riid == IID_IUnknown)
+        {
+            AddRef();
+            *ppvObject = this;
+            return S_OK;
+        }
+
+        // No interface
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        _InterlockedIncrement(&_refCount);
+        return _refCount;
+    }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        ULONG ulRefCount = _InterlockedDecrement(&_refCount);
+        if (_refCount == 0)
+        {
+            delete this;
+        }
+        return ulRefCount;
+    }
+
+    // [IEnumFormatEtc]
+    HRESULT STDMETHODCALLTYPE Next(ULONG celt, FORMATETC* pFormatEtc, ULONG* pceltFetched) override
+    {
+        ULONG copied = 0;
+
+        // validate arguments
+        if (celt == 0 || pFormatEtc == nullptr)
+            return E_INVALIDARG;
+
+        // copy FORMATETC structures into caller's buffer
+        while (_index < _formatsCount && copied < celt)
+        {
+            DeepCopyFormatEtc(&pFormatEtc[copied], &_formatEtc[_index]);
+            copied++;
+            _index++;
+        }
+
+        // store result
+        if (pceltFetched != nullptr)
+            *pceltFetched = copied;
+
+        // did we copy all that was requested?
+        return (copied == celt) ? S_OK : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE Skip(ULONG celt) override
+    {
+        _index += celt;
+        return (_index <= _formatsCount) ? S_OK : S_FALSE;
+    }
+    HRESULT STDMETHODCALLTYPE Reset() override
+    {
+        _index = 0;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE Clone(IEnumFORMATETC** ppEnumFormatEtc) override
+    {
+        HRESULT result;
+
+        // Make a duplicate enumerator
+        result = CreateEnumFormatEtc(_formatsCount, _formatEtc, ppEnumFormatEtc);
+
+        if (result == S_OK)
+        {
+            // Manually set the index state
+            static_cast<WindowsEnumFormatEtc*>(*ppEnumFormatEtc)->_index = _index;
+        }
+
+        return result;
+    }
+};
+
+HRESULT CreateEnumFormatEtc(UINT nNumFormats, FORMATETC* pFormatEtc, IEnumFORMATETC** ppEnumFormatEtc)
+{
+    if (nNumFormats == 0 || pFormatEtc == nullptr || ppEnumFormatEtc == nullptr)
+        return E_INVALIDARG;
+    *ppEnumFormatEtc = new WindowsEnumFormatEtc(pFormatEtc, nNumFormats);
+    return *ppEnumFormatEtc ? S_OK : E_OUTOFMEMORY;
+}
+
+/// <summary>
+/// Drag drop source and data container for Ole
+/// </summary>
+class WindowsDragSource : public IDataObject, public IDropSource
+{
+private:
+    ULONG _refCount;
+    int32 _formatsCount;
+    FORMATETC* _formatEtc;
+    STGMEDIUM* _stgMedium;
+
+public:
+    WindowsDragSource(FORMATETC* fmtetc, STGMEDIUM* stgmed, int32 count)
+        : _refCount(1)
+        , _formatsCount(count)
+        , _formatEtc(nullptr)
+        , _stgMedium(nullptr)
+    {
+        // Allocate memory
+        _formatEtc = new FORMATETC[count];
+        _stgMedium = new STGMEDIUM[count];
+
+        // Copy descriptors
+        for (int32 i = 0; i < count; i++)
+        {
+            _formatEtc[i] = fmtetc[i];
+            _stgMedium[i] = stgmed[i];
+        }
+    }
+
+    virtual ~WindowsDragSource()
+    {
+        delete[] _formatEtc;
+        delete[] _stgMedium;
+    }
+
+public:
+    // [IUnknown]
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, _COM_Outptr_ void __RPC_FAR *__RPC_FAR * ppvObject) override
+    {
+        // Check to see what interface has been requested
+        if (riid == IID_IDataObject || riid == IID_IUnknown || riid == IID_IDropSource)
+        {
+            AddRef();
+            *ppvObject = this;
+            return S_OK;
+        }
+
+        // No interface
+        *ppvObject = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        _InterlockedIncrement(&_refCount);
+        return _refCount;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        ULONG ulRefCount = _InterlockedDecrement(&_refCount);
+        if (_refCount == 0)
+        {
+            delete this;
+        }
+        return ulRefCount;
+    }
+
+    // [IDropSource]
+    HRESULT STDMETHODCALLTYPE QueryContinueDrag(_In_ BOOL fEscapePressed, _In_ DWORD grfKeyState) override
+    {
+        // If the Escape key has been pressed since the last call, cancel the drop
+        if (fEscapePressed == TRUE || grfKeyState & MK_RBUTTON)
+            return DRAGDROP_S_CANCEL;
+
+        // If the LeftMouse button has been released, then do the drop!
+        if ((grfKeyState & MK_LBUTTON) == 0)
+            return DRAGDROP_S_DROP;
+
+        // Continue with the drag-drop
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GiveFeedback(_In_ DWORD dwEffect) override
+    {
+        // TODO: allow to use custom mouse cursor during drop and drag operation
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+    // [IDataObject]
+    HRESULT STDMETHODCALLTYPE GetData(_In_ FORMATETC* pformatetcIn, _Out_ STGMEDIUM* pmedium) override
+    {
+        if (pformatetcIn == nullptr || pmedium == nullptr)
+            return E_INVALIDARG;
+
+        // Try to match the specified FORMATETC with one of our supported formats
+        int32 index = lookupFormatEtc(pformatetcIn);
+        if (index == INVALID_INDEX)
+            return DV_E_FORMATETC;
+
+        // Found a match - transfer data into supplied storage medium
+        pmedium->tymed = _formatEtc[index].tymed;
+        pmedium->pUnkForRelease = nullptr;
+
+        // Copy the data into the caller's storage medium
+        switch (_formatEtc[index].tymed)
+        {
+        case TYMED_HGLOBAL:
+            pmedium->hGlobal = duplicateGlobalMem(_stgMedium[index].hGlobal);
+            break;
+
+        default:
+            return DV_E_FORMATETC;
+        }
+
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetDataHere(_In_ FORMATETC* pformatetc, _Inout_ STGMEDIUM* pmedium) override
+    {
+        return DATA_E_FORMATETC;
+    }
+    HRESULT STDMETHODCALLTYPE QueryGetData(__RPC__in_opt FORMATETC* pformatetc) override
+    {
+        return lookupFormatEtc(pformatetc) == INVALID_INDEX ? DV_E_FORMATETC : S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(__RPC__in_opt FORMATETC* pformatectIn, __RPC__out FORMATETC* pformatetcOut) override
+    {
+        // Apparently we have to set this field to NULL even though we don't do anything else
+        pformatetcOut->ptd = nullptr;
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE SetData(_In_ FORMATETC* pformatetc, _In_ STGMEDIUM* pmedium, BOOL fRelease) override
+    {
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dwDirection, __RPC__deref_out_opt IEnumFORMATETC** ppenumFormatEtc) override
+    {
+        // Only the get direction is supported for OLE
+        if (dwDirection == DATADIR_GET)
+        {
+            // TODO: use SHCreateStdEnumFmtEtc API call
+            return CreateEnumFormatEtc(_formatsCount, _formatEtc, ppenumFormatEtc);
+        }
+
+        // The direction specified is not supported for drag+drop
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE DAdvise(__RPC__in FORMATETC* pformatetc, DWORD advf, __RPC__in_opt IAdviseSink* pAdvSink, __RPC__out DWORD* pdwConnection) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD dwConnection) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(__RPC__deref_out_opt IEnumSTATDATA** ppenumAdvise) override
+    {
+        return OLE_E_ADVISENOTSUPPORTED;
+    }
+
+private:
+    int32 lookupFormatEtc(FORMATETC* pFormatEtc) const
+    {
+        // Check each of our formats in turn to see if one matches
+        for (int32 i = 0; i < _formatsCount; i++)
+        {
+            if ((_formatEtc[i].tymed & pFormatEtc->tymed) &&
+                _formatEtc[i].cfFormat == pFormatEtc->cfFormat &&
+                _formatEtc[i].dwAspect == pFormatEtc->dwAspect)
+            {
+                // Return index of stored format
+                return i;
+            }
+        }
+
+        // Format not found
+        return INVALID_INDEX;
+    }
+};
+
+WindowsGuiData GuiDragDropData;
+
+DragDropEffect WindowsWindow::DoDragDrop(const StringView& data)
+{
+    // Create background worker that will keep updating GUI (perform rendering)
+    const auto task = New<DoDragDropJob>();
+    Task::StartNew(task);
+    while (task->GetState() == TaskState::Queued)
+        Platform::Sleep(1);
+
+    // Create descriptors
+    FORMATETC fmtetc = { CF_TEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM stgmed = { TYMED_HGLOBAL, { nullptr }, nullptr };
+
+    // Create a HGLOBAL inside the storage medium
+    stgmed.hGlobal = StringToHandle(data);
+
+    // Create drop source
+    auto dropSource = new WindowsDragSource(&fmtetc, &stgmed, 1);
+
+    // Do the drag drop operation
+    DWORD dwEffect;
+    HRESULT result = ::DoDragDrop(dropSource, dropSource, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK | DROPEFFECT_SCROLL, &dwEffect);
+
+    // Wait for job end
+    Platform::AtomicStore(&task->ExitFlag, 1);
+    task->Wait();
+
+    // Release allocated data
+    dropSource->Release();
+    ReleaseStgMedium(&stgmed);
+
+    // Fix hanging mouse state (Windows doesn't send WM_LBUTTONUP when we end the drag and drop)
+    if (Input::GetMouseButton(MouseButton::Left))
+    {
+        ::POINT point;
+        ::GetCursorPos(&point);
+        Input::Mouse->OnMouseUp(Float2((float)point.x, (float)point.y), MouseButton::Left, this);
+    }
+
+    return SUCCEEDED(result) ? dropEffectFromOleEnum(dwEffect) : DragDropEffect::None;
+}
+
+HRESULT WindowsWindow::DragEnter(Windows::IDataObject* pDataObj, Windows::DWORD grfKeyState, Windows::POINTL pt, Windows::DWORD* pdwEffect)
+{
+    POINT p = { pt.x, pt.y };
+    ::ScreenToClient(_handle, &p);
+    GuiDragDropData.Init((IDataObject*)pDataObj);
+    DragDropEffect effect = DragDropEffect::None;
+    OnDragEnter(&GuiDragDropData, Float2(static_cast<float>(p.x), static_cast<float>(p.y)), effect);
+    Focus();
+    *pdwEffect = dropEffect2OleEnum(effect);
+    return S_OK;
+}
+
+HRESULT WindowsWindow::DragOver(Windows::DWORD grfKeyState, Windows::POINTL pt, Windows::DWORD* pdwEffect)
+{
+    POINT p = { pt.x, pt.y };
+    ::ScreenToClient(_handle, &p);
+    DragDropEffect effect = DragDropEffect::None;
+    OnDragOver(&GuiDragDropData, Float2(static_cast<float>(p.x), static_cast<float>(p.y)), effect);
+    *pdwEffect = dropEffect2OleEnum(effect);
+    return S_OK;
+}
+
+HRESULT WindowsWindow::DragLeave()
+{
+    OnDragLeave();
+    return S_OK;
+}
+
+HRESULT WindowsWindow::Drop(Windows::IDataObject* pDataObj, Windows::DWORD grfKeyState, Windows::POINTL pt, Windows::DWORD* pdwEffect)
+{
+    POINT p = { pt.x, pt.y };
+    ::ScreenToClient(_handle, &p);
+    GuiDragDropData.Init((IDataObject*)pDataObj);
+    DragDropEffect effect = DragDropEffect::None;
+    OnDragDrop(&GuiDragDropData, Float2(static_cast<float>(p.x), static_cast<float>(p.y)), effect);
+    *pdwEffect = dropEffect2OleEnum(effect);
+    return S_OK;
+}
+
+#else
+
+DragDropEffect WindowsWindow::DoDragDrop(const StringView& data)
+{
+	return DragDropEffect::None;
+}
+
+#endif
 
 #endif

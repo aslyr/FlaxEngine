@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_VULKAN
 
@@ -8,7 +8,9 @@
 #include "GPUAdapterVulkan.h"
 #include "GPUContextVulkan.h"
 #include "CmdBufferVulkan.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Graphics/GPULimits.h"
+#include "Engine/Scripting/Enums.h"
 
 void BackBufferVulkan::Setup(GPUSwapChainVulkan* window, VkImage backbuffer, PixelFormat format, VkExtent3D extent)
 {
@@ -77,7 +79,7 @@ void GPUSwapChainVulkan::OnReleaseGPU()
 
 bool GPUSwapChainVulkan::IsFullscreen()
 {
-#if PLATFORM_ANDROID || PLATFORM_SWITCH
+#if PLATFORM_ANDROID || PLATFORM_SWITCH || PLATFORM_IOS
     // Not supported
     return true;
 #else
@@ -87,7 +89,7 @@ bool GPUSwapChainVulkan::IsFullscreen()
 
 void GPUSwapChainVulkan::SetFullscreen(bool isFullscreen)
 {
-#if PLATFORM_ANDROID || PLATFORM_SWITCH
+#if PLATFORM_ANDROID || PLATFORM_SWITCH || PLATFORM_IOS
     // Not supported
 #else
     if (!_surface)
@@ -185,6 +187,8 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
         // Flush removed resources
         _device->DeferredDeletionQueue.ReleaseResources(true);
     }
+    ASSERT(_surface == VK_NULL_HANDLE);
+    ASSERT_LOW_LAYER(_backBuffers.Count() == 0);
 
     // Create platform-dependent surface
     VulkanPlatform::CreateSurface(windowHandle, GPUDeviceVulkan::Instance, &_surface);
@@ -193,6 +197,7 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
         LOG(Warning, "Failed to create Vulkan surface.");
         return true;
     }
+    _memoryUsage = 1;
 
     const auto& gpu = _device->Adapter->Gpu;
 
@@ -205,14 +210,14 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
         VALIDATE_VULKAN_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, _surface, &surfaceFormatsCount, nullptr));
         ASSERT(surfaceFormatsCount > 0);
 
-        Array<VkSurfaceFormatKHR> surfaceFormats;
+        Array<VkSurfaceFormatKHR, InlinedAllocation<16>> surfaceFormats;
         surfaceFormats.AddZeroed(surfaceFormatsCount);
         VALIDATE_VULKAN_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, _surface, &surfaceFormatsCount, surfaceFormats.Get()));
 
         if (resultFormat != PixelFormat::Unknown)
         {
             bool found = false;
-            if (FORMAT_FEATURES_ARE_SUPPORTED(_device->FeaturesPerFormat[(int32)resultFormat].Support, FormatSupport::RenderTarget))
+            if (EnumHasAllFlags(_device->FeaturesPerFormat[(int32)resultFormat].Support, FormatSupport::RenderTarget))
             {
                 const VkFormat requested = RenderToolsVulkan::ToVulkanFormat(resultFormat);
                 for (int32 i = 0; i < surfaceFormats.Count(); i++)
@@ -227,13 +232,13 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
 
                 if (!found)
                 {
-                    LOG(Warning, "Requested pixel format {0} not supported by this swapchain. Falling back to supported swapchain formats...", (uint32)resultFormat);
+                    LOG(Warning, "Requested pixel format {0} not supported by this swapchain. Falling back to supported swapchain formats...", ScriptingEnum::ToString(resultFormat));
                     resultFormat = PixelFormat::Unknown;
                 }
             }
             else
             {
-                LOG(Warning, "Requested pixel format {0} is not supported by this Vulkan implementation", (uint32)resultFormat);
+                LOG(Warning, "Requested pixel format {0} is not supported by this Vulkan implementation", ScriptingEnum::ToString(resultFormat));
                 resultFormat = PixelFormat::Unknown;
             }
         }
@@ -312,7 +317,7 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
         VALIDATE_VULKAN_RESULT(vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, _surface, &presentModesCount, nullptr));
         ASSERT(presentModesCount > 0);
 
-        Array<VkPresentModeKHR> presentModes;
+        Array<VkPresentModeKHR, InlinedAllocation<4>> presentModes;
         presentModes.Resize(presentModesCount);
         VALIDATE_VULKAN_RESULT(vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, _surface, &presentModesCount, presentModes.Get()));
 
@@ -360,10 +365,15 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
     VALIDATE_VULKAN_RESULT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, _surface, &surfProperties));
     width = Math::Clamp<int32>(width, surfProperties.minImageExtent.width, surfProperties.maxImageExtent.width);
     height = Math::Clamp<int32>(height, surfProperties.minImageExtent.height, surfProperties.maxImageExtent.height);
+    if (width <= 0 || height <= 0)
+    {
+        LOG(Error, "Vulkan SwapChain dimensions are invalid {}x{} (minImageExtent={}x{}, maxImageExtent={}x{})", width, height, surfProperties.minImageExtent.width, surfProperties.minImageExtent.height, surfProperties.maxImageExtent.width, surfProperties.maxImageExtent.height);
+        return true;
+    }
     VkSwapchainCreateInfoKHR swapChainInfo;
     RenderToolsVulkan::ZeroStruct(swapChainInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
     swapChainInfo.surface = _surface;
-    swapChainInfo.minImageCount = Math::Clamp<uint32_t>(VULKAN_BACK_BUFFERS_COUNT, surfProperties.minImageCount, surfProperties.maxImageCount);
+    swapChainInfo.minImageCount = Math::Clamp<uint32_t>(VULKAN_BACK_BUFFERS_COUNT, surfProperties.minImageCount, Math::Min<uint32_t>(surfProperties.maxImageCount, VULKAN_BACK_BUFFERS_COUNT_MAX));
     swapChainInfo.imageFormat = result.format;
     swapChainInfo.imageColorSpace = result.colorSpace;
     swapChainInfo.imageExtent.width = width;
@@ -414,8 +424,8 @@ bool GPUSwapChainVulkan::CreateSwapChain(int32 width, int32 height)
         }
     }
 
-    // Calculate memory usage
-    _memoryUsage = RenderTools::CalculateTextureMemoryUsage(_format, _width, _height, 1) * _backBuffers.Count();
+    // Estimate memory usage
+    _memoryUsage = 1024 + RenderTools::CalculateTextureMemoryUsage(_format, _width, _height, 1) * _backBuffers.Count();
 
     return false;
 }
@@ -450,10 +460,12 @@ GPUSwapChainVulkan::Status GPUSwapChainVulkan::Present(QueueVulkan* presentQueue
     {
         return Status::LostSurface;
     }
+#if GPU_ENABLE_ASSERTION
     if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR)
     {
         VALIDATE_VULKAN_RESULT(presentResult);
     }
+#endif
 
     return Status::Ok;
 }

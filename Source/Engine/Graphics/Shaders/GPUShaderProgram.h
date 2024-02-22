@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -50,7 +50,6 @@ struct GPUShaderProgramInitializer
 class FLAXENGINE_API GPUShaderProgram
 {
 protected:
-
     StringAnsi _name;
     ShaderBindings _bindings;
     ShaderFlags _flags;
@@ -69,7 +68,6 @@ protected:
     }
 
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="GPUShaderProgram"/> class.
     /// </summary>
@@ -78,7 +76,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets name of the shader program.
     /// </summary>
@@ -104,7 +101,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets shader program stage type.
     /// </summary>
@@ -127,7 +123,19 @@ public:
 class GPUShaderProgramVS : public GPUShaderProgram
 {
 public:
+    // Input element run-time data (see VertexShaderMeta::InputElement for compile-time data)
+    PACK_STRUCT(struct InputElement
+    {
+        byte Type; // VertexShaderMeta::InputType
+        byte Index;
+        byte Format; // PixelFormat
+        byte InputSlot;
+        uint32 AlignedByteOffset; // Fixed value or INPUT_LAYOUT_ELEMENT_ALIGN if auto
+        byte InputSlotClass; // INPUT_LAYOUT_ELEMENT_PER_VERTEX_DATA or INPUT_LAYOUT_ELEMENT_PER_INSTANCE_DATA
+        uint32 InstanceDataStepRate; // 0 if per-vertex
+    });
 
+public:
     /// <summary>
     /// Gets input layout description handle (platform dependent).
     /// </summary>
@@ -139,7 +147,6 @@ public:
     virtual byte GetInputLayoutSize() const = 0;
 
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {
@@ -153,7 +160,6 @@ public:
 class GPUShaderProgramGS : public GPUShaderProgram
 {
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {
@@ -167,11 +173,9 @@ public:
 class GPUShaderProgramHS : public GPUShaderProgram
 {
 protected:
-
     int32 _controlPointsCount;
 
 public:
-
     /// <summary>
     /// Gets the input control points count (valid range: 1-32).
     /// </summary>
@@ -181,7 +185,6 @@ public:
     }
 
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {
@@ -195,7 +198,6 @@ public:
 class GPUShaderProgramDS : public GPUShaderProgram
 {
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {
@@ -209,7 +211,6 @@ public:
 class GPUShaderProgramPS : public GPUShaderProgram
 {
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {
@@ -223,7 +224,6 @@ public:
 class GPUShaderProgramCS : public GPUShaderProgram
 {
 public:
-
     // [GPUShaderProgram]
     ShaderStage GetStage() const override
     {

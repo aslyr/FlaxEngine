@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -96,6 +96,7 @@ namespace FlaxEditor.Modules
             handler.ProgressStart += HandlerOnProgressStart;
             handler.ProgressChanged += HandlerOnProgressChanged;
             handler.ProgressEnd += HandlerOnProgressEnd;
+            handler.ProgressFailed += HandlerOnProgressFail;
         }
 
         /// <summary>
@@ -113,6 +114,7 @@ namespace FlaxEditor.Modules
             handler.ProgressStart -= HandlerOnProgressStart;
             handler.ProgressChanged -= HandlerOnProgressChanged;
             handler.ProgressEnd -= HandlerOnProgressEnd;
+            handler.ProgressFailed -= HandlerOnProgressFail;
         }
 
         private void UpdateProgress()
@@ -127,6 +129,7 @@ namespace FlaxEditor.Modules
             else
             {
                 Editor.UI.UpdateProgress(string.Empty, 0);
+                Editor.UI.UpdateStatusBar();
             }
         }
 
@@ -149,6 +152,12 @@ namespace FlaxEditor.Modules
             {
                 Editor.Windows.FlashMainWindow();
             }
+        }
+
+        private void HandlerOnProgressFail(ProgressHandler handler, string message)
+        {
+            UpdateProgress();
+            Editor.UI.ProgressFailed(message);
         }
     }
 }

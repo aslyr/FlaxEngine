@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Linq;
@@ -30,6 +30,17 @@ namespace FlaxEditor.GUI
             /// <summary>
             /// Initializes a new instance of the <see cref="TypeItemView"/> class.
             /// </summary>
+            public TypeItemView()
+            {
+                _type = ScriptType.Null;
+                Name = "<null>";
+                TooltipText = "Unset value.";
+                Tag = _type;
+            }
+
+            /// <summary>
+            /// Initializes a new instance of the <see cref="TypeItemView"/> class.
+            /// </summary>
             /// <param name="type">The type.</param>
             public TypeItemView(ScriptType type)
             : this(type, type.GetAttributes(false))
@@ -46,14 +57,8 @@ namespace FlaxEditor.GUI
                 _type = type;
 
                 Name = type.Name;
-                TooltipText = type.TypeName;
+                TooltipText = Editor.Instance.CodeDocs.GetTooltip(type, attributes);
                 Tag = type;
-                var tooltipAttribute = (TooltipAttribute)attributes.FirstOrDefault(x => x is TooltipAttribute);
-                if (tooltipAttribute != null)
-                {
-                    TooltipText += '\n';
-                    TooltipText += tooltipAttribute.Text;
-                }
                 var categoryAttribute = (CategoryAttribute)attributes.FirstOrDefault(x => x is CategoryAttribute);
                 if (categoryAttribute != null)
                 {
@@ -89,19 +94,23 @@ namespace FlaxEditor.GUI
 
             // TODO: use async thread to search types without UI stall
             var allTypes = Editor.Instance.CodeEditing.All.Get();
+            AddItem(new TypeItemView());
             for (int i = 0; i < allTypes.Count; i++)
             {
                 var type = allTypes[i];
                 if (_isValid(type))
                 {
                     var attributes = type.GetAttributes(true);
-                    if (attributes.FirstOrDefault(x => x is HideInEditorAttribute) == null)
+                    if (attributes.FirstOrDefault(x => x is HideInEditorAttribute || x is System.Runtime.CompilerServices.CompilerGeneratedAttribute) == null)
                     {
+                        var mType = type.Type;
+                        if (mType != null && mType.IsValueType && mType.ReflectedType != null && string.Equals(mType.ReflectedType.Name, "<PrivateImplementationDetails>", StringComparison.Ordinal))
+                            continue;
                         AddItem(new TypeItemView(type, attributes));
                     }
                 }
             }
-            SortChildren();
+            SortItems();
         }
 
         private void OnItemClicked(Item item)
@@ -117,7 +126,7 @@ namespace FlaxEditor.GUI
         /// <param name="isValid">Event called to check if a given asset item is valid to be used.</param>
         /// <param name="selected">Event called on asset item pick.</param>
         /// <returns>The dialog.</returns>
-        public static TypeSearchPopup Show(Control showTarget, Vector2 showTargetLocation, IsValidDelegate isValid, Action<ScriptType> selected)
+        public static TypeSearchPopup Show(Control showTarget, Float2 showTargetLocation, IsValidDelegate isValid, Action<ScriptType> selected)
         {
             var popup = new TypeSearchPopup(isValid, selected);
             popup.Show(showTarget, showTargetLocation);

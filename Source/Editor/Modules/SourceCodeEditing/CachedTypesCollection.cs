@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Reflection;
 using FlaxEditor.Scripting;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Modules.SourceCodeEditing
 {
@@ -45,6 +46,21 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         }
 
         /// <summary>
+        /// Gets the type matching the certain Script.
+        /// </summary>
+        /// <param name="script">The content item.</param>
+        /// <returns>The type matching that item, or null if not found.</returns>
+        public ScriptType Get(Content.ScriptItem script)
+        {
+            foreach (var type in Get())
+            {
+                if (type.ContentItem == script)
+                    return type;
+            }
+            return ScriptType.Null;
+        }
+
+        /// <summary>
         /// Gets all the types from the all loaded assemblies (including project scripts and scripts from the plugins).
         /// </summary>
         /// <returns>The types collection (readonly).</returns>
@@ -57,7 +73,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
                 _list.Clear();
                 _hasValidData = true;
 
-                Editor.Log("Searching for valid " + _type);
+                Editor.Log("Searching for valid " + (_type != ScriptType.Null ? _type.ToString() : "types"));
                 Profiler.BeginEvent("Search " + _type);
                 var start = DateTime.Now;
 
@@ -76,9 +92,14 @@ namespace FlaxEditor.Modules.SourceCodeEditing
         /// </summary>
         protected virtual void Search()
         {
-            // Special case for attributes
-            if (_type.Type != null && new ScriptType(typeof(Attribute)).IsAssignableFrom(_type))
+            if (_type == ScriptType.Null)
             {
+                // Special case for all types
+                TypeUtils.GetTypes(_list, _checkFunc, _checkAssembly);
+            }
+            else if (_type.Type != null && new ScriptType(typeof(Attribute)).IsAssignableFrom(_type))
+            {
+                // Special case for attributes
                 TypeUtils.GetTypesWithAttributeDefined(_type.Type, _list, _checkFunc, _checkAssembly);
             }
             else

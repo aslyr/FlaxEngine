@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -97,6 +97,7 @@ private:
 
     int32 _rtCount;
     int32 _vbCount;
+    uint32 _stencilRef;
 
     RenderPassVulkan* _renderPass;
     GPUPipelineStateVulkan* _currentState;
@@ -107,6 +108,9 @@ private:
     DescriptorOwnerResourceVulkan* _uaHandles[GPU_MAX_UA_BINDED];
     VkSampler _samplerHandles[GPU_MAX_SAMPLER_BINDED];
     DescriptorOwnerResourceVulkan** _handles[(int32)SpirvShaderResourceBindingType::MAX];
+#if ENABLE_ASSERTION
+    uint32 _handlesSizes[(int32)SpirvShaderResourceBindingType::MAX];
+#endif
 
     typedef Array<DescriptorPoolVulkan*> DescriptorPoolArray;
     Dictionary<uint32, DescriptorPoolArray> _descriptorPools;
@@ -157,7 +161,6 @@ private:
     void UpdateDescriptorSets(const struct SpirvShaderDescriptorInfo& descriptorInfo, class DescriptorSetWriterVulkan& dsWriter, bool& needsWrite);
     void UpdateDescriptorSets(GPUPipelineStateVulkan* pipelineState);
     void UpdateDescriptorSets(ComputePipelineStateVulkan* pipelineState);
-    void BindPipeline();
     void OnDrawCall();
 
 public:
@@ -173,12 +176,16 @@ public:
     bool IsDepthBufferBinded() override;
     void Clear(GPUTextureView* rt, const Color& color) override;
     void ClearDepth(GPUTextureView* depthBuffer, float depthValue) override;
-    void ClearUA(GPUBuffer* buf, const Vector4& value) override;
+    void ClearUA(GPUBuffer* buf, const Float4& value) override;
+    void ClearUA(GPUBuffer* buf, const uint32 value[4]) override;
+    void ClearUA(GPUTexture* texture, const uint32 value[4]) override;
+    void ClearUA(GPUTexture* texture, const Float4& value) override;
     void ResetRenderTarget() override;
     void SetRenderTarget(GPUTextureView* rt) override;
     void SetRenderTarget(GPUTextureView* depthBuffer, GPUTextureView* rt) override;
     void SetRenderTarget(GPUTextureView* depthBuffer, const Span<GPUTextureView*>& rts) override;
-    void SetRenderTarget(GPUTextureView* rt, GPUBuffer* uaOutput) override;
+    void SetBlendFactor(const Float4& value) override;
+    void SetStencilRef(uint32 value) override;
     void ResetSR() override;
     void ResetUA() override;
     void ResetCB() override;

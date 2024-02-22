@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "RenderTools.h"
 #include "PixelFormatExtensions.h"
@@ -9,6 +9,8 @@
 #include "RenderTask.h"
 #include "Engine/Content/Assets/Model.h"
 #include "Engine/Content/Assets/SkinnedModel.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/Math/Packed.h"
 #include "Engine/Engine/Time.h"
 
 const Char* ToString(RendererType value)
@@ -52,6 +54,9 @@ const Char* ToString(RendererType value)
     case RendererType::PS4:
         result = TEXT("PS4");
         break;
+    case RendererType::PS5:
+        result = TEXT("PS5");
+        break;
     default:
         result = TEXT("?");
     }
@@ -86,6 +91,9 @@ const Char* ToString(ShaderProfile value)
         break;
     case ShaderProfile::PS4:
         result = TEXT("PS4");
+        break;
+    case ShaderProfile::PS5:
+        result = TEXT("PS5");
         break;
     default:
         result = TEXT("?");
@@ -174,121 +182,81 @@ uint32 GetHash(const BlendingMode& key)
     return hash;
 }
 
+// @formatter:off
+
 BlendingMode BlendingMode::Opaque =
 {
-    false,
-    // AlphaToCoverageEnable
-    false,
-    // BlendEnable
-    Blend::One,
-    // SrcBlend
-    Blend::Zero,
-    // DestBlend
-    Operation::Add,
-    // BlendOp
-    Blend::One,
-    // SrcBlendAlpha
-    Blend::Zero,
-    // DestBlendAlpha
-    Operation::Add,
-    // BlendOpAlpha
-    ColorWrite::All,
-    // RenderTargetWriteMask
+    false, // AlphaToCoverageEnable
+    false, // BlendEnable
+    Blend::One, // SrcBlend
+    Blend::Zero, // DestBlend
+    Operation::Add, // BlendOp
+    Blend::One, // SrcBlendAlpha
+    Blend::Zero, // DestBlendAlpha
+    Operation::Add, // BlendOpAlpha
+    ColorWrite::All, // RenderTargetWriteMask
 };
 
 BlendingMode BlendingMode::Additive =
 {
-    false,
-    // AlphaToCoverageEnable
-    true,
-    // BlendEnable
-    Blend::SrcAlpha,
-    // SrcBlend
-    Blend::One,
-    // DestBlend
-    Operation::Add,
-    // BlendOp
-    Blend::SrcAlpha,
-    // SrcBlendAlpha
-    Blend::One,
-    // DestBlendAlpha
-    Operation::Add,
-    // BlendOpAlpha
-    ColorWrite::All,
-    // RenderTargetWriteMask
+    false, // AlphaToCoverageEnable
+    true, // BlendEnable
+    Blend::SrcAlpha, // SrcBlend
+    Blend::One, // DestBlend
+    Operation::Add, // BlendOp
+    Blend::SrcAlpha, // SrcBlendAlpha
+    Blend::One, // DestBlendAlpha
+    Operation::Add, // BlendOpAlpha
+    ColorWrite::All, // RenderTargetWriteMask
 };
 
 BlendingMode BlendingMode::AlphaBlend =
 {
-    false,
-    // AlphaToCoverageEnable
-    true,
-    // BlendEnable
-    Blend::SrcAlpha,
-    // SrcBlend
-    Blend::InvSrcAlpha,
-    // DestBlend
-    Operation::Add,
-    // BlendOp
-    Blend::One,
-    // SrcBlendAlpha
-    Blend::InvSrcAlpha,
-    // DestBlendAlpha
-    Operation::Add,
-    // BlendOpAlpha
-    ColorWrite::All,
-    // RenderTargetWriteMask
+    false, // AlphaToCoverageEnable
+    true, // BlendEnable
+    Blend::SrcAlpha, // SrcBlend
+    Blend::InvSrcAlpha, // DestBlend
+    Operation::Add, // BlendOp
+    Blend::One, // SrcBlendAlpha
+    Blend::InvSrcAlpha, // DestBlendAlpha
+    Operation::Add, // BlendOpAlpha
+    ColorWrite::All, // RenderTargetWriteMask
 };
 
 BlendingMode BlendingMode::Add =
 {
-    false,
-    // AlphaToCoverageEnable
-    true,
-    // BlendEnable
-    Blend::One,
-    // SrcBlend
-    Blend::One,
-    // DestBlend
-    Operation::Add,
-    // BlendOp
-    Blend::One,
-    // SrcBlendAlpha
-    Blend::One,
-    // DestBlendAlpha
-    Operation::Add,
-    // BlendOpAlpha
-    ColorWrite::All,
-    // RenderTargetWriteMask
+    false, // AlphaToCoverageEnable
+    true, // BlendEnable
+    Blend::One, // SrcBlend
+    Blend::One, // DestBlend
+    Operation::Add, // BlendOp
+    Blend::One, // SrcBlendAlpha
+    Blend::One, // DestBlendAlpha
+    Operation::Add, // BlendOpAlpha
+    ColorWrite::All, // RenderTargetWriteMask
 };
 
 BlendingMode BlendingMode::Multiply =
 {
-    false,
-    // AlphaToCoverageEnable
-    true,
-    // BlendEnable
-    Blend::Zero,
-    // SrcBlend
-    Blend::SrcColor,
-    // DestBlend
-    Operation::Add,
-    // BlendOp
-    Blend::Zero,
-    // SrcBlendAlpha
-    Blend::SrcAlpha,
-    // DestBlendAlpha
-    Operation::Add,
-    // BlendOpAlpha
-    ColorWrite::All,
-    // RenderTargetWriteMask
+    false, // AlphaToCoverageEnable
+    true, // BlendEnable
+    Blend::Zero, // SrcBlend
+    Blend::SrcColor, // DestBlend
+    Operation::Add, // BlendOp
+    Blend::Zero, // SrcBlendAlpha
+    Blend::SrcAlpha, // DestBlendAlpha
+    Operation::Add, // BlendOpAlpha
+    ColorWrite::All, // RenderTargetWriteMask
 };
+
+// @formatter:on
 
 FeatureLevel RenderTools::GetFeatureLevel(ShaderProfile profile)
 {
     switch (profile)
     {
     case ShaderProfile::DirectX_SM6:
+    case ShaderProfile::PS5:
         return FeatureLevel::SM6;
     case ShaderProfile::DirectX_SM5:
     case ShaderProfile::Vulkan_SM5:
@@ -313,6 +281,7 @@ bool RenderTools::CanSupportTessellation(ShaderProfile profile)
     case ShaderProfile::DirectX_SM6:
     case ShaderProfile::DirectX_SM5:
     case ShaderProfile::PS4:
+    case ShaderProfile::PS5:
         return true;
     default:
         return false;
@@ -424,14 +393,14 @@ uint64 RenderTools::CalculateTextureMemoryUsage(PixelFormat format, int32 width,
     return CalculateTextureMemoryUsage(format, width, height, mipLevels) * depth;
 }
 
-float RenderTools::ComputeBoundsScreenRadiusSquared(const Vector3& origin, float radius, const Vector3& viewOrigin, const Matrix& projectionMatrix)
+float RenderTools::ComputeBoundsScreenRadiusSquared(const Float3& origin, float radius, const Float3& viewOrigin, const Matrix& projectionMatrix)
 {
     const float screenMultiple = 0.5f * Math::Max(projectionMatrix.Values[0][0], projectionMatrix.Values[1][1]);
-    const float distSqr = Vector3::DistanceSquared(origin, viewOrigin);
+    const float distSqr = Float3::DistanceSquared(origin, viewOrigin) * projectionMatrix.Values[2][3];
     return Math::Square(screenMultiple * radius) / Math::Max(1.0f, distSqr);
 }
 
-int32 RenderTools::ComputeModelLOD(const Model* model, const Vector3& origin, float radius, const RenderContext& renderContext)
+int32 RenderTools::ComputeModelLOD(const Model* model, const Float3& origin, float radius, const RenderContext& renderContext)
 {
     const auto lodView = (renderContext.LodProxyView ? renderContext.LodProxyView : &renderContext.View);
     const float screenRadiusSquared = ComputeBoundsScreenRadiusSquared(origin, radius, *lodView) * renderContext.View.ModelLODDistanceFactorSqrt;
@@ -456,7 +425,7 @@ int32 RenderTools::ComputeModelLOD(const Model* model, const Vector3& origin, fl
     return 0;
 }
 
-int32 RenderTools::ComputeSkinnedModelLOD(const SkinnedModel* model, const Vector3& origin, float radius, const RenderContext& renderContext)
+int32 RenderTools::ComputeSkinnedModelLOD(const SkinnedModel* model, const Float3& origin, float radius, const RenderContext& renderContext)
 {
     const auto lodView = (renderContext.LodProxyView ? renderContext.LodProxyView : &renderContext.View);
     const float screenRadiusSquared = ComputeBoundsScreenRadiusSquared(origin, radius, *lodView) * renderContext.View.ModelLODDistanceFactorSqrt;
@@ -479,6 +448,122 @@ int32 RenderTools::ComputeSkinnedModelLOD(const SkinnedModel* model, const Vecto
     }
 
     return 0;
+}
+
+void RenderTools::ComputeCascadeUpdateFrequency(int32 cascadeIndex, int32 cascadeCount, int32& updateFrequency, int32& updatePhrase, int32 updateMaxCountPerFrame)
+{
+    switch (updateMaxCountPerFrame)
+    {
+    case 1: // 1 cascade update per frame
+        switch (cascadeIndex)
+        {
+        case 0: // Cascade 0
+            updateFrequency = 2;
+            updatePhrase = 0;
+            break;
+        case 1: // Cascade 1
+            updateFrequency = 4;
+            updatePhrase = 1;
+            break;
+        case 2: // Cascade 2
+            updateFrequency = 8;
+            updatePhrase = 3;
+            break;
+        default:
+            if (cascadeCount > 4)
+            {
+                if (cascadeIndex == 3)
+                {
+                    // Cascade 3
+                    updateFrequency = 16;
+                    updatePhrase = 7;
+                }
+                else
+                {
+                    // Other
+                    updateFrequency = 16;
+                    updatePhrase = 15;
+                }
+            }
+            else
+            {
+                // Cascade 3
+                updateFrequency = 8;
+                updatePhrase = 7;
+            }
+        }
+        break;
+    case 2: // 2 cascade2 update per frame
+        switch (cascadeIndex)
+        {
+        case 0: // Cascade 0
+            updateFrequency = 1;
+            updatePhrase = 0;
+            break;
+        case 1: // Cascade 1
+            updateFrequency = 2;
+            updatePhrase = 0;
+            break;
+        case 2: // Cascade 2
+            updateFrequency = 4;
+            updatePhrase = 1;
+            break;
+        default:
+            if (cascadeCount > 4)
+            {
+                if (cascadeIndex == 3)
+                {
+                    // Cascade 3
+                    updateFrequency = 8;
+                    updatePhrase = 3;
+                }
+                else
+                {
+                    // Other
+                    updateFrequency = 8;
+                    updatePhrase = 7;
+                }
+            }
+            else
+            {
+                // Cascade 3
+                updateFrequency = 4;
+                updatePhrase = 3;
+            }
+        }
+        break;
+    default: // Every frame
+        updateFrequency = 1;
+        updatePhrase = 1;
+        break;
+    }
+}
+
+void RenderTools::CalculateTangentFrame(FloatR10G10B10A2& resultNormal, FloatR10G10B10A2& resultTangent, const Float3& normal)
+{
+    // Calculate tangent
+    const Float3 c1 = Float3::Cross(normal, Float3::UnitZ);
+    const Float3 c2 = Float3::Cross(normal, Float3::UnitY);
+    const Float3 tangent = c1.LengthSquared() > c2.LengthSquared() ? c1 : c2;
+
+    // Calculate bitangent sign
+    const Float3 bitangent = Float3::Normalize(Float3::Cross(normal, tangent));
+    const byte sign = static_cast<byte>(Float3::Dot(Float3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
+
+    // Set tangent frame
+    resultNormal = Float1010102(normal * 0.5f + 0.5f, 0);
+    resultTangent = Float1010102(tangent * 0.5f + 0.5f, sign);
+}
+
+void RenderTools::CalculateTangentFrame(FloatR10G10B10A2& resultNormal, FloatR10G10B10A2& resultTangent, const Float3& normal, const Float3& tangent)
+{
+    // Calculate bitangent sign
+    const Float3 bitangent = Float3::Normalize(Float3::Cross(normal, tangent));
+    const byte sign = static_cast<byte>(Float3::Dot(Float3::Cross(bitangent, normal), tangent) < 0.0f ? 1 : 0);
+
+    // Set tangent frame
+    resultNormal = Float1010102(normal * 0.5f + 0.5f, 0);
+    resultTangent = Float1010102(tangent * 0.5f + 0.5f, sign);
 }
 
 int32 MipLevelsCount(int32 width, bool useMipLevels)
@@ -538,10 +623,10 @@ int32 MipLevelsCount(int32 width, int32 height, int32 depth, bool useMipLevels)
     return result;
 }
 
-float ViewToCenterLessRadius(const RenderView& view, const Vector3& center, float radius)
+float ViewToCenterLessRadius(const RenderView& view, const Float3& center, float radius)
 {
     // Calculate distance from view to sphere center
-    float viewToCenter = Vector3::Distance(view.Position, center);
+    float viewToCenter = Float3::Distance(view.Position, center);
 
     // Check if need to fix the radius
     //if (radius + viewToCenter > view.Far)

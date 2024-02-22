@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ContentLoadingManager.h"
 #include "ContentLoadTask.h"
@@ -23,6 +23,7 @@ namespace ContentLoadingManagerImpl
     Array<LoadingThread*> Threads;
     ConcurrentTaskQueue<ContentLoadTask> Tasks;
     ConditionVariable TasksSignal;
+    CriticalSection TasksMutex;
 };
 
 using namespace ContentLoadingManagerImpl;
@@ -30,7 +31,6 @@ using namespace ContentLoadingManagerImpl;
 class ContentLoadingManagerService : public EngineService
 {
 public:
-
     ContentLoadingManagerService()
         : EngineService(TEXT("Content Loading Manager"), -500)
     {
@@ -55,8 +55,7 @@ LoadingThread::~LoadingThread()
     // Check if has thread attached
     if (_thread != nullptr)
     {
-        if (_thread->IsRunning())
-            _thread->Kill(true);
+        _thread->Kill(true);
         Delete(_thread);
     }
 }
@@ -121,7 +120,6 @@ int32 LoadingThread::Run()
 #endif
 
     ContentLoadTask* task;
-    CriticalSection mutex;
     ThisThread = this;
 
     while (HasExitFlagClear())
@@ -132,9 +130,9 @@ int32 LoadingThread::Run()
         }
         else
         {
-            mutex.Lock();
-            TasksSignal.Wait(mutex);
-            mutex.Unlock();
+            TasksMutex.Lock();
+            TasksSignal.Wait(TasksMutex);
+            TasksMutex.Unlock();
         }
     }
 
@@ -165,7 +163,7 @@ bool ContentLoadingManagerService::Init()
 
     // Calculate amount of loading threads to use
     const CPUInfo cpuInfo = Platform::GetCPUInfo();
-    const int32 count = Math::Clamp(static_cast<int32>(LOADING_THREAD_PER_PHYSICAL_CORE * (float)cpuInfo.ProcessorCoreCount), 1, 6);
+    const int32 count = Math::Clamp(static_cast<int32>(LOADING_THREAD_PER_LOGICAL_CORE * (float)cpuInfo.LogicalProcessorCount), 1, 12);
     LOG(Info, "Creating {0} content loading threads...", count);
 
     // Create loading threads
@@ -210,6 +208,11 @@ void ContentLoadingManagerService::Dispose()
 
     // Cancel all remaining tasks (no chance to execute them)
     Tasks.CancelAll();
+}
+
+String ContentLoadTask::ToString() const
+{
+    return String::Format(TEXT("Content Load Task {0} ({1})"), ToString(GetType()), (int32)GetState());
 }
 
 void ContentLoadTask::Enqueue()

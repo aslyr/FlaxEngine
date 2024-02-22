@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.GUI.ContextMenu;
 using FlaxEngine;
@@ -13,6 +13,7 @@ namespace FlaxEditor.GUI.Docking
     public class DockPanelProxy : ContainerControl
     {
         private DockPanel _panel;
+        private double _dragEnterTime = -1;
 
         /// <summary>
         /// The is mouse down flag (left button).
@@ -42,7 +43,7 @@ namespace FlaxEditor.GUI.Docking
         /// <summary>
         /// The mouse position.
         /// </summary>
-        public Vector2 MousePosition;
+        public Float2 MousePosition = Float2.Minimum;
 
         /// <summary>
         /// The start drag asynchronous window.
@@ -65,7 +66,7 @@ namespace FlaxEditor.GUI.Docking
             Offsets = Margin.Zero;
         }
 
-        private DockWindow GetTabAtPos(Vector2 position, out bool closeButton)
+        private DockWindow GetTabAtPos(Float2 position, out bool closeButton)
         {
             DockWindow result = null;
             closeButton = false;
@@ -192,7 +193,7 @@ namespace FlaxEditor.GUI.Docking
                 var tab = _panel.GetTab(0);
 
                 // Draw header
-                bool isMouseOver = IsMouseOver && headerRect.Contains(MousePosition);
+                bool isMouseOver = headerRect.Contains(MousePosition);
                 Render2D.FillRectangle(headerRect, containsFocus ? style.BackgroundSelected : isMouseOver ? style.BackgroundHighlighted : style.LightBackground);
 
                 float iconWidth = tab.Icon.IsValid ? DockPanel.DefaultButtonsSize + DockPanel.DefaultLeftTextMargin : 0;
@@ -238,7 +239,7 @@ namespace FlaxEditor.GUI.Docking
                     var iconWidth = tab.Icon.IsValid ? DockPanel.DefaultButtonsSize + DockPanel.DefaultLeftTextMargin : 0;
                     var width = titleSize.X + DockPanel.DefaultButtonsSize + 2 * DockPanel.DefaultButtonsMargin + DockPanel.DefaultLeftTextMargin + DockPanel.DefaultRightTextMargin + iconWidth;
                     var tabRect = new Rectangle(x, 0, width, DockPanel.DefaultHeaderHeight);
-                    var isMouseOver = IsMouseOver && tabRect.Contains(MousePosition);
+                    var isMouseOver = tabRect.Contains(MousePosition);
                     var isSelected = _panel.SelectedTab == tab;
 
                     // Check if tab is selected
@@ -252,6 +253,12 @@ namespace FlaxEditor.GUI.Docking
                     {
                         tabColor = style.BackgroundHighlighted;
                         Render2D.FillRectangle(tabRect, tabColor);
+                    }
+                    else
+                    {
+                        tabColor = style.BackgroundHighlighted;
+                        Render2D.DrawLine(tabRect.BottomLeft - new Float2(0, 1), tabRect.UpperLeft, tabColor);
+                        Render2D.DrawLine(tabRect.BottomRight - new Float2(0, 1), tabRect.UpperRight, tabColor);
                     }
 
                     if (tab.Icon.IsValid)
@@ -294,26 +301,25 @@ namespace FlaxEditor.GUI.Docking
         /// <inheritdoc />
         public override void OnLostFocus()
         {
-            // Clear
             IsMouseLeftButtonDown = false;
             IsMouseRightButtonDown = false;
             IsMouseMiddleButtonDown = false;
             MouseDownWindow = null;
+            MousePosition = Float2.Minimum;
 
             base.OnLostFocus();
         }
 
         /// <inheritdoc />
-        public override void OnMouseEnter(Vector2 location)
+        public override void OnMouseEnter(Float2 location)
         {
-            // Cache mouse
             MousePosition = location;
 
             base.OnMouseEnter(location);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             // Maximize/restore on double click
             var tab = GetTabAtPos(location, out _);
@@ -331,7 +337,7 @@ namespace FlaxEditor.GUI.Docking
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             MouseDownWindow = GetTabAtPos(location, out IsMouseDownOverCross);
 
@@ -360,7 +366,7 @@ namespace FlaxEditor.GUI.Docking
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             // Check tabs under mouse position at the beginning and at the end
             var tab = GetTabAtPos(location, out var overCross);
@@ -401,12 +407,9 @@ namespace FlaxEditor.GUI.Docking
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
-            // Cache mouse
             MousePosition = location;
-
-            // Check if mouse is down
             if (IsMouseLeftButtonDown)
             {
                 // Check if mouse is outside the header
@@ -453,10 +456,8 @@ namespace FlaxEditor.GUI.Docking
         /// <inheritdoc />
         public override void OnMouseLeave()
         {
-            // Check if mouse is down
             if (IsMouseLeftButtonDown)
             {
-                // Clear flag
                 IsMouseLeftButtonDown = false;
 
                 // Check tabs under mouse position
@@ -466,34 +467,35 @@ namespace FlaxEditor.GUI.Docking
             }
             IsMouseRightButtonDown = false;
             IsMouseMiddleButtonDown = false;
+            MousePosition = Float2.Minimum;
 
             base.OnMouseLeave();
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             var result = base.OnDragEnter(ref location, data);
             if (result != DragDropEffect.None)
                 return result;
-
-            if (TrySelectTabUnderLocation(ref location))
-                return DragDropEffect.Move;
-
-            return DragDropEffect.None;
+            return TrySelectTabUnderLocation(ref location);
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             var result = base.OnDragMove(ref location, data);
             if (result != DragDropEffect.None)
                 return result;
+            return TrySelectTabUnderLocation(ref location);
+        }
 
-            if (TrySelectTabUnderLocation(ref location))
-                return DragDropEffect.Move;
+        /// <inheritdoc />
+        public override void OnDragLeave()
+        {
+            _dragEnterTime = -1;
 
-            return DragDropEffect.None;
+            base.OnDragLeave();
         }
 
         /// <inheritdoc />
@@ -502,20 +504,28 @@ namespace FlaxEditor.GUI.Docking
             rect = new Rectangle(0, DockPanel.DefaultHeaderHeight, Width, Height - DockPanel.DefaultHeaderHeight);
         }
 
-        private bool TrySelectTabUnderLocation(ref Vector2 location)
+        private DragDropEffect TrySelectTabUnderLocation(ref Float2 location)
         {
             var tab = GetTabAtPos(location, out _);
             if (tab != null)
             {
+                // Auto-select tab only if drag takes some time
+                var time = Platform.TimeSeconds;
+                if (_dragEnterTime < 0)
+                    _dragEnterTime = time;
+                if (time - _dragEnterTime < 0.3f)
+                    return DragDropEffect.Link;
+                _dragEnterTime = -1;
+
                 _panel.SelectTab(tab);
                 Update(0); // Fake update
-                return true;
+                return DragDropEffect.Move;
             }
-
-            return false;
+            _dragEnterTime = -1;
+            return DragDropEffect.None;
         }
 
-        private void ShowContextMenu(DockWindow tab, ref Vector2 location)
+        private void ShowContextMenu(DockWindow tab, ref Float2 location)
         {
             var menu = new ContextMenu.ContextMenu
             {

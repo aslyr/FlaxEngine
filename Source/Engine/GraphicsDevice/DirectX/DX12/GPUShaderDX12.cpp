@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -20,32 +20,21 @@ GPUShaderProgram* GPUShaderDX12::CreateGPUShaderProgram(ShaderStage type, const 
     {
     case ShaderStage::Vertex:
     {
-        D3D12_INPUT_ELEMENT_DESC inputLayout[VERTEX_SHADER_MAX_INPUT_ELEMENTS];
-
-        // Temporary variables
-        byte Type, Format, Index, InputSlot, InputSlotClass;
-        uint32 AlignedByteOffset, InstanceDataStepRate;
-
         // Load Input Layout (it may be empty)
         byte inputLayoutSize;
         stream.ReadByte(&inputLayoutSize);
         ASSERT(inputLayoutSize <= VERTEX_SHADER_MAX_INPUT_ELEMENTS);
+        D3D12_INPUT_ELEMENT_DESC inputLayout[VERTEX_SHADER_MAX_INPUT_ELEMENTS];
         for (int32 a = 0; a < inputLayoutSize; a++)
         {
             // Read description
-            // TODO: maybe use struct and load at once?
-            stream.ReadByte(&Type);
-            stream.ReadByte(&Index);
-            stream.ReadByte(&Format);
-            stream.ReadByte(&InputSlot);
-            stream.ReadUint32(&AlignedByteOffset);
-            stream.ReadByte(&InputSlotClass);
-            stream.ReadUint32(&InstanceDataStepRate);
+            GPUShaderProgramVS::InputElement inputElement;
+            stream.Read(inputElement);
 
             // Get semantic name
             const char* semanticName = nullptr;
             // TODO: maybe use enum+mapping ?
-            switch (Type)
+            switch (inputElement.Type)
             {
             case 1:
                 semanticName = "POSITION";
@@ -75,7 +64,7 @@ GPUShaderProgram* GPUShaderDX12::CreateGPUShaderProgram(ShaderStage type, const 
                 semanticName = "BLENDWEIGHT";
                 break;
             default:
-                LOG(Fatal, "Invalid vertex shader element semantic type: {0}", Type);
+                LOG(Fatal, "Invalid vertex shader element semantic type: {0}", inputElement.Type);
                 break;
             }
 
@@ -83,12 +72,12 @@ GPUShaderProgram* GPUShaderDX12::CreateGPUShaderProgram(ShaderStage type, const 
             inputLayout[a] =
             {
                 semanticName,
-                static_cast<UINT>(Index),
-                static_cast<DXGI_FORMAT>(Format),
-                static_cast<UINT>(InputSlot),
-                static_cast<UINT>(AlignedByteOffset),
-                static_cast<D3D12_INPUT_CLASSIFICATION>(InputSlotClass),
-                static_cast<UINT>(InstanceDataStepRate)
+                static_cast<UINT>(inputElement.Index),
+                static_cast<DXGI_FORMAT>(inputElement.Format),
+                static_cast<UINT>(inputElement.InputSlot),
+                static_cast<UINT>(inputElement.AlignedByteOffset),
+                static_cast<D3D12_INPUT_CLASSIFICATION>(inputElement.InputSlotClass),
+                static_cast<UINT>(inputElement.InstanceDataStepRate)
             };
         }
 
@@ -125,18 +114,6 @@ GPUShaderProgram* GPUShaderDX12::CreateGPUShaderProgram(ShaderStage type, const 
     }
     }
     return shader;
-}
-
-GPUConstantBuffer* GPUShaderDX12::CreateCB(const String& name, uint32 size, MemoryReadStream& stream)
-{
-    return new(_cbs) GPUConstantBufferDX12(_device, size);
-}
-
-void GPUShaderDX12::OnReleaseGPU()
-{
-    _cbs.Clear();
-
-    GPUShader::OnReleaseGPU();
 }
 
 ID3D12PipelineState* GPUShaderProgramCSDX12::GetOrCreateState()

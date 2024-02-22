@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -459,6 +459,7 @@ class GPUDeviceVulkan : public GPUDevice
 private:
 
     CriticalSection _fenceLock;
+    mutable void* _nativePtr[2];
 
     Dictionary<RenderTargetLayoutVulkan, RenderPassVulkan*> _renderPasses;
     Dictionary<FramebufferVulkan::Key, FramebufferVulkan*> _framebuffers;
@@ -672,13 +673,13 @@ public:
     /// <param name="optimalTiling">If set to <c>true</c> the optimal tiling should be used, otherwise use linear tiling.</param>
     /// <returns>The output format.</returns>
     PixelFormat GetClosestSupportedPixelFormat(PixelFormat format, GPUTextureFlags flags, bool optimalTiling);
+    
+    /// <summary>
+    /// Saves the pipeline cache.
+    /// </summary>
+    bool SavePipelineCache();
 
 #if VK_EXT_validation_cache
-
-    /// <summary>
-    /// Loads the validation cache.
-    /// </summary>
-    void LoadValidationCache();
 
     /// <summary>
     /// Saves the validation cache.
@@ -708,6 +709,7 @@ public:
     GPUBuffer* CreateBuffer(const StringView& name) override;
     GPUSampler* CreateSampler() override;
     GPUSwapChain* CreateSwapChain(Window* window) override;
+    GPUConstantBuffer* CreateConstantBuffer(uint32 size, const StringView& name) override;
 };
 
 /// <summary>
@@ -782,7 +784,7 @@ public:
     /// </summary>
     /// <param name="context">The GPU context. Can be used to add memory barriers to the pipeline before binding the descriptor to the pipeline.</param>
     /// <param name="bufferView">The buffer view.</param>
-    virtual void DescriptorAsUniformTexelBuffer(GPUContextVulkan* context, const VkBufferView*& bufferView)
+    virtual void DescriptorAsUniformTexelBuffer(GPUContextVulkan* context, VkBufferView& bufferView)
     {
         CRASH;
     }
@@ -804,7 +806,7 @@ public:
     /// </summary>
     /// <param name="context">The GPU context. Can be used to add memory barriers to the pipeline before binding the descriptor to the pipeline.</param>
     /// <param name="bufferView">The buffer view.</param>
-    virtual void DescriptorAsStorageTexelBuffer(GPUContextVulkan* context, const VkBufferView*& bufferView)
+    virtual void DescriptorAsStorageTexelBuffer(GPUContextVulkan* context, VkBufferView& bufferView)
     {
         CRASH;
     }

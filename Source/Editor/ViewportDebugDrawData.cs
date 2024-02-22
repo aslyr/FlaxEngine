@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using FlaxEngine;
 
 namespace FlaxEditor
@@ -15,12 +16,12 @@ namespace FlaxEditor
         private readonly List<IntPtr> _actors;
         private readonly List<HighlightData> _highlights;
         private MaterialBase _highlightMaterial;
-        private readonly List<Vector3> _highlightTriangles = new List<Vector3>(64);
-        private Vector3[] _highlightTrianglesSet;
+        private readonly List<Float3> _highlightTriangles = new List<Float3>(64);
+        private Float3[] _highlightTrianglesSet;
         private int[] _highlightIndicesSet;
         private Model _highlightTrianglesModel;
 
-        internal IntPtr[] ActorsPtrs => Utils.ExtractArrayFromList(_actors);
+        internal Span<IntPtr> ActorsPtrs => CollectionsMarshal.AsSpan(_actors);
 
         internal int ActorsCount => _actors.Count;
 
@@ -82,7 +83,8 @@ namespace FlaxEditor
             surface.Brush.GetVertices(surface.Index, out var vertices);
             if (vertices.Length > 0)
             {
-                _highlightTriangles.AddRange(vertices);
+                for (int i = 0; i < vertices.Length; i++)
+                    _highlightTriangles.Add(vertices[i]);
             }
         }
 
@@ -92,8 +94,12 @@ namespace FlaxEditor
         /// <param name="renderContext">The rendering context.</param>
         public virtual void OnDraw(ref RenderContext renderContext)
         {
-            if (_highlightMaterial == null)
+            if (_highlightMaterial == null
+                || (_highlights.Count == 0 && _highlightTriangles.Count == 0)
+                || renderContext.View.Pass == DrawPass.Depth
+               )
                 return;
+            Profiler.BeginEvent("ViewportDebugDrawData.OnDraw");
 
             Matrix world;
             for (var i = 0; i < _highlights.Count; i++)
@@ -104,13 +110,12 @@ namespace FlaxEditor
                     var model = staticModel.Model;
                     if (model == null)
                         continue;
-
                     staticModel.Transform.GetWorld(out world);
-
-                    BoundingSphere bounds = BoundingSphere.FromBox(staticModel.Box);
+                    var bounds = BoundingSphere.FromBox(staticModel.Box);
 
                     // Pick a proper LOD
-                    int lodIndex = RenderTools.ComputeModelLOD(model, ref bounds.Center, bounds.Radius, ref renderContext);
+                    Float3 center = bounds.Center - renderContext.View.Origin;
+                    int lodIndex = RenderTools.ComputeModelLOD(model, ref center, (float)bounds.Radius, ref renderContext);
                     var lods = model.LODs;
                     if (lods == null || lods.Length < lodIndex || lodIndex < 0)
                         continue;
@@ -142,6 +147,8 @@ namespace FlaxEditor
                 world = Matrix.Identity;
                 mesh.Draw(ref renderContext, _highlightMaterial, ref world);
             }
+
+            Profiler.EndEvent();
         }
 
         /// <summary>

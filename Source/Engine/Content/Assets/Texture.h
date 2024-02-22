@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -9,7 +9,7 @@
 /// </summary>
 API_CLASS(NoSpawn) class FLAXENGINE_API Texture : public TextureBase
 {
-DECLARE_BINARY_ASSET_HEADER(Texture, TexturesSerializedVersion);
+    DECLARE_BINARY_ASSET_HEADER(Texture, TexturesSerializedVersion);
 
     /// <summary>
     /// Gets the texture format type.
@@ -22,7 +22,6 @@ DECLARE_BINARY_ASSET_HEADER(Texture, TexturesSerializedVersion);
     API_PROPERTY() bool IsNormalMap() const;
 
 public:
-
 #if USE_EDITOR
 
     /// <summary>

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -23,6 +23,7 @@ namespace FlaxEngine.GUI
         private float _splitterValue;
         private Rectangle _splitterRect;
         private bool _splitterClicked, _mouseOverSplitter;
+        private bool _cursorChanged;
 
         /// <summary>
         /// The first panel (left or upper based on Orientation).
@@ -154,36 +155,46 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             _mouseOverSplitter = _splitterRect.Contains(location);
 
             if (_splitterClicked)
             {
                 SplitterValue = _orientation == Orientation.Horizontal ? location.X / Width : location.Y / Height;
+                Cursor = _orientation == Orientation.Horizontal ? CursorType.SizeWE : CursorType.SizeNS;
+                _cursorChanged = true;
+            }
+            else if (_mouseOverSplitter)
+            {
+                Cursor = _orientation == Orientation.Horizontal ? CursorType.SizeWE : CursorType.SizeNS;
+                _cursorChanged = true;
+            }
+            else if (_cursorChanged)
+            {
+                Cursor = CursorType.Default;
+                _cursorChanged = false;
             }
 
             base.OnMouseMove(location);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
-            if (button == MouseButton.Left)
+            if (button == MouseButton.Left && _splitterRect.Contains(location))
             {
-                if (_splitterRect.Contains(location))
-                {
-                    // Start moving splitter
-                    StartTracking();
-                    return false;
-                }
+                // Start moving splitter
+                StartTracking();
+                Focus();
+                return false;
             }
 
             return base.OnMouseDown(location, button);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (_splitterClicked)
             {
@@ -199,6 +210,11 @@ namespace FlaxEngine.GUI
         {
             // Clear flag
             _mouseOverSplitter = false;
+            if (_cursorChanged)
+            {
+                Cursor = CursorType.Default;
+                _cursorChanged = false;
+            }
 
             base.OnMouseLeave();
         }

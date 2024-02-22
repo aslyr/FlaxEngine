@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -113,7 +113,7 @@ bool GPUTextureDX12::OnInit()
         resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
         auto result = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource));
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
         initResource(resource, D3D12_RESOURCE_STATE_COPY_DEST, 1);
         DX_SET_DEBUG_NAME(_resource, GetName());
         _memoryUsage = totalSize;
@@ -184,7 +184,7 @@ bool GPUTextureDX12::OnInit()
 
     // Create texture
     auto result = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, initialState, clearValuePtr, IID_PPV_ARGS(&resource));
-    LOG_DIRECTX_RESULT_WITH_RETURN(result);
+    LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
     // Set state
     bool isRead = useSRV || useUAV;
@@ -208,36 +208,40 @@ bool GPUTextureDX12::OnInit()
     return false;
 }
 
-void GPUTextureDX12::onResidentMipsChanged()
+void GPUTextureDX12::OnResidentMipsChanged()
 {
-    // We support changing resident mip maps only for regular textures (render targets and depth buffers don't use that feature at all)
-    ASSERT(IsRegularTexture() && _handlesPerSlice.Count() == 1);
-    ASSERT(!IsVolume());
-
-    // Fill description
+    const int32 firstMipIndex = MipLevels() - ResidentMipLevels();
+    const int32 mipLevels = ResidentMipLevels();
     D3D12_SHADER_RESOURCE_VIEW_DESC srDesc;
     srDesc.Format = _dxgiFormatSRV;
     srDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     if (IsCubeMap())
     {
         srDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-        srDesc.TextureCube.MostDetailedMip = MipLevels() - ResidentMipLevels();
-        srDesc.TextureCube.MipLevels = ResidentMipLevels();
+        srDesc.TextureCube.MostDetailedMip = firstMipIndex;
+        srDesc.TextureCube.MipLevels = mipLevels;
         srDesc.TextureCube.ResourceMinLODClamp = 0;
+    }
+    else if (IsVolume())
+    {
+        srDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+        srDesc.Texture3D.MostDetailedMip = firstMipIndex;
+        srDesc.Texture3D.MipLevels = mipLevels;
+        srDesc.Texture3D.ResourceMinLODClamp = 0;
     }
     else
     {
         srDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srDesc.Texture2D.MostDetailedMip = MipLevels() - ResidentMipLevels();
-        srDesc.Texture2D.MipLevels = ResidentMipLevels();
+        srDesc.Texture2D.MostDetailedMip = firstMipIndex;
+        srDesc.Texture2D.MipLevels = mipLevels;
         srDesc.Texture2D.PlaneSlice = 0;
         srDesc.Texture2D.ResourceMinLODClamp = 0;
     }
-
-    // Change view
-    if (_handlesPerSlice[0].GetParent() == nullptr)
-        _handlesPerSlice[0].Init(this, _device, this, Format(), MultiSampleLevel());
-    _handlesPerSlice[0].SetSRV(srDesc);
+    GPUTextureViewDX12& view = IsVolume() ? _handleVolume : _handlesPerSlice[0];
+    if (view.GetParent() == nullptr)
+        view.Init(this, _device, this, Format(), MultiSampleLevel());
+    if (mipLevels != 0)
+        view.SetSRV(srDesc);
 }
 
 void GPUTextureDX12::OnReleaseGPU()
@@ -688,7 +692,7 @@ void GPUTextureDX12::initHandles()
     }
 
     // Read-only depth-stencil
-    if (_desc.Flags & GPUTextureFlags::ReadOnlyDepthView)
+    if (EnumHasAnyFlags(_desc.Flags, GPUTextureFlags::ReadOnlyDepthView))
     {
         _handleReadOnlyDepth.Init(this, _device, this, format, msaa);
         _handleReadOnlyDepth.ReadOnlyDepthView = true;

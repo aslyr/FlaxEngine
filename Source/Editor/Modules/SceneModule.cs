@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -101,9 +101,7 @@ namespace FlaxEditor.Modules
         /// Determines whether the specified scene is edited.
         /// </summary>
         /// <param name="scene">The scene.</param>
-        /// <returns>
-        ///   <c>true</c> if the specified scene is edited; otherwise, <c>false</c>.
-        /// </returns>
+        /// <returns><c>true</c> if the specified scene is edited; otherwise, <c>false</c>.</returns>
         public bool IsEdited(Scene scene)
         {
             var node = GetActorNode(scene) as SceneNode;
@@ -113,9 +111,7 @@ namespace FlaxEditor.Modules
         /// <summary>
         /// Determines whether any scene is edited.
         /// </summary>
-        /// <returns>
-        ///   <c>true</c> if any scene is edited; otherwise, <c>false</c>.
-        /// </returns>
+        /// <returns><c>true</c> if any scene is edited; otherwise, <c>false</c>.</returns>
         public bool IsEdited()
         {
             foreach (var scene in Root.ChildNodes)
@@ -129,9 +125,7 @@ namespace FlaxEditor.Modules
         /// <summary>
         /// Determines whether every scene is edited.
         /// </summary>
-        /// <returns>
-        ///   <c>true</c> if every scene is edited; otherwise, <c>false</c>.
-        /// </returns>
+        /// <returns><c>true</c> if every scene is edited; otherwise, <c>false</c>.</returns>
         public bool IsEverySceneEdited()
         {
             foreach (var scene in Root.ChildNodes)
@@ -175,7 +169,7 @@ namespace FlaxEditor.Modules
             //
             var floor = scene.AddChild<StaticModel>();
             floor.Name = "Floor";
-            floor.Scale = new Vector3(4, 0.5f, 4);
+            floor.Scale = new Float3(4, 0.5f, 4);
             floor.Model = FlaxEngine.Content.LoadAsync<Model>(StringUtils.CombinePaths(Globals.EngineContentFolder, "Editor/Primitives/Cube.flax"));
             if (floor.Model)
             {
@@ -238,6 +232,7 @@ namespace FlaxEditor.Modules
                     node.IsEdited = false;
             }
             Level.SaveAllScenesAsync();
+            Editor.UI.AddStatusMessage("Saved!");
         }
 
         /// <summary>
@@ -247,7 +242,6 @@ namespace FlaxEditor.Modules
         /// <param name="additive">True if don't close opened scenes and just add new scene to them, otherwise will release current scenes and load single one.</param>
         public void OpenScene(Guid sceneId, bool additive = false)
         {
-            // Check if cannot change scene now
             if (!Editor.StateMachine.CurrentState.CanChangeScene)
                 return;
 
@@ -272,12 +266,34 @@ namespace FlaxEditor.Modules
         }
 
         /// <summary>
+        /// Reload all loaded scenes.
+        /// </summary>
+        public void ReloadScenes()
+        {
+            if (!Editor.StateMachine.CurrentState.CanChangeScene)
+                return;
+
+            if (!Editor.IsPlayMode)
+            {
+                if (CheckSaveBeforeClose())
+                    return;
+            }
+
+            // Reload scenes
+            foreach (var scene in Level.Scenes)
+            {
+                var sceneId = scene.ID;
+                Level.UnloadScene(scene);
+                Level.LoadScene(sceneId);
+            }
+        }
+
+        /// <summary>
         /// Closes scene (async).
         /// </summary>
         /// <param name="scene">The scene.</param>
         public void CloseScene(Scene scene)
         {
-            // Check if cannot change scene now
             if (!Editor.StateMachine.CurrentState.CanChangeScene)
                 return;
 
@@ -301,7 +317,6 @@ namespace FlaxEditor.Modules
         /// </summary>
         public void CloseAllScenes()
         {
-            // Check if cannot change scene now
             if (!Editor.StateMachine.CurrentState.CanChangeScene)
                 return;
 
@@ -318,6 +333,41 @@ namespace FlaxEditor.Modules
 
             // Unload scenes
             Editor.StateMachine.ChangingScenesState.UnloadScene(Level.Scenes);
+        }
+
+        /// <summary>
+        /// Closes all of the scenes except for the specified scene (async).
+        /// </summary>
+        /// <param name="scene">The scene to not close.</param>
+        public void CloseAllScenesExcept(Scene scene)
+        {
+            if (!Editor.StateMachine.CurrentState.CanChangeScene)
+                return;
+
+            var scenes = new List<Scene>();
+            foreach (var s in Level.Scenes)
+            {
+                if (s == scene)
+                    continue;
+                scenes.Add(s);
+            }
+
+            // In play-mode Editor mocks the level streaming script
+            if (Editor.IsPlayMode)
+            {
+                foreach (var s in scenes)
+                {
+                    Level.UnloadSceneAsync(s);
+                }
+                return;
+            }
+
+            // Ensure to save all pending changes
+            if (CheckSaveBeforeClose())
+                return;
+
+            // Unload scenes
+            Editor.StateMachine.ChangingScenesState.UnloadScene(scenes);
         }
 
         /// <summary>
@@ -417,11 +467,8 @@ namespace FlaxEditor.Modules
             // Add to the tree
             var rootNode = Root.TreeNode;
             rootNode.IsLayoutLocked = true;
-            //
             sceneNode.ParentNode = Root;
             rootNode.SortChildren();
-            //
-            treeNode.UnlockChildrenRecursive();
             rootNode.IsLayoutLocked = false;
             rootNode.Parent.PerformLayout();
 
@@ -485,7 +532,6 @@ namespace FlaxEditor.Modules
             var node = SceneGraphFactory.BuildActorNode(actor);
             if (node != null)
             {
-                node.TreeNode.UnlockChildrenRecursive();
                 node.ParentNode = parentNode;
             }
         }
@@ -543,13 +589,8 @@ namespace FlaxEditor.Modules
                 return;
 
             // Get the new parent node (may be missing)
-            if (parentNode != null)
-            {
-                // Change parent
-                node.TreeNode.UnlockChildrenRecursive();
-                node.ParentNode = parentNode;
-            }
-            else
+            node.ParentNode = parentNode;
+            if (parentNode == null)
             {
                 // Check if actor is selected in editor
                 if (Editor.SceneEditing.Selection.Contains(node))
@@ -569,7 +610,7 @@ namespace FlaxEditor.Modules
         private void OnActorNameChanged(Actor actor)
         {
             ActorNode node = GetActorNode(actor);
-            node?.TreeNode.OnNameChanged();
+            node?.TreeNode.UpdateText();
         }
 
         private void OnActorActiveChanged(Actor actor)

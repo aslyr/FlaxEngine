@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
@@ -12,6 +12,7 @@ namespace FlaxEditor.Content
     /// Context proxy object for C# script files.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.CSharpScriptProxy" />
+    [ContentContextMenu("New/C# Script")]
     public class CSharpScriptProxy : ScriptProxy
     {
         /// <summary>

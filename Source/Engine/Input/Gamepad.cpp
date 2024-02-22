@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Gamepad.h"
 
@@ -9,7 +9,7 @@ void GamepadLayout::Init()
     for (int32 i = 0; i < (int32)GamepadAxis::MAX; i++)
         Axis[i] = (GamepadAxis)i;
     for (int32 i = 0; i < (int32)GamepadAxis::MAX; i++)
-        AxisMap[i] = Vector2::UnitX;
+        AxisMap[i] = Float2::UnitX;
 }
 
 Gamepad::Gamepad(const Guid& productId, const String& name)
@@ -29,6 +29,15 @@ void Gamepad::ResetState()
     _state.Clear();
     _mappedState.Clear();
     _mappedPrevState.Clear();
+}
+
+bool Gamepad::IsAnyButtonDown() const
+{
+    // TODO: optimize with SIMD
+    bool result = false;
+    for (auto e : _state.Buttons)
+        result |= e;
+    return result;
 }
 
 bool Gamepad::Update(EventQueue& queue)

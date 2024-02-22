@@ -1,11 +1,13 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_MODEL_TOOL && USE_ASSIMP
 
 #include "ModelTool.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Math/Matrix.h"
+#include "Engine/Core/Collections/Dictionary.h"
 #include "Engine/Platform/FileSystem.h"
+#include "Engine/Platform/File.h"
 #include "Engine/Tools/TextureTool/TextureTool.h"
 
 // Import Assimp library
@@ -25,7 +27,6 @@ using namespace Assimp;
 class AssimpLogStream : public LogStream
 {
 public:
-
     AssimpLogStream()
     {
         DefaultLogger::create("");
@@ -38,29 +39,36 @@ public:
         DefaultLogger::kill();
     }
 
-public:
-
     void write(const char* message) override
     {
         String s(message);
-        s.Replace('\n', ' ');
+        if (s.Length() <= 0)
+            return;
+        for (int32 i = 0; i < s.Length(); i++)
+        {
+            Char& c = s[i];
+            if (c == '\n')
+                c = ' ';
+            else if (c >= 255)
+                c = '?';
+        }
         LOG(Info, "[Assimp]: {0}", s);
     }
 };
 
-Vector2 ToVector2(const aiVector2D& v)
+Float2 ToFloat2(const aiVector2D& v)
 {
-    return Vector2(v.x, v.y);
+    return Float2(v.x, v.y);
 }
 
-Vector2 ToVector2(const aiVector3D& v)
+Float2 ToFloat2(const aiVector3D& v)
 {
-    return Vector2(v.x, v.y);
+    return Float2(v.x, v.y);
 }
 
-Vector3 ToVector3(const aiVector3D& v)
+Float3 ToFloat3(const aiVector3D& v)
 {
-    return Vector3(v.x, v.y, v.z);
+    return Float3(v.x, v.y, v.z);
 }
 
 Color ToColor(const aiColor3D& v)
@@ -139,22 +147,19 @@ struct AssimpBone
 
 struct AssimpImporterData
 {
-    ImportedModelData& Model;
+    Importer AssimpImporter;
+    AssimpLogStream AssimpLogStream;
     const String Path;
-    const aiScene* Scene;
+    const aiScene* Scene = nullptr;
     const ModelTool::Options& Options;
 
     Array<AssimpNode> Nodes;
     Array<AssimpBone> Bones;
     Dictionary<int32, Array<int32>> MeshIndexToNodeIndex;
 
-    AssimpImporterData(const char* path, ImportedModelData& model, const ModelTool::Options& options, const aiScene* scene)
-        : Model(model)
-        , Path(path)
-        , Scene(scene)
+    AssimpImporterData(const char* path, const ModelTool::Options& options)
+        : Path(path)
         , Options(options)
-        , Nodes(static_cast<int32>(scene->mNumMeshes * 4.0f))
-        , MeshIndexToNodeIndex(static_cast<int32>(scene->mNumMeshes * 8.0f))
     {
     }
 
@@ -231,14 +236,14 @@ void ProcessNodes(AssimpImporterData& data, aiNode* aNode, int32 parentIndex)
     }
 }
 
-bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, String& errorMsg)
+bool ProcessMesh(ModelData& result, AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, String& errorMsg)
 {
     // Properties
     mesh.Name = aMesh->mName.C_Str();
     mesh.MaterialSlotIndex = aMesh->mMaterialIndex;
 
     // Vertex positions
-    mesh.Positions.Set((const Vector3*)aMesh->mVertices, aMesh->mNumVertices);
+    mesh.Positions.Set((const Float3*)aMesh->mVertices, aMesh->mNumVertices);
 
     // Texture coordinates
     if (aMesh->mTextureCoords[0])
@@ -247,21 +252,9 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
         aiVector3D* a = aMesh->mTextureCoords[0];
         for (uint32 v = 0; v < aMesh->mNumVertices; v++)
         {
-            mesh.UVs[v] = *(Vector2*)a;
+            mesh.UVs[v] = *(Float2*)a;
             a++;
         }
-    }
-
-    // Normals
-    if (aMesh->mNormals)
-    {
-        mesh.Normals.Set((const Vector3*)aMesh->mNormals, aMesh->mNumVertices);
-    }
-
-    // Tangents
-    if (aMesh->mTangents)
-    {
-        mesh.Tangents.Set((const Vector3*)aMesh->mTangents, aMesh->mNumVertices);
     }
 
     // Indices
@@ -279,6 +272,27 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
         mesh.Indices[i++] = face->mIndices[0];
         mesh.Indices[i++] = face->mIndices[1];
         mesh.Indices[i++] = face->mIndices[2];
+    }
+
+    // Normals
+    if (data.Options.CalculateNormals || !aMesh->mNormals)
+    {
+        // Support generation of normals when using assimp.
+        if (mesh.GenerateNormals(data.Options.SmoothingNormalsAngle))
+        {
+            errorMsg = TEXT("Failed to generate normals.");
+            return true;
+        }
+    }
+    else if (aMesh->mNormals)
+    {
+        mesh.Normals.Set((const Float3*)aMesh->mNormals, aMesh->mNumVertices);
+    }
+
+    // Tangents
+    if (aMesh->mTangents)
+    {
+        mesh.Tangents.Set((const Float3*)aMesh->mTangents, aMesh->mNumVertices);
     }
 
     // Lightmap UVs
@@ -324,13 +338,13 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
             aiVector3D* a = aMesh->mTextureCoords[inputChannelIndex];
             for (uint32 v = 0; v < aMesh->mNumVertices; v++)
             {
-                mesh.LightmapUVs[v] = *(Vector2*)a;
+                mesh.LightmapUVs[v] = *(Float2*)a;
                 a++;
             }
         }
         else
         {
-            LOG(Warning, "Cannot import model lightmap uvs. Missing texcoords channel {0}.", inputChannelIndex);
+            LOG(Warning, "Cannot import result lightmap uvs. Missing texcoords channel {0}.", inputChannelIndex);
         }
     }
 
@@ -347,13 +361,13 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
     }
 
     // Blend Indices and Blend Weights
-    if (aMesh->mNumBones > 0 && aMesh->mBones && data.Model.Types & ImportDataTypes::Skeleton)
+    if (aMesh->mNumBones > 0 && aMesh->mBones && EnumHasAnyFlags(data.Options.ImportTypes, ImportDataTypes::Skeleton))
     {
         const int32 vertexCount = mesh.Positions.Count();
         mesh.BlendIndices.Resize(vertexCount);
         mesh.BlendWeights.Resize(vertexCount);
         mesh.BlendIndices.SetAll(Int4::Zero);
-        mesh.BlendWeights.SetAll(Vector4::Zero);
+        mesh.BlendWeights.SetAll(Float4::Zero);
 
         // Build skinning clusters and fill controls points data structure
         for (unsigned boneId = 0; boneId < aMesh->mNumBones; boneId++)
@@ -428,7 +442,7 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
     }
 
     // Blend Shapes
-    if (aMesh->mNumAnimMeshes > 0 && data.Model.Types & ImportDataTypes::Skeleton && data.Options.ImportBlendShapes)
+    if (aMesh->mNumAnimMeshes > 0 && EnumHasAnyFlags(data.Options.ImportTypes, ImportDataTypes::Skeleton) && data.Options.ImportBlendShapes)
     {
         mesh.BlendShapes.EnsureCapacity(aMesh->mNumAnimMeshes);
         for (unsigned int animMeshIndex = 0; animMeshIndex < aMesh->mNumAnimMeshes; animMeshIndex++)
@@ -448,32 +462,31 @@ bool ProcessMesh(AssimpImporterData& data, const aiMesh* aMesh, MeshData& mesh, 
             if (shapeVertices)
             {
                 for (int32 i = 0; i < blendShapeData.Vertices.Count(); i++)
-                    blendShapeData.Vertices[i].PositionDelta = ToVector3(shapeVertices[i]) - mesh.Positions[i];
+                    blendShapeData.Vertices[i].PositionDelta = ToFloat3(shapeVertices[i]) - mesh.Positions[i];
             }
             else
             {
                 for (int32 i = 0; i < blendShapeData.Vertices.Count(); i++)
-                    blendShapeData.Vertices[i].PositionDelta = Vector3::Zero;
+                    blendShapeData.Vertices[i].PositionDelta = Float3::Zero;
             }
 
             const aiVector3D* shapeNormals = aAnimMesh->mNormals;
             if (shapeNormals)
             {
                 for (int32 i = 0; i < blendShapeData.Vertices.Count(); i++)
-                    blendShapeData.Vertices[i].NormalDelta = ToVector3(shapeNormals[i]) - mesh.Normals[i];
+                    blendShapeData.Vertices[i].NormalDelta = ToFloat3(shapeNormals[i]) - mesh.Normals[i];
             }
             else
             {
                 for (int32 i = 0; i < blendShapeData.Vertices.Count(); i++)
-                    blendShapeData.Vertices[i].NormalDelta = Vector3::Zero;
+                    blendShapeData.Vertices[i].NormalDelta = Float3::Zero;
             }
         }
     }
-
     return false;
 }
 
-bool ImportTexture(AssimpImporterData& data, aiString& aFilename, int32& textureIndex, TextureEntry::TypeHint type)
+bool ImportTexture(ModelData& result, AssimpImporterData& data, aiString& aFilename, int32& textureIndex, TextureEntry::TypeHint type)
 {
     // Find texture file path
     const String filename = String(aFilename.C_Str()).TrimTrailing();
@@ -483,35 +496,74 @@ bool ImportTexture(AssimpImporterData& data, aiString& aFilename, int32& texture
 
     // Check if already used
     textureIndex = 0;
-    while (textureIndex < data.Model.Textures.Count())
+    while (textureIndex < result.Textures.Count())
     {
-        if (data.Model.Textures[textureIndex].FilePath == path)
+        if (result.Textures[textureIndex].FilePath == path)
             return true;
         textureIndex++;
     }
 
     // Import texture
-    auto& texture = data.Model.Textures.AddOne();
+    auto& texture = result.Textures.AddOne();
     texture.FilePath = path;
     texture.Type = type;
     texture.AssetID = Guid::Empty;
     return true;
 }
 
-bool ImportMaterialTexture(AssimpImporterData& data, const aiMaterial* aMaterial, aiTextureType aTextureType, int32& textureIndex, TextureEntry::TypeHint type)
+bool ImportMaterialTexture(ModelData& result, AssimpImporterData& data, const aiMaterial* aMaterial, aiTextureType aTextureType, int32& textureIndex, TextureEntry::TypeHint type)
 {
     aiString aFilename;
-    return aMaterial->GetTexture(aTextureType, 0, &aFilename, nullptr, nullptr, nullptr, nullptr) == AI_SUCCESS &&
-            ImportTexture(data, aFilename, textureIndex, type);
+    if (aMaterial->GetTexture(aTextureType, 0, &aFilename, nullptr, nullptr, nullptr, nullptr) == AI_SUCCESS)
+    {
+        // Check for embedded textures
+        String filename = String(aFilename.C_Str()).TrimTrailing();
+        if (filename.StartsWith(TEXT(AI_EMBEDDED_TEXNAME_PREFIX)))
+        {
+            const aiTexture* aTex = data.Scene->GetEmbeddedTexture(aFilename.C_Str());
+            const StringView texIndexName(filename.Get() + (ARRAY_COUNT(AI_EMBEDDED_TEXNAME_PREFIX) - 1));
+            uint32 texIndex;
+            if (!aTex && !StringUtils::Parse(texIndexName.Get(), texIndexName.Length(), &texIndex) && texIndex >= 0 && texIndex < data.Scene->mNumTextures)
+                aTex = data.Scene->mTextures[texIndex];
+            if (aTex && aTex->mHeight == 0 && aTex->mWidth > 0)
+            {
+                // Export embedded texture to temporary file
+                filename = String::Format(TEXT("{0}_tex_{1}.{2}"), StringUtils::GetFileNameWithoutExtension(data.Path), texIndexName, String(aTex->achFormatHint));
+                File::WriteAllBytes(String(StringUtils::GetDirectoryName(data.Path)) / filename, (const byte*)aTex->pcData, (int32)aTex->mWidth);
+            }
+        }
+
+        // Find texture file path
+        String path;
+        if (ModelTool::FindTexture(data.Path, filename, path))
+            return true;
+
+        // Check if already used
+        textureIndex = 0;
+        while (textureIndex < result.Textures.Count())
+        {
+            if (result.Textures[textureIndex].FilePath == path)
+                return true;
+            textureIndex++;
+        }
+
+        // Import texture
+        auto& texture = result.Textures.AddOne();
+        texture.FilePath = path;
+        texture.Type = type;
+        texture.AssetID = Guid::Empty;
+        return true;
+    }
+    return false;
 }
 
-bool ImportMaterials(AssimpImporterData& data, String& errorMsg)
+bool ImportMaterials(ModelData& result, AssimpImporterData& data, String& errorMsg)
 {
-    const uint32 materialsCount = (uint32)data.Scene->mNumMaterials;
-    data.Model.Materials.Resize(materialsCount, false);
+    const uint32 materialsCount = data.Scene->mNumMaterials;
+    result.Materials.Resize(materialsCount, false);
     for (uint32 i = 0; i < materialsCount; i++)
     {
-        auto& materialSlot = data.Model.Materials[i];
+        auto& materialSlot = result.Materials[i];
         const aiMaterial* aMaterial = data.Scene->mMaterials[i];
 
         aiString aName;
@@ -519,7 +571,7 @@ bool ImportMaterials(AssimpImporterData& data, String& errorMsg)
             materialSlot.Name = String(aName.C_Str()).TrimTrailing();
         materialSlot.AssetID = Guid::Empty;
 
-        if (data.Model.Types & ImportDataTypes::Materials)
+        if (EnumHasAnyFlags(data.Options.ImportTypes, ImportDataTypes::Materials))
         {
             aiColor3D aColor;
             if (aMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, aColor) == AI_SUCCESS)
@@ -531,19 +583,19 @@ bool ImportMaterials(AssimpImporterData& data, String& errorMsg)
             if (aMaterial->Get(AI_MATKEY_OPACITY, aFloat) == AI_SUCCESS)
                 materialSlot.Opacity.Value = aFloat;
 
-            if (data.Model.Types & ImportDataTypes::Textures)
+            if (EnumHasAnyFlags(data.Options.ImportTypes, ImportDataTypes::Textures))
             {
-                ImportMaterialTexture(data, aMaterial, aiTextureType_DIFFUSE, materialSlot.Diffuse.TextureIndex, TextureEntry::TypeHint::ColorRGB);
-                ImportMaterialTexture(data, aMaterial, aiTextureType_EMISSIVE, materialSlot.Emissive.TextureIndex, TextureEntry::TypeHint::ColorRGB);
-                ImportMaterialTexture(data, aMaterial, aiTextureType_NORMALS, materialSlot.Normals.TextureIndex, TextureEntry::TypeHint::Normals);
-                ImportMaterialTexture(data, aMaterial, aiTextureType_OPACITY, materialSlot.Opacity.TextureIndex, TextureEntry::TypeHint::ColorRGBA);
+                ImportMaterialTexture(result, data, aMaterial, aiTextureType_DIFFUSE, materialSlot.Diffuse.TextureIndex, TextureEntry::TypeHint::ColorRGB);
+                ImportMaterialTexture(result, data, aMaterial, aiTextureType_EMISSIVE, materialSlot.Emissive.TextureIndex, TextureEntry::TypeHint::ColorRGB);
+                ImportMaterialTexture(result, data, aMaterial, aiTextureType_NORMALS, materialSlot.Normals.TextureIndex, TextureEntry::TypeHint::Normals);
+                ImportMaterialTexture(result, data, aMaterial, aiTextureType_OPACITY, materialSlot.Opacity.TextureIndex, TextureEntry::TypeHint::ColorRGBA);
 
                 if (materialSlot.Diffuse.TextureIndex != -1)
                 {
                     // Detect using alpha mask in diffuse texture
-                    materialSlot.Diffuse.HasAlphaMask = TextureTool::HasAlpha(data.Model.Textures[materialSlot.Diffuse.TextureIndex].FilePath);
+                    materialSlot.Diffuse.HasAlphaMask = TextureTool::HasAlpha(result.Textures[materialSlot.Diffuse.TextureIndex].FilePath);
                     if (materialSlot.Diffuse.HasAlphaMask)
-                        data.Model.Textures[materialSlot.Diffuse.TextureIndex].Type = TextureEntry::TypeHint::ColorRGBA;
+                        result.Textures[materialSlot.Diffuse.TextureIndex].Type = TextureEntry::TypeHint::ColorRGBA;
                 }
             }
         }
@@ -552,50 +604,75 @@ bool ImportMaterials(AssimpImporterData& data, String& errorMsg)
     return false;
 }
 
-bool ImportMeshes(AssimpImporterData& data, String& errorMsg)
+bool IsMeshInvalid(const aiMesh* aMesh)
 {
-    for (unsigned i = 0; i < data.Scene->mNumMeshes; i++)
+    return aMesh->mPrimitiveTypes != aiPrimitiveType_TRIANGLE || aMesh->mNumVertices == 0 || aMesh->mNumFaces == 0 || aMesh->mFaces[0].mNumIndices != 3;
+}
+
+bool ImportMesh(int32 index, ModelData& result, AssimpImporterData& data, String& errorMsg)
+{
+    const auto aMesh = data.Scene->mMeshes[index];
+
+    // Skip invalid meshes
+    if (IsMeshInvalid(aMesh))
+        return false;
+
+    // Skip unused meshes
+    if (!data.MeshIndexToNodeIndex.ContainsKey(index))
+        return false;
+
+    // Import mesh data
+    MeshData* meshData = New<MeshData>();
+    if (ProcessMesh(result, data, aMesh, *meshData, errorMsg))
     {
-        const auto aMesh = data.Scene->mMeshes[i];
+        Delete(meshData);
+        return true;
+    }
 
-        // Skip invalid meshes
-        if (aMesh->mPrimitiveTypes != aiPrimitiveType_TRIANGLE || aMesh->mNumVertices == 0 || aMesh->mNumFaces == 0 || aMesh->mFaces[0].mNumIndices != 3)
-            continue;
+    auto& nodesWithMesh = data.MeshIndexToNodeIndex[index];
+    for (int32 i = 0; i < nodesWithMesh.Count(); i++)
+    {
+        const auto nodeIndex = nodesWithMesh[i];
+        auto& node = data.Nodes[nodeIndex];
+        const int32 lodIndex = node.LodIndex;
 
-        // Skip unused meshes
-        if (!data.MeshIndexToNodeIndex.ContainsKey(i))
-            continue;
-
-        // Import mesh data
-        MeshData* meshData = New<MeshData>();
-        if (ProcessMesh(data, aMesh, *meshData, errorMsg))
-            return true;
-
-        auto& nodesWithMesh = data.MeshIndexToNodeIndex[i];
-        for (int32 j = 0; j < nodesWithMesh.Count(); j++)
+        // The first mesh instance uses meshData directly while others have to clone it
+        if (i != 0)
         {
-            const auto nodeIndex = nodesWithMesh[j];
-            auto& node = data.Nodes[nodeIndex];
-            const int32 lodIndex = node.LodIndex;
-
-            // The first mesh instance uses meshData directly while others have to clone it
-            if (j != 0)
-            {
-                meshData = New<MeshData>(*meshData);
-            }
-
-            // Link mesh
-            meshData->NodeIndex = nodeIndex;
-            if (data.Model.LODs.Count() <= lodIndex)
-                data.Model.LODs.Resize(lodIndex + 1);
-            data.Model.LODs[lodIndex].Meshes.Add(meshData);
+            meshData = New<MeshData>(*meshData);
         }
+
+        // Link mesh
+        meshData->NodeIndex = nodeIndex;
+        AssimpNode* curNode = &data.Nodes[meshData->NodeIndex];
+        Vector3 translation = Vector3::Zero;
+        Vector3 scale = Vector3::One;
+        Quaternion rotation = Quaternion::Identity;
+
+        while (true)
+        {
+            translation += curNode->LocalTransform.Translation;
+            scale *= curNode->LocalTransform.Scale;
+            rotation *= curNode->LocalTransform.Orientation;
+
+            if (curNode->ParentIndex == -1)
+                break;
+            curNode = &data.Nodes[curNode->ParentIndex];
+        }
+
+        meshData->OriginTranslation = translation;
+        meshData->OriginOrientation = rotation;
+        meshData->Scaling = scale;
+
+        if (result.LODs.Count() <= lodIndex)
+            result.LODs.Resize(lodIndex + 1);
+        result.LODs[lodIndex].Meshes.Add(meshData);
     }
 
     return false;
 }
 
-void ImportCurve(aiVectorKey* keys, uint32 keysCount, LinearCurve<Vector3>& curve)
+void ImportCurve(aiVectorKey* keys, uint32 keysCount, LinearCurve<Float3>& curve)
 {
     if (keys == nullptr || keysCount == 0)
         return;
@@ -608,7 +685,7 @@ void ImportCurve(aiVectorKey* keys, uint32 keysCount, LinearCurve<Vector3>& curv
         auto& key = keyframes[i];
 
         key.Time = (float)aKey.mTime;
-        key.Value = ToVector3(aKey.mValue);
+        key.Value = ToFloat3(aKey.mValue);
     }
 }
 
@@ -629,31 +706,57 @@ void ImportCurve(aiQuatKey* keys, uint32 keysCount, LinearCurve<Quaternion>& cur
     }
 }
 
-static bool AssimpInited = false;
-
-bool ModelTool::ImportDataAssimp(const char* path, ImportedModelData& data, const Options& options, String& errorMsg)
+void ImportAnimation(int32 index, ModelData& data, AssimpImporterData& importerData)
 {
-    // Prepare
+    const auto animations = importerData.Scene->mAnimations[index];
+    auto& anim = data.Animations.AddOne();
+    anim.Channels.Resize(animations->mNumChannels, false);
+    anim.Duration = animations->mDuration;
+    anim.FramesPerSecond = animations->mTicksPerSecond;
+    if (anim.FramesPerSecond <= 0)
+    {
+        anim.FramesPerSecond = importerData.Options.DefaultFrameRate;
+        if (anim.FramesPerSecond <= 0)
+            anim.FramesPerSecond = 30.0f;
+    }
+    anim.Name = animations->mName.C_Str();
+
+    for (unsigned i = 0; i < animations->mNumChannels; i++)
+    {
+        const auto aAnim = animations->mChannels[i];
+        auto& channel = anim.Channels[i];
+
+        channel.NodeName = aAnim->mNodeName.C_Str();
+
+        ImportCurve(aAnim->mPositionKeys, aAnim->mNumPositionKeys, channel.Position);
+        ImportCurve(aAnim->mRotationKeys, aAnim->mNumRotationKeys, channel.Rotation);
+        if (importerData.Options.ImportScaleTracks)
+            ImportCurve(aAnim->mScalingKeys, aAnim->mNumScalingKeys, channel.Scale);
+    }
+}
+
+bool ModelTool::ImportDataAssimp(const char* path, ModelData& data, Options& options, String& errorMsg)
+{
+    static bool AssimpInited = false;
     if (!AssimpInited)
     {
         AssimpInited = true;
-
-        // Log Assimp version
         LOG(Info, "Assimp {0}.{1}.{2}", aiGetVersionMajor(), aiGetVersionMinor(), aiGetVersionRevision());
     }
-    Importer importer;
-    AssimpLogStream assimpLogStream;
-    bool importMeshes = (data.Types & ImportDataTypes::Geometry) != 0;
-    bool importAnimations = (data.Types & ImportDataTypes::Animations) != 0;
+    bool importMeshes = EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Geometry);
+    bool importAnimations = EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Animations);
+    AssimpImporterData context(path, options);
 
     // Setup import flags
     unsigned int flags =
             aiProcess_JoinIdenticalVertices |
             aiProcess_LimitBoneWeights |
             aiProcess_Triangulate |
+            aiProcess_SortByPType |
             aiProcess_GenUVCoords |
             aiProcess_FindDegenerates |
             aiProcess_FindInvalidData |
+            aiProcess_GlobalScale |
             //aiProcess_ValidateDataStructure |
             aiProcess_ConvertToLeftHanded;
     if (importMeshes)
@@ -669,115 +772,102 @@ bool ModelTool::ImportDataAssimp(const char* path, ImportedModelData& data, cons
     }
 
     // Setup import options
-    importer.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.SmoothingNormalsAngle);
-    importer.SetPropertyFloat(AI_CONFIG_PP_CT_MAX_SMOOTHING_ANGLE, options.SmoothingTangentsAngle);
-    //importer.SetPropertyInteger(AI_CONFIG_PP_SLM_TRIANGLE_LIMIT, MAX_uint16);
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_CAMERAS, false);
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_LIGHTS, false);
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_TEXTURES, false);
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_ANIMATIONS, importAnimations);
-    //importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false); // TODO: optimize pivots when https://github.com/assimp/assimp/issues/1068 gets fixed
-    importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_OPTIMIZE_EMPTY_ANIMATION_CURVES, true);
+    context.AssimpImporter.SetPropertyFloat(AI_CONFIG_PP_GSN_MAX_SMOOTHING_ANGLE, options.SmoothingNormalsAngle);
+    context.AssimpImporter.SetPropertyFloat(AI_CONFIG_PP_CT_MAX_SMOOTHING_ANGLE, options.SmoothingTangentsAngle);
+    context.AssimpImporter.SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 100.0f); // Convert to cm
+    //context.AssimpImporter.SetPropertyInteger(AI_CONFIG_PP_SLM_TRIANGLE_LIMIT, MAX_uint16);
+    context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_CAMERAS, false);
+    context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_LIGHTS, false);
+    context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_TEXTURES, false);
+    context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_READ_ANIMATIONS, importAnimations);
+    //context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false); // TODO: optimize pivots when https://github.com/assimp/assimp/issues/1068 gets fixed
+    context.AssimpImporter.SetPropertyBool(AI_CONFIG_IMPORT_FBX_OPTIMIZE_EMPTY_ANIMATION_CURVES, true);
 
     // Import file
-    const auto scene = importer.ReadFile(path, flags);
-    if (scene == nullptr)
+    context.Scene = context.AssimpImporter.ReadFile(path, flags);
+    if (context.Scene == nullptr)
     {
-        LOG_STR(Warning, String(importer.GetErrorString()));
+        LOG_STR(Warning, String(context.AssimpImporter.GetErrorString()));
         LOG_STR(Warning, String(path));
         LOG_STR(Warning, StringUtils::ToString(flags));
-        errorMsg = importer.GetErrorString();
+        errorMsg = context.AssimpImporter.GetErrorString();
         return true;
     }
 
+    // Create root node
+    /*AssimpNode& rootNode = context.Nodes.AddOne();
+    rootNode.ParentIndex = -1;
+    rootNode.LodIndex = 0;
+    rootNode.LocalTransform = Transform::Identity;
+    rootNode.Name = TEXT("Root");*/
+
     // Process imported scene nodes
-    AssimpImporterData assimpData(path, data, options, scene);
-    ProcessNodes(assimpData, scene->mRootNode, -1);
+    ProcessNodes(context, context.Scene->mRootNode, -1);
 
     // Import materials
-    if (ImportMaterials(assimpData, errorMsg))
+    if (ImportMaterials(data, context, errorMsg))
     {
         LOG(Warning, "Failed to import materials.");
         return true;
     }
 
     // Import geometry
-    if (data.Types & ImportDataTypes::Geometry)
+    if (EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Geometry) && context.Scene->HasMeshes())
     {
-        if (ImportMeshes(assimpData, errorMsg))
+        for (unsigned meshIndex = 0; meshIndex < context.Scene->mNumMeshes; meshIndex++)
         {
-            LOG(Warning, "Failed to import meshes.");
-            return true;
+            if (ImportMesh((int32)meshIndex, data, context, errorMsg))
+                return true;
         }
     }
 
     // Import skeleton
-    if (data.Types & ImportDataTypes::Skeleton)
+    if (EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Skeleton))
     {
-        data.Skeleton.Nodes.Resize(assimpData.Nodes.Count(), false);
-        for (int32 i = 0; i < assimpData.Nodes.Count(); i++)
+        data.Skeleton.Nodes.Resize(context.Nodes.Count(), false);
+        for (int32 i = 0; i < context.Nodes.Count(); i++)
         {
             auto& node = data.Skeleton.Nodes[i];
-            auto& aNode = assimpData.Nodes[i];
+            auto& aNode = context.Nodes[i];
 
             node.Name = aNode.Name;
             node.ParentIndex = aNode.ParentIndex;
             node.LocalTransform = aNode.LocalTransform;
         }
 
-        data.Skeleton.Bones.Resize(assimpData.Bones.Count(), false);
-        for (int32 i = 0; i < assimpData.Bones.Count(); i++)
+        data.Skeleton.Bones.Resize(context.Bones.Count(), false);
+        for (int32 i = 0; i < context.Bones.Count(); i++)
         {
             auto& bone = data.Skeleton.Bones[i];
-            auto& aBone = assimpData.Bones[i];
+            auto& aBone = context.Bones[i];
 
             const auto boneNodeIndex = aBone.NodeIndex;
-            const auto parentBoneNodeIndex = aBone.ParentBoneIndex == -1 ? -1 : assimpData.Bones[aBone.ParentBoneIndex].NodeIndex;
+            const auto parentBoneNodeIndex = aBone.ParentBoneIndex == -1 ? -1 : context.Bones[aBone.ParentBoneIndex].NodeIndex;
 
             bone.ParentIndex = aBone.ParentBoneIndex;
             bone.NodeIndex = aBone.NodeIndex;
-            bone.LocalTransform = CombineTransformsFromNodeIndices(assimpData.Nodes, parentBoneNodeIndex, boneNodeIndex);
+            bone.LocalTransform = CombineTransformsFromNodeIndices(context.Nodes, parentBoneNodeIndex, boneNodeIndex);
             bone.OffsetMatrix = aBone.OffsetMatrix;
         }
     }
 
     // Import animations
-    if (data.Types & ImportDataTypes::Animations)
+    if (EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Animations))
     {
-        if (scene->HasAnimations())
+        for (unsigned animIndex = 0; animIndex < context.Scene->mNumAnimations; animIndex++)
         {
-            const auto animIndex = Math::Clamp<int32>(options.AnimationIndex, 0, scene->mNumAnimations - 1);
-            const auto animations = scene->mAnimations[animIndex];
-            data.Animation.Channels.Resize(animations->mNumChannels, false);
-            data.Animation.Duration = animations->mDuration;
-            data.Animation.FramesPerSecond = animations->mTicksPerSecond != 0.0 ? animations->mTicksPerSecond : 25.0;
-
-            for (unsigned i = 0; i < animations->mNumChannels; i++)
-            {
-                const auto aAnim = animations->mChannels[i];
-                auto& anim = data.Animation.Channels[i];
-
-                anim.NodeName = aAnim->mNodeName.C_Str();
-
-                ImportCurve(aAnim->mPositionKeys, aAnim->mNumPositionKeys, anim.Position);
-                ImportCurve(aAnim->mRotationKeys, aAnim->mNumRotationKeys, anim.Rotation);
-                ImportCurve(aAnim->mScalingKeys, aAnim->mNumScalingKeys, anim.Scale);
-            }
-        }
-        else
-        {
-            LOG(Warning, "Loaded scene has no animations");
+            ImportAnimation((int32)animIndex, data, context);
         }
     }
 
     // Import nodes
-    if (data.Types & ImportDataTypes::Nodes)
+    if (EnumHasAnyFlags(options.ImportTypes, ImportDataTypes::Nodes))
     {
-        data.Nodes.Resize(assimpData.Nodes.Count());
-        for (int32 i = 0; i < assimpData.Nodes.Count(); i++)
+        data.Nodes.Resize(context.Nodes.Count());
+        for (int32 i = 0; i < context.Nodes.Count(); i++)
         {
             auto& node = data.Nodes[i];
-            auto& aNode = assimpData.Nodes[i];
+            auto& aNode = context.Nodes[i];
 
             node.Name = aNode.Name;
             node.ParentIndex = aNode.ParentIndex;

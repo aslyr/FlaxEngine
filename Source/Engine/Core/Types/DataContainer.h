@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -15,15 +15,12 @@ template<typename T>
 class DataContainer : public Span<T>
 {
 public:
-
     typedef Span<T> Base;
 
 private:
-
     bool _isAllocated;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="DataContainer"/> class.
     /// </summary>
@@ -38,7 +35,7 @@ public:
     /// </summary>
     /// <param name="data">The data pointer to link.</param>
     /// <param name="length">The data length.</param>
-    DataContainer(T* data, int32 length)
+    DataContainer(const T* data, int32 length)
         : Base(data, length)
         , _isAllocated(false)
     {
@@ -50,7 +47,17 @@ public:
     /// <param name="data">The data array to link.</param>
     template<typename AllocationType>
     DataContainer(const Array<T, AllocationType>& data)
-        : Base((T*)data.Get(), data.Count())
+        : Base(data.Get(), data.Count())
+        , _isAllocated(false)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DataContainer"/> class.
+    /// </summary>
+    /// <param name="data">The data span to link.</param>
+    DataContainer(const Span<T>& data)
+        : Base(data.Get(), data.Length())
         , _isAllocated(false)
     {
     }
@@ -129,7 +136,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Returns true if data is allocated by container itself, otherwise it's just linked.
     /// </summary>
@@ -225,7 +231,7 @@ public:
     /// <param name="data">Data to copy.</param>
     void Copy(const DataContainer& data)
     {
-        if (data.IsValid())
+        if (data.Length() != 0)
             Copy(data.Get(), data.Length());
         else
             Release();
@@ -237,7 +243,7 @@ public:
     /// <param name="data">Data to copy.</param>
     void Copy(const Span<T>& data)
     {
-        if (data.IsValid())
+        if (data.Length() != 0)
             Copy(data.Get(), data.Length());
         else
             Release();
@@ -339,7 +345,6 @@ public:
     }
 
 public:
-
     template<typename ReadStream>
     void Read(ReadStream* stream, int32 length)
     {

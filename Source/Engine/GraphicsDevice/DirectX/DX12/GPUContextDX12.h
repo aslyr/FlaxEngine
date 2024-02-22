@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -47,11 +47,14 @@ private:
 
     uint32 _srMaskDirtyGraphics;
     uint32 _srMaskDirtyCompute;
+    uint32 _stencilRef;
+    D3D_PRIMITIVE_TOPOLOGY _primitiveTopology;
 
     int32 _isCompute : 1;
     int32 _rtDirtyFlag : 1;
     int32 _psDirtyFlag : 1;
-    int32 _cbDirtyFlag : 1;
+    int32 _cbGraphicsDirtyFlag : 1;
+    int32 _cbComputeDirtyFlag : 1;
     int32 _samplersDirtyFlag : 1;
 
     GPUTextureViewDX12* _rtDepth;
@@ -157,12 +160,16 @@ public:
     bool IsDepthBufferBinded() override;
     void Clear(GPUTextureView* rt, const Color& color) override;
     void ClearDepth(GPUTextureView* depthBuffer, float depthValue) override;
-    void ClearUA(GPUBuffer* buf, const Vector4& value) override;
+    void ClearUA(GPUBuffer* buf, const Float4& value) override;
+    void ClearUA(GPUBuffer* buf, const uint32 value[4]) override;
+    void ClearUA(GPUTexture* texture, const uint32 value[4]) override;
+    void ClearUA(GPUTexture* texture, const Float4& value) override;
     void ResetRenderTarget() override;
     void SetRenderTarget(GPUTextureView* rt) override;
     void SetRenderTarget(GPUTextureView* depthBuffer, GPUTextureView* rt) override;
     void SetRenderTarget(GPUTextureView* depthBuffer, const Span<GPUTextureView*>& rts) override;
-    void SetRenderTarget(GPUTextureView* rt, GPUBuffer* uaOutput) override;
+    void SetBlendFactor(const Float4& value) override;
+    void SetStencilRef(uint32 value) override;
     void ResetSR() override;
     void ResetUA() override;
     void ResetCB() override;
@@ -195,6 +202,8 @@ public:
     void CopyCounter(GPUBuffer* dstBuffer, uint32 dstOffset, GPUBuffer* srcBuffer) override;
     void CopyResource(GPUResource* dstResource, GPUResource* srcResource) override;
     void CopySubresource(GPUResource* dstResource, uint32 dstSubresource, GPUResource* srcResource, uint32 srcSubresource) override;
+    void SetResourceState(GPUResource* resource, uint64 state, int32 subresource) override;
+    void ForceRebindDescriptors() override;
 };
 
 #endif

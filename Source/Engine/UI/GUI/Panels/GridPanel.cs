@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -73,6 +73,7 @@ namespace FlaxEngine.GUI
         /// <param name="slotPadding">The slot padding.</param>
         public GridPanel(float slotPadding)
         {
+            AutoFocus = false;
             SlotPadding = new Margin(slotPadding);
             _cellsH = new[]
             {
@@ -92,7 +93,7 @@ namespace FlaxEngine.GUI
             base.PerformLayoutBeforeChildren();
 
             int i = 0;
-            Vector2 upperLeft = Vector2.Zero;
+            var upperLeft = Float2.Zero;
             float remainingHeight = Height;
             for (int rowIndex = 0; rowIndex < _cellsV.Length; rowIndex++)
             {

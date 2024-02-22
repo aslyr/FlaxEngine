@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ReflectionsPass.h"
 #include "GBufferPass.h"
@@ -6,6 +6,7 @@
 #include "ScreenSpaceReflectionsPass.h"
 #include "Engine/Core/Collections/Sorting.h"
 #include "Engine/Content/Content.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/RenderBuffers.h"
 #include "Engine/Graphics/RenderTools.h"
 #include "Engine/Graphics/RenderTask.h"
@@ -369,9 +370,9 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
 
     // Cache data
     auto& view = renderContext.View;
-    bool useReflections = ((view.Flags & ViewFlags::Reflections) != 0);
-    bool useSSR = ((view.Flags & ViewFlags::SSR) != 0) && (renderContext.List->Settings.ScreenSpaceReflections.Intensity > ZeroTolerance);
-    int32 probesCount = (int32)renderContext.List->EnvironmentProbes.Count();
+    bool useReflections = EnumHasAnyFlags(view.Flags, ViewFlags::Reflections);
+    bool useSSR = EnumHasAnyFlags(view.Flags, ViewFlags::SSR) && renderContext.List->Settings.ScreenSpaceReflections.Intensity > ZeroTolerance;
+    int32 probesCount = renderContext.List->EnvironmentProbes.Count();
     bool renderProbes = probesCount > 0;
     auto shader = _shader->GetShader();
     auto cb = shader->GetCB(0);
@@ -390,9 +391,9 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
     context->BindSR(2, renderContext.Buffers->GBuffer2);
     context->BindSR(3, renderContext.Buffers->DepthBuffer);
 
-    auto tempDesc = GPUTextureDescription::New2D(renderContext.Buffers->GetWidth(), renderContext.Buffers->GetHeight(), REFLECTIONS_PASS_OUTPUT_FORMAT);
+    auto tempDesc = GPUTextureDescription::New2D(renderContext.Buffers->GetWidth(), renderContext.Buffers->GetHeight(), PixelFormat::R11G11B10_Float);
     auto reflectionsBuffer = RenderTargetPool::Get(tempDesc);
-
+    RENDER_TARGET_POOL_SET_NAME(reflectionsBuffer, "Reflections");
     context->Clear(*reflectionsBuffer, Color::Black);
 
     // Reflection Probes pass
@@ -403,7 +404,7 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
         context->SetRenderTarget(*reflectionsBuffer);
 
         // Sort probes by the radius
-        Sorting::QuickSort(renderContext.List->EnvironmentProbes.Get(), (int32)renderContext.List->EnvironmentProbes.Count(), &sortProbes);
+        Sorting::QuickSort(renderContext.List->EnvironmentProbes.Get(), renderContext.List->EnvironmentProbes.Count(), &sortProbes);
 
         // TODO: don't render too far probes, check area of the screen and apply culling!
 
@@ -412,10 +413,8 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
         {
             // Cache data
             auto probe = renderContext.List->EnvironmentProbes[probeIndex];
-            if (!probe->HasProbeLoaded())
-                continue;
             float probeRadius = probe->GetScaledRadius();
-            Vector3 probePosition = probe->GetPosition();
+            Float3 probePosition = probe->GetPosition() - renderContext.View.Origin;
 
             // Get distance from view center to light center less radius (check if view is inside a sphere)
             const float sphereModelScale = 2.0f;
@@ -430,13 +429,13 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
             Matrix::Multiply(world, view.ViewProjection(), wvp);
 
             // Pack probe properties buffer
-            probe->SetupProbeData(&data.PData);
+            probe->SetupProbeData(renderContext, &data.PData);
             Matrix::Transpose(wvp, data.WVP);
 
             // Render reflections
             context->UpdateCB(cb, &data);
             context->BindCB(0, cb);
-            context->BindSR(4, probe->GetProbe()->GetTexture());
+            context->BindSR(4, probe->GetProbe());
 
             context->SetState(isViewInside ? _psProbeInverted : _psProbeNormal);
             _sphereModel->Render(context);

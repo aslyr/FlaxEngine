@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -15,13 +15,22 @@ using Newtonsoft.Json.Serialization;
 
 namespace FlaxEngine.Json
 {
-    /// <summary>
-    /// Objects serialization tool (json format).
-    /// </summary>
-    public static class JsonSerializer
+    sealed class StringWriterWithEncoding : StringWriter
+    {
+        public override Encoding Encoding { get; }
+
+        public StringWriterWithEncoding(System.Text.StringBuilder sb, IFormatProvider formatProvider, Encoding encoding)
+        : base(sb, formatProvider)
+        {
+            Encoding = encoding;
+        }    
+    }
+
+    partial class JsonSerializer
     {
         internal class SerializerCache
         {
+            public bool IsManagedOnly;
             public Newtonsoft.Json.JsonSerializer JsonSerializer;
             public StringBuilder StringBuilder;
             public StringWriter StringWriter;
@@ -29,17 +38,108 @@ namespace FlaxEngine.Json
             public JsonSerializerInternalWriter SerializerWriter;
             public UnmanagedMemoryStream MemoryStream;
             public StreamReader Reader;
-            public bool IsDuringSerialization;
+            public bool IsWriting;
+            public bool IsReading;
+#if FLAX_EDITOR
+            public uint CacheVersion;
+#endif
 
-            public unsafe SerializerCache(JsonSerializerSettings settings)
+            public unsafe SerializerCache(bool isManagedOnly)
             {
-                JsonSerializer = Newtonsoft.Json.JsonSerializer.CreateDefault(settings);
-                JsonSerializer.Formatting = Formatting.Indented;
+                IsManagedOnly = isManagedOnly;
                 StringBuilder = new StringBuilder(256);
-                StringWriter = new StringWriter(StringBuilder, CultureInfo.InvariantCulture);
-                SerializerWriter = new JsonSerializerInternalWriter(JsonSerializer);
+                StringWriter = new StringWriterWithEncoding(StringBuilder, CultureInfo.InvariantCulture, Encoding.UTF8);
                 MemoryStream = new UnmanagedMemoryStream((byte*)0, 0);
+
+#if FLAX_EDITOR
+                lock (CurrentCacheSyncRoot)
+#endif
+                {
+                    BuildSerializer();
+                    BuildRead();
+                    BuildWrite();
+#if FLAX_EDITOR
+                    CacheVersion = Json.JsonSerializer.CurrentCacheVersion;
+#endif
+                }
+            }
+
+            public void ReadBegin()
+            {
+                CheckCacheVersionRebuild();
+
+                // TODO: Reset reading state (eg if previous deserialization got exception)
+                if (IsReading)
+                    BuildRead();
+
+                IsWriting = false;
+                IsReading = true;
+            }
+
+            public void ReadEnd()
+            {
+                IsReading = false;
+            }
+
+            public void WriteBegin()
+            {
+                CheckCacheVersionRebuild();
+
+                // Reset writing state (eg if previous serialization got exception)
+                if (IsWriting)
+                    BuildWrite();
+
+                StringBuilder.Clear();
+                IsWriting = true;
+                IsReading = false;
+            }
+
+            public void WriteEnd()
+            {
+                IsWriting = false;
+            }
+
+            /// <summary>Check that the cache is up to date, rebuild it if it isn't</summary>
+            private void CheckCacheVersionRebuild()
+            {
+#if FLAX_EDITOR
+                var version = Json.JsonSerializer.CurrentCacheVersion;
+                if (CacheVersion == version)
+                    return;
+
+                lock (CurrentCacheSyncRoot)
+                {
+                    version = Json.JsonSerializer.CurrentCacheVersion;
+                    if (CacheVersion == version)
+                        return;
+
+                    BuildSerializer();
+                    BuildRead();
+                    BuildWrite();
+
+                    CacheVersion = version;
+                }
+#endif
+            }
+
+            /// <summary>Builds the serializer</summary>
+            private void BuildSerializer()
+            {
+                JsonSerializer = Newtonsoft.Json.JsonSerializer.CreateDefault(IsManagedOnly ? SettingsManagedOnly : Settings);
+                JsonSerializer.Formatting = Formatting.Indented;
+                JsonSerializer.ReferenceLoopHandling = ReferenceLoopHandling.Serialize;
+            }
+
+            /// <summary>Builds the reader state</summary>
+            private void BuildRead()
+            {
                 Reader = new StreamReader(MemoryStream, Encoding.UTF8, false);
+            }
+
+            /// <summary>Builds the writer state</summary>
+            private void BuildWrite()
+            {
+                SerializerWriter = new JsonSerializerInternalWriter(JsonSerializer);
                 JsonWriter = new JsonTextWriter(StringWriter)
                 {
                     IndentChar = '\t',
@@ -57,17 +157,26 @@ namespace FlaxEngine.Json
 
         internal static JsonSerializerSettings Settings = CreateDefaultSettings(false);
         internal static JsonSerializerSettings SettingsManagedOnly = CreateDefaultSettings(true);
+        internal static ExtendedSerializationBinder SerializationBinder;
         internal static FlaxObjectConverter ObjectConverter;
         internal static ThreadLocal<SerializerCache> Current = new ThreadLocal<SerializerCache>();
-        internal static ThreadLocal<SerializerCache> Cache = new ThreadLocal<SerializerCache>(() => new SerializerCache(Settings));
-        internal static ThreadLocal<SerializerCache> CacheManagedOnly = new ThreadLocal<SerializerCache>(() => new SerializerCache(SettingsManagedOnly));
+        internal static ThreadLocal<SerializerCache> Cache = new ThreadLocal<SerializerCache>(() => new SerializerCache(false));
+        internal static ThreadLocal<SerializerCache> CacheManagedOnly = new ThreadLocal<SerializerCache>(() => new SerializerCache(true));
         internal static ThreadLocal<IntPtr> CachedGuidBuffer = new ThreadLocal<IntPtr>(() => Marshal.AllocHGlobal(32 * sizeof(char)), true);
         internal static string CachedGuidDigits = "0123456789abcdef";
+#if FLAX_EDITOR
+        /// <summary>The version of the cache, used to check that a cache is not out of date</summary>
+        internal static uint CurrentCacheVersion = 0;
+
+        /// <summary>Used to synchronize cache operations such as <see cref="SerializerCache"/> rebuild, and <see cref="ResetCache"/></summary>
+        internal static readonly object CurrentCacheSyncRoot = new();
+#endif
 
         internal static JsonSerializerSettings CreateDefaultSettings(bool isManagedOnly)
         {
             //Newtonsoft.Json.Utilities.MiscellaneousUtils.ValueEquals = ValueEquals;
-
+            if (SerializationBinder is null)
+                SerializationBinder = new();
             var settings = new JsonSerializerSettings
             {
                 ContractResolver = new ExtendedDefaultContractResolver(isManagedOnly),
@@ -75,18 +184,39 @@ namespace FlaxEngine.Json
                 TypeNameHandling = TypeNameHandling.Auto,
                 NullValueHandling = NullValueHandling.Include,
                 ObjectCreationHandling = ObjectCreationHandling.Auto,
+                SerializationBinder = SerializationBinder,
             };
             if (ObjectConverter == null)
                 ObjectConverter = new FlaxObjectConverter();
             settings.Converters.Add(ObjectConverter);
             settings.Converters.Add(new SceneReferenceConverter());
             settings.Converters.Add(new SoftObjectReferenceConverter());
+            settings.Converters.Add(new SoftTypeReferenceConverter());
+            settings.Converters.Add(new BehaviorKnowledgeSelectorAnyConverter());
             settings.Converters.Add(new MarginConverter());
             settings.Converters.Add(new VersionConverter());
             settings.Converters.Add(new LocalizedStringConverter());
+            settings.Converters.Add(new TagConverter());
             //settings.Converters.Add(new GuidConverter());
             return settings;
         }
+
+#if FLAX_EDITOR
+        /// <summary>Resets the serialization cache.</summary>
+        internal static void ResetCache()
+        {
+            lock (CurrentCacheSyncRoot)
+            {
+                unchecked
+                {
+                    CurrentCacheVersion++;
+                }
+
+                Newtonsoft.Json.JsonSerializer.ClearCache();
+                SerializationBinder.ResetCache();
+            }
+        }
+#endif
 
         internal static void Dispose()
         {
@@ -104,13 +234,8 @@ namespace FlaxEngine.Json
         /// <returns>True if both objects are equal, otherwise false.</returns>
         public static bool ValueEquals(object objA, object objB)
         {
-            // If referenced object has the same linkage to the prefab object as the default value used in SerializeDiff, then mark it as equal
-            /*if (objA is ISceneObject sceneObjA && objB is ISceneObject sceneObjB && (sceneObjA.HasPrefabLink || sceneObjB.HasPrefabLink))
-            {
-                return sceneObjA.PrefabObjectID == sceneObjB.PrefabObjectID;
-            }*/
-
-            return Newtonsoft.Json.Utilities.MiscellaneousUtils.DefaultValueEquals(objA, objB);
+            // Use default value comparision used by C# json serialization library
+            return Newtonsoft.Json.Utilities.MiscellaneousUtils.ValueEquals(objA, objB);
         }
 
         /// <summary>
@@ -125,9 +250,9 @@ namespace FlaxEngine.Json
             var cache = isManagedOnly ? CacheManagedOnly.Value : Cache.Value;
             Current.Value = cache;
 
-            cache.StringBuilder.Clear();
-            cache.IsDuringSerialization = true;
+            cache.WriteBegin();
             cache.SerializerWriter.Serialize(cache.JsonWriter, obj, type);
+            cache.WriteEnd();
 
             return cache.StringBuilder.ToString();
         }
@@ -144,9 +269,9 @@ namespace FlaxEngine.Json
             var cache = isManagedOnly ? CacheManagedOnly.Value : Cache.Value;
             Current.Value = cache;
 
-            cache.StringBuilder.Clear();
-            cache.IsDuringSerialization = true;
+            cache.WriteBegin();
             cache.SerializerWriter.Serialize(cache.JsonWriter, obj, type);
+            cache.WriteEnd();
 
             return cache.StringBuilder.ToString();
         }
@@ -164,9 +289,9 @@ namespace FlaxEngine.Json
             var cache = isManagedOnly ? CacheManagedOnly.Value : Cache.Value;
             Current.Value = cache;
 
-            cache.StringBuilder.Clear();
-            cache.IsDuringSerialization = true;
+            cache.WriteBegin();
             cache.SerializerWriter.SerializeDiff(cache.JsonWriter, obj, type, other);
+            cache.WriteEnd();
 
             return cache.StringBuilder.ToString();
         }
@@ -179,21 +304,20 @@ namespace FlaxEngine.Json
         public static void Deserialize(object input, string json)
         {
             var cache = Cache.Value;
-            cache.IsDuringSerialization = false;
-            Current.Value = cache;
-
+            cache.ReadBegin();
             using (JsonReader reader = new JsonTextReader(new StringReader(json)))
             {
                 cache.JsonSerializer.Populate(reader, input);
-
-                if (!cache.JsonSerializer.CheckAdditionalContent)
-                    return;
-                while (reader.Read())
+                if (cache.JsonSerializer.CheckAdditionalContent)
                 {
-                    if (reader.TokenType != JsonToken.Comment)
-                        throw new FlaxException("Additional text found in JSON string after finishing deserializing object.");
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType != JsonToken.Comment)
+                            throw new Exception("Additional text found in JSON string after finishing deserializing object.");
+                    }
                 }
             }
+            cache.ReadEnd();
         }
 
         /// <summary>
@@ -217,22 +341,20 @@ namespace FlaxEngine.Json
         {
             object result;
             var cache = Cache.Value;
-            cache.IsDuringSerialization = false;
-            Current.Value = cache;
-
+            cache.ReadBegin();
             using (JsonReader reader = new JsonTextReader(new StringReader(json)))
             {
                 result = cache.JsonSerializer.Deserialize(reader, objectType);
-
-                if (!cache.JsonSerializer.CheckAdditionalContent)
-                    return result;
-                while (reader.Read())
+                if (cache.JsonSerializer.CheckAdditionalContent)
                 {
-                    if (reader.TokenType != JsonToken.Comment)
-                        throw new FlaxException("Additional text found in JSON string after finishing deserializing object.");
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType != JsonToken.Comment)
+                            throw new Exception("Additional text found in JSON string after finishing deserializing object.");
+                    }
                 }
             }
-
+            cache.ReadEnd();
             return result;
         }
 
@@ -245,22 +367,21 @@ namespace FlaxEngine.Json
         {
             object result;
             var cache = Cache.Value;
-            cache.IsDuringSerialization = false;
-            Current.Value = cache;
-
+            cache.ReadBegin();
             using (JsonReader reader = new JsonTextReader(new StringReader(json)))
             {
                 result = cache.JsonSerializer.Deserialize(reader);
 
-                if (!cache.JsonSerializer.CheckAdditionalContent)
-                    return result;
-                while (reader.Read())
+                if (cache.JsonSerializer.CheckAdditionalContent)
                 {
-                    if (reader.TokenType != JsonToken.Comment)
-                        throw new FlaxException("Additional text found in JSON string after finishing deserializing object.");
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType != JsonToken.Comment)
+                            throw new Exception("Additional text found in JSON string after finishing deserializing object.");
+                    }
                 }
             }
-
+            cache.ReadEnd();
             return result;
         }
 
@@ -273,8 +394,7 @@ namespace FlaxEngine.Json
         public static unsafe void Deserialize(object input, byte* jsonBuffer, int jsonLength)
         {
             var cache = Cache.Value;
-            cache.IsDuringSerialization = false;
-            Current.Value = cache;
+            cache.ReadBegin();
 
             /*// Debug json string reading
             cache.MemoryStream.Initialize(jsonBuffer, jsonLength);
@@ -294,14 +414,16 @@ namespace FlaxEngine.Json
             {
                 cache.JsonSerializer.Populate(jsonReader, input);
             }
-
-            if (!cache.JsonSerializer.CheckAdditionalContent)
-                return;
-            while (jsonReader.Read())
+            if (cache.JsonSerializer.CheckAdditionalContent)
             {
-                if (jsonReader.TokenType != JsonToken.Comment)
-                    throw new FlaxException("Additional text found in JSON string after finishing deserializing object.");
+                while (jsonReader.Read())
+                {
+                    if (jsonReader.TokenType != JsonToken.Comment)
+                        throw new Exception("Additional text found in JSON string after finishing deserializing object.");
+                }
             }
+
+            cache.ReadEnd();
         }
 
         /// <summary>

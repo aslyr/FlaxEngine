@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Engine/Platform/Window.h"
 #include "Engine/Engine/Engine.h"
@@ -10,12 +10,12 @@
 #include "Engine/Platform/IGuiData.h"
 #include "Engine/Scripting/ScriptingType.h"
 #include "Engine/Profiler/ProfilerCPU.h"
-#include "Engine/Scripting/MException.h"
+#include "Engine/Scripting/ManagedCLR/MException.h"
 #include "Engine/Scripting/ManagedCLR/MUtils.h"
 #include "Engine/Scripting/ManagedCLR/MMethod.h"
 #include "Engine/Scripting/ManagedCLR/MClass.h"
-#include <ThirdParty/mono-2.0/mono/metadata/appdomain.h>
 
+#if USE_CSHARP
 // Helper macros for calling C# events
 #define BEGIN_INVOKE_EVENT(name, paramsCount) \
 	auto managedInstance = GetManagedInstance(); \
@@ -42,7 +42,7 @@
 	    params[0] = param0; \
 	    params[1] = param1; \
 	    params[2] = param2; \
-	    MonoObject* exception = nullptr; \
+	    MObject* exception = nullptr; \
 	    _method_##name->Invoke(managedInstance, params, &exception); \
 	    END_INVOKE_EVENT(name)
 #define INVOKE_EVENT_PARAMS_3(name, param0, param1, param2) INVOKE_EVENT(name, 3, param0, param1, param2)
@@ -65,18 +65,27 @@
 		isText = false; data->GetAsFiles(&outputData); \
 	} \
 	params[1] = (void*)&isText; \
-	MonoArray* outputDataMono = mono_array_new(mono_domain_get(), mono_get_string_class(), outputData.Count()); \
+	MArray* outputDataManaged = MCore::Array::New(MCore::TypeCache::String, outputData.Count()); \
+    MString** outputDataManagedPtr = MCore::Array::GetAddress<MString*>(outputDataManaged); \
 	for (int32 i = 0; i < outputData.Count(); i++) \
-		*(MonoString**)mono_array_addr_with_size(outputDataMono, sizeof(MonoString*), i) = MUtils::ToString(outputData[i]); \
-	params[2] = outputDataMono; \
-	MonoObject* exception = nullptr; \
+        outputDataManagedPtr[i] = MUtils::ToString(outputData[i]); \
+	params[2] = outputDataManaged; \
+	MObject* exception = nullptr; \
 	auto resultObj = _method_##name->Invoke(GetManagedInstance(), params, &exception); \
     if (resultObj) \
 	    result = (DragDropEffect)MUtils::Unbox<int32>(resultObj); \
 	END_INVOKE_EVENT(name)
+#else
+#define INVOKE_EVENT(name, paramsCount, param0, param1, param2)
+#define INVOKE_EVENT_PARAMS_3(name, param0, param1, param2) INVOKE_EVENT(name, 3, param0, param1, param2)
+#define INVOKE_EVENT_PARAMS_2(name, param0, param1) INVOKE_EVENT(name, 2, param0, param1, nullptr)
+#define INVOKE_EVENT_PARAMS_1(name, param0) INVOKE_EVENT(name, 1, param0, nullptr, nullptr)
+#define INVOKE_EVENT_PARAMS_0(name) INVOKE_EVENT(name, 0, nullptr, nullptr, nullptr)
+#define INVOKE_DRAG_EVENT(name)
+#endif
 
 WindowBase::WindowBase(const CreateWindowSettings& settings)
-    : PersistentScriptingObject(SpawnParams(Guid::New(), TypeInitializer))
+    : ScriptingObject(SpawnParams(Guid::New(), TypeInitializer))
     , _visible(false)
     , _minimized(false)
     , _maximized(false)
@@ -90,16 +99,14 @@ WindowBase::WindowBase(const CreateWindowSettings& settings)
     , _clientSize(settings.Size)
     , _dpi(96)
     , _dpiScale(1.0f)
-    , _trackingMouseOffset(Vector2::Zero)
-    , _isUsingMouseOffset(false)
-    , _isTrackingMouse(false)
+    , _trackingMouseOffset(Float2::Zero)
     , RenderTask(nullptr)
 {
     // Update window location based on start location
     if (settings.StartPosition == WindowStartPosition::CenterParent
         || settings.StartPosition == WindowStartPosition::CenterScreen)
     {
-        Rectangle parentBounds = Rectangle(Vector2::Zero, Platform::GetDesktopSize());
+        Rectangle parentBounds = Rectangle(Float2::Zero, Platform::GetDesktopSize());
         if (settings.Parent != nullptr && settings.StartPosition == WindowStartPosition::CenterParent)
             parentBounds = settings.Parent->GetClientBounds();
 
@@ -115,6 +122,7 @@ WindowBase::~WindowBase()
 {
     ASSERT(!RenderTask);
     ASSERT(!_swapChain);
+    WindowsManager::Unregister((Window*)this);
 }
 
 bool WindowBase::IsMain() const
@@ -179,7 +187,7 @@ void WindowBase::OnDeleteObject()
     SAFE_DELETE(_swapChain);
 
     // Base
-    PersistentScriptingObject::OnDeleteObject();
+    ScriptingObject::OnDeleteObject();
 }
 
 bool WindowBase::GetRenderingEnabled() const
@@ -214,35 +222,35 @@ void WindowBase::OnKeyUp(KeyboardKeys key)
     INVOKE_EVENT_PARAMS_1(OnKeyUp, &key);
 }
 
-void WindowBase::OnMouseDown(const Vector2& mousePosition, MouseButton button)
+void WindowBase::OnMouseDown(const Float2& mousePosition, MouseButton button)
 {
     PROFILE_CPU_NAMED("GUI.OnMouseDown");
     MouseDown(mousePosition, button);
     INVOKE_EVENT_PARAMS_2(OnMouseDown, (void*)&mousePosition, &button);
 }
 
-void WindowBase::OnMouseUp(const Vector2& mousePosition, MouseButton button)
+void WindowBase::OnMouseUp(const Float2& mousePosition, MouseButton button)
 {
     PROFILE_CPU_NAMED("GUI.OnMouseUp");
     MouseUp(mousePosition, button);
     INVOKE_EVENT_PARAMS_2(OnMouseUp, (void*)&mousePosition, &button);
 }
 
-void WindowBase::OnMouseDoubleClick(const Vector2& mousePosition, MouseButton button)
+void WindowBase::OnMouseDoubleClick(const Float2& mousePosition, MouseButton button)
 {
     PROFILE_CPU_NAMED("GUI.OnMouseDoubleClick");
     MouseDoubleClick(mousePosition, button);
     INVOKE_EVENT_PARAMS_2(OnMouseDoubleClick, (void*)&mousePosition, &button);
 }
 
-void WindowBase::OnMouseWheel(const Vector2& mousePosition, float delta)
+void WindowBase::OnMouseWheel(const Float2& mousePosition, float delta)
 {
     PROFILE_CPU_NAMED("GUI.OnMouseWheel");
     MouseWheel(mousePosition, delta);
     INVOKE_EVENT_PARAMS_2(OnMouseWheel, (void*)&mousePosition, &delta);
 }
 
-void WindowBase::OnMouseMove(const Vector2& mousePosition)
+void WindowBase::OnMouseMove(const Float2& mousePosition)
 {
     PROFILE_CPU_NAMED("GUI.OnMouseMove");
     MouseMove(mousePosition);
@@ -256,40 +264,40 @@ void WindowBase::OnMouseLeave()
     INVOKE_EVENT_PARAMS_0(OnMouseLeave);
 }
 
-void WindowBase::OnTouchDown(const Vector2& pointerPosition, int32 pointerId)
+void WindowBase::OnTouchDown(const Float2& pointerPosition, int32 pointerId)
 {
     PROFILE_CPU_NAMED("GUI.OnTouchDown");
     TouchDown(pointerPosition, pointerId);
     INVOKE_EVENT_PARAMS_2(OnTouchDown, (void*)&pointerPosition, &pointerId);
 }
 
-void WindowBase::OnTouchMove(const Vector2& pointerPosition, int32 pointerId)
+void WindowBase::OnTouchMove(const Float2& pointerPosition, int32 pointerId)
 {
     PROFILE_CPU_NAMED("GUI.OnTouchMove");
     TouchMove(pointerPosition, pointerId);
     INVOKE_EVENT_PARAMS_2(OnTouchMove, (void*)&pointerPosition, &pointerId);
 }
 
-void WindowBase::OnTouchUp(const Vector2& pointerPosition, int32 pointerId)
+void WindowBase::OnTouchUp(const Float2& pointerPosition, int32 pointerId)
 {
     PROFILE_CPU_NAMED("GUI.OnTouchUp");
     TouchUp(pointerPosition, pointerId);
     INVOKE_EVENT_PARAMS_2(OnTouchUp, (void*)&pointerPosition, &pointerId);
 }
 
-void WindowBase::OnDragEnter(IGuiData* data, const Vector2& mousePosition, DragDropEffect& result)
+void WindowBase::OnDragEnter(IGuiData* data, const Float2& mousePosition, DragDropEffect& result)
 {
     DragEnter(data, mousePosition, result);
     INVOKE_DRAG_EVENT(OnDragEnter);
 }
 
-void WindowBase::OnDragOver(IGuiData* data, const Vector2& mousePosition, DragDropEffect& result)
+void WindowBase::OnDragOver(IGuiData* data, const Float2& mousePosition, DragDropEffect& result)
 {
     DragOver(data, mousePosition, result);
     INVOKE_DRAG_EVENT(OnDragOver);
 }
 
-void WindowBase::OnDragDrop(IGuiData* data, const Vector2& mousePosition, DragDropEffect& result)
+void WindowBase::OnDragDrop(IGuiData* data, const Float2& mousePosition, DragDropEffect& result)
 {
     DragDrop(data, mousePosition, result);
     INVOKE_DRAG_EVENT(OnDragDrop);
@@ -300,7 +308,7 @@ void WindowBase::OnDragLeave()
     INVOKE_EVENT_PARAMS_0(OnDragLeave);
 }
 
-void WindowBase::OnHitTest(const Vector2& mousePosition, WindowHitCodes& result, bool& handled)
+void WindowBase::OnHitTest(const Float2& mousePosition, WindowHitCodes& result, bool& handled)
 {
     HitTest(mousePosition, result, handled);
     if (handled)
@@ -342,12 +350,12 @@ bool WindowBase::GetKeyUp(KeyboardKeys key) const
     return _settings.AllowInput && _focused ? Input::GetKeyUp(key) : false;
 }
 
-Vector2 WindowBase::GetMousePosition() const
+Float2 WindowBase::GetMousePosition() const
 {
-    return _settings.AllowInput && _focused ? ScreenToClient(Input::GetMouseScreenPosition()) : Vector2::Minimum;
+    return _settings.AllowInput && _focused ? ScreenToClient(Input::GetMouseScreenPosition()) : Float2::Minimum;
 }
 
-void WindowBase::SetMousePosition(const Vector2& position) const
+void WindowBase::SetMousePosition(const Float2& position) const
 {
     if (_settings.AllowInput && _focused)
     {
@@ -355,9 +363,9 @@ void WindowBase::SetMousePosition(const Vector2& position) const
     }
 }
 
-Vector2 WindowBase::GetMousePositionDelta() const
+Float2 WindowBase::GetMousePositionDelta() const
 {
-    return _settings.AllowInput && _focused ? Input::GetMousePositionDelta() : Vector2::Zero;
+    return _settings.AllowInput && _focused ? Input::GetMousePositionDelta() : Float2::Zero;
 }
 
 float WindowBase::GetMouseScrollDelta() const
@@ -394,6 +402,7 @@ void WindowBase::OnResize(int32 width, int32 height)
         _swapChain->Resize(width, height);
     if (RenderTask)
         RenderTask->Resize(width, height);
+    Resized({ static_cast<float>(width), static_cast<float>(height) });
     INVOKE_EVENT_PARAMS_2(OnResize, &width, &height);
 }
 
@@ -525,6 +534,8 @@ void WindowBase::Hide()
 {
     if (!_visible)
         return;
+    EndClippingCursor();
+    EndTrackingMouse();
     _visible = false;
     _showAfterFirstPaint = _settings.ShowAfterFirstPaint;
     Hidden();
@@ -548,7 +559,6 @@ void WindowBase::Close(ClosingReason reason)
     }
 
     // Close
-    EndTrackingMouse();
     Hide();
     OnClosed();
 }

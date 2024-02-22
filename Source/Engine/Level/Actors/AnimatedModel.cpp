@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "AnimatedModel.h"
 #include "BoneSocket.h"
@@ -9,8 +9,10 @@
 #if USE_EDITOR
 #include "Editor/Editor.h"
 #endif
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/RenderTask.h"
+#include "Engine/Graphics/Models/MeshDeformation.h"
 #include "Engine/Level/Scene/Scene.h"
 #include "Engine/Level/SceneObjectsFactory.h"
 #include "Engine/Serialization/Serialization.h"
@@ -19,17 +21,24 @@ AnimatedModel::AnimatedModel(const SpawnParams& params)
     : ModelInstanceActor(params)
     , _actualMode(AnimationUpdateMode::Never)
     , _counter(0)
-    , _lastMinDstSqr(MAX_float)
+    , _lastMinDstSqr(MAX_Real)
     , _lastUpdateFrame(0)
-    , GraphInstance(this)
 {
-    _world = Matrix::Identity;
-    UpdateBounds();
+    _drawCategory = SceneRendering::SceneDrawAsync;
+    GraphInstance.Object = this;
+    _box = BoundingBox(Vector3::Zero);
+    _sphere = BoundingSphere(Vector3::Zero, 0.0f);
 
     SkinnedModel.Changed.Bind<AnimatedModel, &AnimatedModel::OnSkinnedModelChanged>(this);
     SkinnedModel.Loaded.Bind<AnimatedModel, &AnimatedModel::OnSkinnedModelLoaded>(this);
     AnimationGraph.Changed.Bind<AnimatedModel, &AnimatedModel::OnGraphChanged>(this);
     AnimationGraph.Loaded.Bind<AnimatedModel, &AnimatedModel::OnGraphLoaded>(this);
+}
+
+AnimatedModel::~AnimatedModel()
+{
+    if (_deformation)
+        Delete(_deformation);
 }
 
 void AnimatedModel::ResetAnimation()
@@ -54,11 +63,6 @@ void AnimatedModel::UpdateAnimation()
         // Request an animation update
         Animations::AddToUpdate(this);
     }
-    else
-    {
-        // Allow to use blend shapes without animation graph assigned
-        _blendShapes.Update(SkinnedModel.Get());
-    }
 }
 
 void AnimatedModel::SetupSkinningData()
@@ -76,7 +80,8 @@ void AnimatedModel::SetupSkinningData()
 
 void AnimatedModel::PreInitSkinningData()
 {
-    ASSERT(SkinnedModel && SkinnedModel->IsLoaded());
+    if (!SkinnedModel || !SkinnedModel->IsLoaded())
+        return;
 
     ScopeLock lock(SkinnedModel->Locker);
 
@@ -116,10 +121,13 @@ void AnimatedModel::PreInitSkinningData()
 
 void AnimatedModel::GetCurrentPose(Array<Matrix>& nodesTransformation, bool worldSpace) const
 {
+    if (GraphInstance.NodesPose.IsEmpty())
+        const_cast<AnimatedModel*>(this)->PreInitSkinningData(); // Ensure to have valid nodes pose to return
     nodesTransformation = GraphInstance.NodesPose;
     if (worldSpace)
     {
-        const auto world = _world;
+        Matrix world;
+        GetLocalToWorldMatrix(world);
         for (auto& m : nodesTransformation)
             m = m * world;
     }
@@ -127,28 +135,36 @@ void AnimatedModel::GetCurrentPose(Array<Matrix>& nodesTransformation, bool worl
 
 void AnimatedModel::SetCurrentPose(const Array<Matrix>& nodesTransformation, bool worldSpace)
 {
-    if (GraphInstance.NodesPose.Count() == 0)
-        return;
+    if (GraphInstance.NodesPose.IsEmpty())
+        const_cast<AnimatedModel*>(this)->PreInitSkinningData(); // Ensure to have valid nodes pose to return
     CHECK(nodesTransformation.Count() == GraphInstance.NodesPose.Count());
     GraphInstance.NodesPose = nodesTransformation;
     if (worldSpace)
     {
+        Matrix world;
+        GetLocalToWorldMatrix(world);
         Matrix invWorld;
-        Matrix::Invert(_world, invWorld);
+        Matrix::Invert(world, invWorld);
         for (auto& m : GraphInstance.NodesPose)
-            m = invWorld * m;
+            m = m * invWorld;
     }
     OnAnimationUpdated();
 }
 
 void AnimatedModel::GetNodeTransformation(int32 nodeIndex, Matrix& nodeTransformation, bool worldSpace) const
 {
+    if (GraphInstance.NodesPose.IsEmpty())
+        const_cast<AnimatedModel*>(this)->PreInitSkinningData(); // Ensure to have valid nodes pose to return
     if (nodeIndex >= 0 && nodeIndex < GraphInstance.NodesPose.Count())
         nodeTransformation = GraphInstance.NodesPose[nodeIndex];
     else
         nodeTransformation = Matrix::Identity;
     if (worldSpace)
-        nodeTransformation = nodeTransformation * _world;
+    {
+        Matrix world;
+        GetLocalToWorldMatrix(world);
+        nodeTransformation = nodeTransformation * world;
+    }
 }
 
 void AnimatedModel::GetNodeTransformation(const StringView& nodeName, Matrix& nodeTransformation, bool worldSpace) const
@@ -156,15 +172,39 @@ void AnimatedModel::GetNodeTransformation(const StringView& nodeName, Matrix& no
     GetNodeTransformation(SkinnedModel ? SkinnedModel->FindNode(nodeName) : -1, nodeTransformation, worldSpace);
 }
 
+void AnimatedModel::SetNodeTransformation(int32 nodeIndex, const Matrix& nodeTransformation, bool worldSpace)
+{
+    if (GraphInstance.NodesPose.IsEmpty())
+        const_cast<AnimatedModel*>(this)->PreInitSkinningData(); // Ensure to have valid nodes pose to return
+    CHECK(nodeIndex >= 0 && nodeIndex < GraphInstance.NodesPose.Count());
+    GraphInstance.NodesPose[nodeIndex] = nodeTransformation;
+    if (worldSpace)
+    {
+        Matrix world;
+        GetLocalToWorldMatrix(world);
+        Matrix invWorld;
+        Matrix::Invert(world, invWorld);
+        GraphInstance.NodesPose[nodeIndex] = GraphInstance.NodesPose[nodeIndex] * invWorld;
+    }
+    OnAnimationUpdated();
+}
+
+void AnimatedModel::SetNodeTransformation(const StringView& nodeName, const Matrix& nodeTransformation, bool worldSpace)
+{
+    SetNodeTransformation(SkinnedModel ? SkinnedModel->FindNode(nodeName) : -1, nodeTransformation, worldSpace);
+}
+
 int32 AnimatedModel::FindClosestNode(const Vector3& location, bool worldSpace) const
 {
+    if (GraphInstance.NodesPose.IsEmpty())
+        const_cast<AnimatedModel*>(this)->PreInitSkinningData(); // Ensure to have valid nodes pose to return
     const Vector3 pos = worldSpace ? _transform.WorldToLocal(location) : location;
     int32 result = -1;
-    float closest = MAX_float;
+    Real closest = MAX_Real;
     for (int32 nodeIndex = 0; nodeIndex < GraphInstance.NodesPose.Count(); nodeIndex++)
     {
         const Vector3 node = GraphInstance.NodesPose[nodeIndex].GetTranslation();
-        const float dst = Vector3::DistanceSquared(node, pos);
+        const Real dst = Vector3::DistanceSquared(node, pos);
         if (dst < closest)
         {
             closest = dst;
@@ -183,6 +223,17 @@ void AnimatedModel::SetMasterPoseModel(AnimatedModel* masterPose)
     _masterPose = masterPose;
     if (_masterPose)
         _masterPose->AnimationUpdated.Bind<AnimatedModel, &AnimatedModel::OnAnimationUpdated>(this);
+}
+
+const Array<AnimGraphTraceEvent>& AnimatedModel::GetTraceEvents() const
+{
+#if !BUILD_RELEASE
+    if (!GetEnableTracing())
+    {
+        LOG(Warning, "Accessing AnimatedModel.TraceEvents with tracing disabled.");
+    }
+#endif
+    return GraphInstance.TraceEvents;
 }
 
 #define CHECK_ANIM_GRAPH_PARAM_ACCESS() \
@@ -276,7 +327,7 @@ void AnimatedModel::SetParameterValue(const Guid& id, const Variant& value)
 
 float AnimatedModel::GetBlendShapeWeight(const StringView& name)
 {
-    for (auto& e : _blendShapes.Weights)
+    for (auto& e : _blendShapeWeights)
     {
         if (e.First == name)
             return e.Second;
@@ -286,42 +337,222 @@ float AnimatedModel::GetBlendShapeWeight(const StringView& name)
 
 void AnimatedModel::SetBlendShapeWeight(const StringView& name, float value)
 {
+    const auto* model = SkinnedModel.Get();
+    CHECK(model);
+    model->WaitForLoaded();
     value = Math::Clamp(value, -1.0f, 1.0f);
-    for (int32 i = 0; i < _blendShapes.Weights.Count(); i++)
+    const bool isZero = Math::IsZero(value);
+    if (!_deformation && !isZero)
+        _deformation = New<MeshDeformation>();
+    Function<void(const MeshBase*, MeshDeformationData&)> deformer;
+    deformer.Bind<AnimatedModel, &AnimatedModel::RunBlendShapeDeformer>(this);
+    for (int32 i = 0; i < _blendShapeWeights.Count(); i++)
     {
-        auto& e = _blendShapes.Weights[i];
+        auto& e = _blendShapeWeights[i];
         if (e.First == name)
         {
-            if (Math::IsZero(value))
+            if (isZero)
             {
-                _blendShapes.WeightsDirty = true;
-                _blendShapes.Weights.RemoveAt(i);
+                _blendShapeWeights.RemoveAt(i);
+
+                // Remove deformers for meshes using this blend shape
+                for (const auto& lod : model->LODs)
+                {
+                    for (const auto& mesh : lod.Meshes)
+                    {
+                        for (const auto& blendShape : mesh.BlendShapes)
+                        {
+                            if (blendShape.Name == name)
+                            {
+                                for (int32 j = 0; j < _blendShapeMeshes.Count(); j++)
+                                {
+                                    auto& blendShapeMesh = _blendShapeMeshes[j];
+                                    if (blendShapeMesh.LODIndex == mesh.GetLODIndex() && blendShapeMesh.MeshIndex == mesh.GetIndex())
+                                    {
+                                        blendShapeMesh.Usages--;
+                                        if (blendShapeMesh.Usages == 0)
+                                        {
+                                            _deformation->RemoveDeformer(blendShapeMesh.LODIndex, blendShapeMesh.MeshIndex, MeshBufferType::Vertex0, deformer);
+                                            _blendShapeMeshes.RemoveAt(j);
+                                        }
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             else if (Math::NotNearEqual(e.Second, value))
             {
-                _blendShapes.WeightsDirty = true;
+                // Update blend shape weight
                 e.Second = value;
+
+                // Dirty deformers for meshes using this blend shape
+                for (const auto& lod : model->LODs)
+                {
+                    for (const auto& mesh : lod.Meshes)
+                    {
+                        for (const auto& blendShape : mesh.BlendShapes)
+                        {
+                            if (blendShape.Name == name)
+                            {
+                                _deformation->Dirty(mesh.GetLODIndex(), mesh.GetIndex(), MeshBufferType::Vertex0);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             return;
         }
     }
+    if (!isZero)
     {
-        auto& e = _blendShapes.Weights.AddOne();
+        // Add blend shape weight
+        auto& e = _blendShapeWeights.AddOne();
         e.First = name;
         e.Second = value;
-        _blendShapes.WeightsDirty = true;
+
+        // Add deformers for meshes using this blend shape
+        for (const auto& lod : model->LODs)
+        {
+            for (const auto& mesh : lod.Meshes)
+            {
+                for (const auto& blendShape : mesh.BlendShapes)
+                {
+                    if (blendShape.Name == name)
+                    {
+                        int32 i = 0;
+                        for (; i < _blendShapeMeshes.Count(); i++)
+                        {
+                            auto& blendShapeMesh = _blendShapeMeshes[i];
+                            if (blendShapeMesh.LODIndex == mesh.GetLODIndex() && blendShapeMesh.MeshIndex == mesh.GetIndex())
+                            {
+                                blendShapeMesh.Usages++;
+                                break;
+                            }
+                        }
+                        if (i == _blendShapeMeshes.Count())
+                        {
+                            auto& blendShapeMesh = _blendShapeMeshes.AddOne();
+                            blendShapeMesh.LODIndex = mesh.GetLODIndex();
+                            blendShapeMesh.MeshIndex = mesh.GetIndex();
+                            blendShapeMesh.Usages = 1;
+                            _deformation->AddDeformer(blendShapeMesh.LODIndex, blendShapeMesh.MeshIndex, MeshBufferType::Vertex0, deformer);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
 void AnimatedModel::ClearBlendShapeWeights()
 {
-    _blendShapes.Clear();
+    if (_deformation)
+    {
+        Function<void(const MeshBase*, MeshDeformationData&)> deformer;
+        deformer.Bind<AnimatedModel, &AnimatedModel::RunBlendShapeDeformer>(this);
+        for (auto e : _blendShapeMeshes)
+            _deformation->RemoveDeformer(e.LODIndex, e.MeshIndex, MeshBufferType::Vertex0, deformer);
+    }
+    _blendShapeWeights.Clear();
+    _blendShapeMeshes.Clear();
 }
 
-void AnimatedModel::ApplyRootMotion(const RootMotionData& rootMotionDelta)
+void AnimatedModel::PlaySlotAnimation(const StringView& slotName, Animation* anim, float speed, float blendInTime, float blendOutTime, int32 loopCount)
+{
+    CHECK(anim);
+    for (auto& slot : GraphInstance.Slots)
+    {
+        if (slot.Animation == anim && slot.Name == slotName)
+        {
+            slot.Pause = false;
+            slot.BlendInTime = blendInTime;
+            slot.LoopCount = loopCount;
+            return;
+        }
+    }
+    int32 index = 0;
+    for (; index < GraphInstance.Slots.Count(); index++)
+    {
+        if (GraphInstance.Slots[index].Animation == nullptr)
+            break;
+    }
+    if (index == GraphInstance.Slots.Count())
+        GraphInstance.Slots.AddOne();
+    auto& slot = GraphInstance.Slots[index];
+    slot.Name = slotName;
+    slot.Animation = anim;
+    slot.Speed = speed;
+    slot.BlendInTime = blendInTime;
+    slot.BlendOutTime = blendOutTime;
+    slot.LoopCount = loopCount;
+}
+
+void AnimatedModel::StopSlotAnimation()
+{
+    GraphInstance.Slots.Clear();
+}
+
+void AnimatedModel::StopSlotAnimation(const StringView& slotName, Animation* anim)
+{
+    for (auto& slot : GraphInstance.Slots)
+    {
+        if (slot.Animation == anim && slot.Name == slotName)
+        {
+            slot.Animation = nullptr;
+            slot.Reset = true;
+            break;
+        }
+    }
+}
+
+void AnimatedModel::PauseSlotAnimation()
+{
+    for (auto& slot : GraphInstance.Slots)
+        slot.Pause = true;
+}
+
+void AnimatedModel::PauseSlotAnimation(const StringView& slotName, Animation* anim)
+{
+    for (auto& slot : GraphInstance.Slots)
+    {
+        if (slot.Animation == anim && slot.Name == slotName)
+        {
+            slot.Pause = true;
+            break;
+        }
+    }
+}
+
+bool AnimatedModel::IsPlayingSlotAnimation()
+{
+    for (auto& slot : GraphInstance.Slots)
+    {
+        if (slot.Animation && !slot.Pause)
+            return true;
+    }
+    return false;
+}
+
+bool AnimatedModel::IsPlayingSlotAnimation(const StringView& slotName, Animation* anim)
+{
+    for (auto& slot : GraphInstance.Slots)
+    {
+        if (slot.Animation == anim && slot.Name == slotName && !slot.Pause)
+            return true;
+    }
+    return false;
+}
+
+void AnimatedModel::ApplyRootMotion(const Transform& rootMotionDelta)
 {
     // Skip if no motion
-    if (rootMotionDelta.Translation.IsZero() && rootMotionDelta.Rotation.IsIdentity())
+    if (rootMotionDelta.Translation.IsZero() && rootMotionDelta.Orientation.IsIdentity())
         return;
 
     // Transform translation from actor space into world space
@@ -329,7 +560,7 @@ void AnimatedModel::ApplyRootMotion(const RootMotionData& rootMotionDelta)
 
     // Apply movement
     Actor* target = RootMotionTarget ? RootMotionTarget.Get() : this;
-    target->AddMovement(translation, rootMotionDelta.Rotation);
+    target->AddMovement(translation, rootMotionDelta.Orientation);
 }
 
 void AnimatedModel::SyncParameters()
@@ -366,6 +597,87 @@ void AnimatedModel::SyncParameters()
             }
         }
     }
+}
+
+void AnimatedModel::RunBlendShapeDeformer(const MeshBase* mesh, MeshDeformationData& deformation)
+{
+    PROFILE_CPU_NAMED("BlendShapes");
+    auto* skinnedMesh = (const SkinnedMesh*)mesh;
+
+    // Estimate the range of the vertices to modify by the currently active blend shapes
+    uint32 minVertexIndex = MAX_uint32, maxVertexIndex = 0;
+    bool useNormals = false;
+    Array<Pair<const BlendShape&, const float>, InlinedAllocation<32>> blendShapes;
+    for (const BlendShape& blendShape : skinnedMesh->BlendShapes)
+    {
+        for (auto& q : _blendShapeWeights)
+        {
+            if (q.First == blendShape.Name)
+            {
+                const float weight = q.Second * blendShape.Weight;
+                blendShapes.Add(Pair<const BlendShape&, const float>(blendShape, weight));
+                minVertexIndex = Math::Min(minVertexIndex, blendShape.MinVertexIndex);
+                maxVertexIndex = Math::Max(maxVertexIndex, blendShape.MaxVertexIndex);
+                useNormals |= blendShape.UseNormals;
+                break;
+            }
+        }
+    }
+
+    // Blend all blend shapes
+    auto vertexCount = (uint32)mesh->GetVertexCount();
+    auto data = (VB0SkinnedElementType*)deformation.VertexBuffer.Data.Get();
+    for (const auto& q : blendShapes)
+    {
+        // TODO: use SIMD
+        if (useNormals)
+        {
+            for (int32 i = 0; i < q.First.Vertices.Count(); i++)
+            {
+                const BlendShapeVertex& blendShapeVertex = q.First.Vertices[i];
+                ASSERT_LOW_LAYER(blendShapeVertex.VertexIndex < vertexCount);
+                VB0SkinnedElementType& vertex = *(data + blendShapeVertex.VertexIndex);
+                vertex.Position = vertex.Position + blendShapeVertex.PositionDelta * q.Second;
+                Float3 normal = (vertex.Normal.ToFloat3() * 2.0f - 1.0f) + blendShapeVertex.NormalDelta;
+                vertex.Normal = normal * 0.5f + 0.5f;
+            }
+        }
+        else
+        {
+            for (int32 i = 0; i < q.First.Vertices.Count(); i++)
+            {
+                const BlendShapeVertex& blendShapeVertex = q.First.Vertices[i];
+                ASSERT_LOW_LAYER(blendShapeVertex.VertexIndex < vertexCount);
+                VB0SkinnedElementType& vertex = *(data + blendShapeVertex.VertexIndex);
+                vertex.Position = vertex.Position + blendShapeVertex.PositionDelta * q.Second;
+            }
+        }
+    }
+
+    if (useNormals)
+    {
+        // Normalize normal vectors and rebuild tangent frames (tangent frame is in range [-1;1] but packed to [0;1] range)
+        // TODO: use SIMD
+        for (uint32 vertexIndex = minVertexIndex; vertexIndex <= maxVertexIndex; vertexIndex++)
+        {
+            VB0SkinnedElementType& vertex = *(data + vertexIndex);
+
+            Float3 normal = vertex.Normal.ToFloat3() * 2.0f - 1.0f;
+            normal.Normalize();
+            vertex.Normal = normal * 0.5f + 0.5f;
+
+            Float3 tangent = vertex.Tangent.ToFloat3() * 2.0f - 1.0f;
+            tangent = tangent - ((tangent | normal) * normal);
+            tangent.Normalize();
+            const auto tangentSign = vertex.Tangent.W;
+            vertex.Tangent = tangent * 0.5f + 0.5f;
+            vertex.Tangent.W = tangentSign;
+        }
+    }
+
+    // Mark as dirty to be cleared before next rendering
+    deformation.DirtyMinIndex = Math::Min(minVertexIndex, deformation.DirtyMinIndex);
+    deformation.DirtyMaxIndex = Math::Max(maxVertexIndex, deformation.DirtyMaxIndex);
 }
 
 void AnimatedModel::BeginPlay(SceneBeginData* data)
@@ -410,46 +722,41 @@ void AnimatedModel::OnActiveInTreeChanged()
     ModelInstanceActor::OnActiveInTreeChanged();
 }
 
-void AnimatedModel::UpdateLocalBounds()
+void AnimatedModel::UpdateBounds()
 {
-    BoundingBox box;
+    const auto model = SkinnedModel.Get();
     if (CustomBounds.GetSize().LengthSquared() > 0.01f)
     {
-        box = CustomBounds;
+        BoundingBox::Transform(CustomBounds, _transform, _box);
     }
-    else if (SkinnedModel && SkinnedModel->IsLoaded())
+    else if (model && model->IsLoaded() && model->LODs.Count() != 0)
     {
-        //box = SkinnedModel->GetBox(GraphInstance.RootTransform.GetWorld());
-        //box = SkinnedModel->GetBox();
-
-        // Per-bone bounds estimated from positions
-        auto& skeleton = SkinnedModel->Skeleton;
-        const int32 bonesCount = skeleton.Bones.Count();
-        box = BoundingBox(GraphInstance.NodesPose[skeleton.Bones[0].NodeIndex].GetTranslation());
-        for (int32 boneIndex = 1; boneIndex < bonesCount; boneIndex++)
-            box.Merge(GraphInstance.NodesPose[skeleton.Bones[boneIndex].NodeIndex].GetTranslation());
+        Matrix world;
+        GetLocalToWorldMatrix(world);
+        const BoundingBox modelBox = model->GetBox(world);
+        BoundingBox box = modelBox;
+        if (GraphInstance.NodesPose.Count() != 0)
+        {
+            // Per-bone bounds estimated from positions
+            auto& skeleton = model->Skeleton;
+            const int32 bonesCount = skeleton.Bones.Count();
+            for (int32 boneIndex = 0; boneIndex < bonesCount; boneIndex++)
+                box.Merge(_transform.LocalToWorld(GraphInstance.NodesPose[skeleton.Bones.Get()[boneIndex].NodeIndex].GetTranslation()));
+        }
 
         // Apply margin based on model dimensions
-        const Vector3 modelBoxSize = SkinnedModel->GetBox().GetSize();
+        const Vector3 modelBoxSize = modelBox.GetSize();
         const Vector3 center = box.GetCenter();
         const Vector3 sizeHalf = Vector3::Max(box.GetSize() + modelBoxSize * 0.2f, modelBoxSize) * 0.5f;
-        box = BoundingBox(center - sizeHalf, center + sizeHalf);
+        _box = BoundingBox(center - sizeHalf, center + sizeHalf);
     }
     else
     {
-        box = BoundingBox(Vector3::Zero);
+        _box = BoundingBox(_transform.Translation);
     }
-    _boxLocal = BoundingBox::MakeScaled(box, BoundsScale);
-}
-
-void AnimatedModel::UpdateBounds()
-{
-    UpdateLocalBounds();
-
-    BoundingBox::Transform(_boxLocal, _world, _box);
     BoundingSphere::FromBox(_box, _sphere);
     if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+        GetSceneRendering()->UpdateActor(this, _sceneRenderingKey);
 }
 
 void AnimatedModel::UpdateSockets()
@@ -465,9 +772,10 @@ void AnimatedModel::UpdateSockets()
 void AnimatedModel::OnAnimationUpdated_Async()
 {
     // Update asynchronous stuff
-    auto& skeleton = SkinnedModel->Skeleton;
+    const auto& skeleton = SkinnedModel->Skeleton;
 
     // Copy pose from the master
+    // TODO: support retargetting master pose to current pose
     if (_masterPose && _masterPose->SkinnedModel->Skeleton.Nodes.Count() == skeleton.Nodes.Count())
     {
         ANIM_GRAPH_PROFILE_EVENT("Copy Master Pose");
@@ -482,18 +790,19 @@ void AnimatedModel::OnAnimationUpdated_Async()
         ANIM_GRAPH_PROFILE_EVENT("Final Pose");
         const int32 bonesCount = skeleton.Bones.Count();
         Matrix3x4* output = (Matrix3x4*)_skinningData.Data.Get();
+        ASSERT(GraphInstance.NodesPose.Count() == skeleton.Nodes.Count());
         ASSERT(_skinningData.Data.Count() == bonesCount * sizeof(Matrix3x4));
         for (int32 boneIndex = 0; boneIndex < bonesCount; boneIndex++)
         {
-            auto& bone = skeleton.Bones[boneIndex];
-            Matrix matrix = bone.OffsetMatrix * GraphInstance.NodesPose[bone.NodeIndex];
+            const SkeletonBone& bone = skeleton.Bones[boneIndex];
+            Matrix matrix;
+            Matrix::Multiply(bone.OffsetMatrix, GraphInstance.NodesPose.Get()[bone.NodeIndex], matrix);
             output[boneIndex].SetMatrixTranspose(matrix);
         }
         _skinningData.OnDataChanged(!PerBoneMotionBlur);
     }
 
     UpdateBounds();
-    _blendShapes.Update(SkinnedModel.Get());
 }
 
 void AnimatedModel::OnAnimationUpdated_Sync()
@@ -501,7 +810,13 @@ void AnimatedModel::OnAnimationUpdated_Sync()
     // Update synchronous stuff
     UpdateSockets();
     ApplyRootMotion(GraphInstance.RootMotion);
-    AnimationUpdated();
+    if (!_isDuringUpdateEvent)
+    {
+        // Prevent stack-overflow when gameplay modifies the pose within the event
+        _isDuringUpdateEvent = true;
+        AnimationUpdated();
+        _isDuringUpdateEvent = false;
+    }
 }
 
 void AnimatedModel::OnAnimationUpdated()
@@ -514,22 +829,20 @@ void AnimatedModel::OnAnimationUpdated()
 void AnimatedModel::OnSkinnedModelChanged()
 {
     Entries.Release();
-
     if (SkinnedModel && !SkinnedModel->IsLoaded())
     {
         UpdateBounds();
         GraphInstance.Invalidate();
     }
+    if (_deformation)
+        _deformation->Clear();
+    GraphInstance.NodesSkeleton = SkinnedModel;
 }
 
 void AnimatedModel::OnSkinnedModelLoaded()
 {
     Entries.SetupIfInvalid(SkinnedModel);
-
     GraphInstance.Invalidate();
-    if (_blendShapes.Weights.HasItems())
-        _blendShapes.WeightsDirty = true;
-
     PreInitSkinningData();
 }
 
@@ -585,56 +898,112 @@ void AnimatedModel::Update()
     default:
         break;
     }
-    if (updateAnim && (UpdateWhenOffscreen || _lastMinDstSqr < MAX_float))
+    if (updateAnim && (UpdateWhenOffscreen || _lastMinDstSqr < MAX_Real))
         UpdateAnimation();
 
-    _lastMinDstSqr = MAX_float;
+    _lastMinDstSqr = MAX_Real;
 }
 
 void AnimatedModel::Draw(RenderContext& renderContext)
 {
-    GEOMETRY_DRAW_STATE_EVENT_BEGIN(_drawState, _world);
+    if (!SkinnedModel || !SkinnedModel->IsLoaded())
+        return;
+    if (renderContext.View.Pass == DrawPass::GlobalSDF)
+        return;
+    if (renderContext.View.Pass == DrawPass::GlobalSurfaceAtlas)
+        return; // No supported
+    Matrix world;
+    GetLocalToWorldMatrix(world);
+    renderContext.View.GetWorldMatrix(world);
+    GEOMETRY_DRAW_STATE_EVENT_BEGIN(_drawState, world);
 
-    const DrawPass drawModes = (DrawPass)(DrawModes & renderContext.View.Pass & (int32)renderContext.View.GetShadowsDrawPassMask(ShadowsMode));
-    if (SkinnedModel && SkinnedModel->IsLoaded() && drawModes != DrawPass::None)
+    _lastMinDstSqr = Math::Min(_lastMinDstSqr, Vector3::DistanceSquared(_transform.Translation, renderContext.View.WorldPosition));
+    if (_skinningData.IsReady())
     {
-        _lastMinDstSqr = Math::Min(_lastMinDstSqr, Vector3::DistanceSquared(GetPosition(), renderContext.View.Position));
-
-        if (_skinningData.IsReady())
+        // Flush skinning data with GPU
+        if (_skinningData.IsDirty())
         {
-#if USE_EDITOR
-            // Disable motion blur effects in editor without play mode enabled to hide minor artifacts on objects moving
-            if (!Editor::IsPlayMode)
-                _drawState.PrevWorld = _world;
-#endif
-
-            _skinningData.Flush(GPUDevice::Instance->GetMainContext());
-
-            SkinnedMesh::DrawInfo draw;
-            draw.Buffer = &Entries;
-            draw.Skinning = &_skinningData;
-            draw.BlendShapes = &_blendShapes;
-            draw.World = &_world;
-            draw.DrawState = &_drawState;
-            draw.DrawModes = drawModes;
-            draw.Bounds = _sphere;
-            draw.PerInstanceRandom = GetPerInstanceRandom();
-            draw.LODBias = LODBias;
-            draw.ForcedLOD = ForcedLOD;
-
-            SkinnedModel->Draw(renderContext, draw);
+            RenderContext::GPULocker.Lock();
+            GPUDevice::Instance->GetMainContext()->UpdateBuffer(_skinningData.BoneMatrices, _skinningData.Data.Get(), _skinningData.Data.Count());
+            RenderContext::GPULocker.Unlock();
         }
+
+        SkinnedMesh::DrawInfo draw;
+        draw.Buffer = &Entries;
+        draw.Skinning = &_skinningData;
+        draw.World = &world;
+        draw.DrawState = &_drawState;
+        draw.Deformation = _deformation;
+        PRAGMA_DISABLE_DEPRECATION_WARNINGS
+        draw.DrawModes = DrawModes & renderContext.View.GetShadowsDrawPassMask(ShadowsMode);
+        PRAGMA_ENABLE_DEPRECATION_WARNINGS
+        draw.Bounds = _sphere;
+        draw.Bounds.Center -= renderContext.View.Origin;
+        draw.PerInstanceRandom = GetPerInstanceRandom();
+        draw.LODBias = LODBias;
+        draw.ForcedLOD = ForcedLOD;
+        draw.SortOrder = SortOrder;
+
+        SkinnedModel->Draw(renderContext, draw);
     }
 
-    GEOMETRY_DRAW_STATE_EVENT_END(_drawState, _world);
+    GEOMETRY_DRAW_STATE_EVENT_END(_drawState, world);
 }
 
-void AnimatedModel::DrawGeneric(RenderContext& renderContext)
+void AnimatedModel::Draw(RenderContextBatch& renderContextBatch)
 {
-    if (renderContext.View.RenderLayersMask.Mask & GetLayerMask() && renderContext.View.CullingFrustum.Intersects(_box))
+    if (!SkinnedModel || !SkinnedModel->IsLoaded())
+        return;
+    const RenderContext& renderContext = renderContextBatch.GetMainContext();
+    Matrix world;
+    const Float3 translation = _transform.Translation - renderContext.View.Origin;
+    Matrix::Transformation(_transform.Scale, _transform.Orientation, translation, world);
+    GEOMETRY_DRAW_STATE_EVENT_BEGIN(_drawState, world);
+
+    _lastMinDstSqr = Math::Min(_lastMinDstSqr, Vector3::DistanceSquared(_transform.Translation, renderContext.View.WorldPosition));
+    if (_skinningData.IsReady())
     {
-        Draw(renderContext);
+        // Flush skinning data with GPU
+        if (_skinningData.IsDirty())
+        {
+            RenderContext::GPULocker.Lock();
+            GPUDevice::Instance->GetMainContext()->UpdateBuffer(_skinningData.BoneMatrices, _skinningData.Data.Get(), _skinningData.Data.Count());
+            RenderContext::GPULocker.Unlock();
+        }
+
+        SkinnedMesh::DrawInfo draw;
+        draw.Buffer = &Entries;
+        draw.Skinning = &_skinningData;
+        draw.World = &world;
+        draw.DrawState = &_drawState;
+        draw.Deformation = _deformation;
+        draw.DrawModes = DrawModes;
+        draw.Bounds = _sphere;
+        draw.Bounds.Center -= renderContext.View.Origin;
+        draw.PerInstanceRandom = GetPerInstanceRandom();
+        draw.LODBias = LODBias;
+        draw.ForcedLOD = ForcedLOD;
+        draw.SortOrder = SortOrder;
+
+        PRAGMA_DISABLE_DEPRECATION_WARNINGS
+        if (ShadowsMode != ShadowsCastingMode::All)
+        {
+            // To handle old ShadowsMode option for all meshes we need to call per-context drawing (no batching opportunity)
+            // TODO: maybe deserialize ShadowsMode into ModelInstanceBuffer entries options?
+            for (auto& e : renderContextBatch.Contexts)
+            {
+                draw.DrawModes = DrawModes & e.View.GetShadowsDrawPassMask(ShadowsMode);
+                SkinnedModel->Draw(e, draw);
+            }
+        }
+        else
+        {
+            SkinnedModel->Draw(renderContextBatch, draw);
+        }
+        PRAGMA_ENABLE_DEPRECATION_WARNINGS
     }
+
+    GEOMETRY_DRAW_STATE_EVENT_END(_drawState, world);
 }
 
 #if USE_EDITOR
@@ -649,16 +1018,23 @@ void AnimatedModel::OnDebugDrawSelected()
     ModelInstanceActor::OnDebugDrawSelected();
 }
 
+BoundingBox AnimatedModel::GetEditorBox() const
+{
+    if (SkinnedModel)
+        SkinnedModel->WaitForLoaded(100);
+    return BoundingBox::MakeScaled(_box, 1.0f / BoundsScale);
+}
+
 #endif
 
-bool AnimatedModel::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool AnimatedModel::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     bool result = false;
 
     if (SkinnedModel != nullptr && SkinnedModel->IsLoaded())
     {
         SkinnedMesh* mesh;
-        result |= SkinnedModel->Intersects(ray, _world, distance, normal, &mesh);
+        result |= SkinnedModel->Intersects(ray, _transform, distance, normal, &mesh);
     }
 
     return result;
@@ -682,8 +1058,11 @@ void AnimatedModel::Serialize(SerializeStream& stream, const void* otherObj)
     SERIALIZE(CustomBounds);
     SERIALIZE(LODBias);
     SERIALIZE(ForcedLOD);
+    SERIALIZE(SortOrder);
     SERIALIZE(DrawModes);
+    PRAGMA_DISABLE_DEPRECATION_WARNINGS
     SERIALIZE(ShadowsMode);
+    PRAGMA_ENABLE_DEPRECATION_WARNINGS
     SERIALIZE(RootMotionTarget);
 
     stream.JKEY("Buffer");
@@ -706,14 +1085,49 @@ void AnimatedModel::Deserialize(DeserializeStream& stream, ISerializeModifier* m
     DESERIALIZE(CustomBounds);
     DESERIALIZE(LODBias);
     DESERIALIZE(ForcedLOD);
+    DESERIALIZE(SortOrder);
     DESERIALIZE(DrawModes);
+    PRAGMA_DISABLE_DEPRECATION_WARNINGS
     DESERIALIZE(ShadowsMode);
+    PRAGMA_ENABLE_DEPRECATION_WARNINGS
     DESERIALIZE(RootMotionTarget);
 
     Entries.DeserializeIfExists(stream, "Buffer", modifier);
+
+    // [Deprecated on 07.02.2022, expires on 07.02.2024]
+    if (modifier->EngineBuild <= 6330)
+        DrawModes |= DrawPass::GlobalSDF;
+    // [Deprecated on 27.04.2022, expires on 27.04.2024]
+    if (modifier->EngineBuild <= 6331)
+        DrawModes |= DrawPass::GlobalSurfaceAtlas;
 }
 
-bool AnimatedModel::IntersectsEntry(int32 entryIndex, const Ray& ray, float& distance, Vector3& normal)
+const Span<MaterialSlot> AnimatedModel::GetMaterialSlots() const
+{
+    const auto model = SkinnedModel.Get();
+    if (model && !model->WaitForLoaded())
+        return ToSpan(model->MaterialSlots);
+    return Span<MaterialSlot>();
+}
+
+MaterialBase* AnimatedModel::GetMaterial(int32 entryIndex)
+{
+    if (SkinnedModel)
+        SkinnedModel->WaitForLoaded();
+    else
+        return nullptr;
+    CHECK_RETURN(entryIndex >= 0 && entryIndex < Entries.Count(), nullptr);
+    MaterialBase* material = Entries[entryIndex].Material.Get();
+    if (!material)
+    {
+        material = SkinnedModel->MaterialSlots[entryIndex].Material.Get();
+        if (!material)
+            material = GPUDevice::Instance->GetDefaultMaterial();
+    }
+    return material;
+}
+
+bool AnimatedModel::IntersectsEntry(int32 entryIndex, const Ray& ray, Real& distance, Vector3& normal)
 {
     auto model = SkinnedModel.Get();
     if (!model || !model->IsInitialized() || model->GetLoadedLODs() == 0)
@@ -724,7 +1138,7 @@ bool AnimatedModel::IntersectsEntry(int32 entryIndex, const Ray& ray, float& dis
     for (int32 i = 0; i < meshes.Count(); i++)
     {
         const auto& mesh = meshes[i];
-        if (mesh.GetMaterialSlotIndex() == entryIndex && mesh.Intersects(ray, _world, distance, normal))
+        if (mesh.GetMaterialSlotIndex() == entryIndex && mesh.Intersects(ray, _transform, distance, normal))
             return true;
     }
 
@@ -733,7 +1147,7 @@ bool AnimatedModel::IntersectsEntry(int32 entryIndex, const Ray& ray, float& dis
     return false;
 }
 
-bool AnimatedModel::IntersectsEntry(const Ray& ray, float& distance, Vector3& normal, int32& entryIndex)
+bool AnimatedModel::IntersectsEntry(const Ray& ray, Real& distance, Vector3& normal, int32& entryIndex)
 {
     auto model = SkinnedModel.Get();
     if (!model || !model->IsInitialized() || model->GetLoadedLODs() == 0)
@@ -741,7 +1155,7 @@ bool AnimatedModel::IntersectsEntry(const Ray& ray, float& distance, Vector3& no
 
     // Find mesh in the highest loaded LOD that is using the given material slot index and ray hits it
     bool result = false;
-    float closest = MAX_float;
+    Real closest = MAX_Real;
     Vector3 closestNormal = Vector3::Up;
     int32 closestEntry = -1;
     auto& meshes = model->LODs[model->HighestResidentLODIndex()].Meshes;
@@ -749,9 +1163,9 @@ bool AnimatedModel::IntersectsEntry(const Ray& ray, float& distance, Vector3& no
     {
         // Test intersection with mesh and check if is closer than previous
         const auto& mesh = meshes[i];
-        float dst;
+        Real dst;
         Vector3 nrm;
-        if (mesh.Intersects(ray, _world, dst, nrm) && dst < closest)
+        if (mesh.Intersects(ray, _transform, dst, nrm) && dst < closest)
         {
             result = true;
             closest = dst;
@@ -766,14 +1180,35 @@ bool AnimatedModel::IntersectsEntry(const Ray& ray, float& distance, Vector3& no
     return result;
 }
 
-void AnimatedModel::OnTransformChanged()
+bool AnimatedModel::GetMeshData(const MeshReference& mesh, MeshBufferType type, BytesContainer& result, int32& count) const
 {
-    // Base
-    ModelInstanceActor::OnTransformChanged();
+    count = 0;
+    if (mesh.LODIndex < 0 || mesh.MeshIndex < 0)
+        return true;
+    const auto model = SkinnedModel.Get();
+    if (!model || model->WaitForLoaded())
+        return true;
+    auto& lod = model->LODs[Math::Min(mesh.LODIndex, model->LODs.Count() - 1)];
+    return lod.Meshes[Math::Min(mesh.MeshIndex, lod.Meshes.Count() - 1)].DownloadDataCPU(type, result, count);
+}
 
-    _transform.GetWorld(_world);
-    BoundingBox::Transform(_boxLocal, _world, _box);
-    BoundingSphere::FromBox(_box, _sphere);
-    if (_sceneRenderingKey != -1)
-        GetSceneRendering()->UpdateGeometry(this, _sceneRenderingKey);
+MeshDeformation* AnimatedModel::GetMeshDeformation() const
+{
+    if (!_deformation)
+        _deformation = New<MeshDeformation>();
+    return _deformation;
+}
+
+void AnimatedModel::OnDeleteObject()
+{
+    // Ensure this object is no longer referenced for anim update
+    Animations::RemoveFromUpdate(this);
+
+    ModelInstanceActor::OnDeleteObject();
+}
+
+void AnimatedModel::WaitForModelLoad()
+{
+    if (SkinnedModel)
+        SkinnedModel->WaitForLoaded();
 }

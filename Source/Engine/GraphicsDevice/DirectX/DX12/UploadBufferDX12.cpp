@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX12
 
@@ -90,29 +90,30 @@ bool UploadBufferDX12::UploadTexture(GPUContextDX12* context, ID3D12Resource* te
     _device->GetDevice()->GetCopyableFootprints(&resourceDesc, subresourceIndex, 1, 0, &footprint, &numRows, &rowPitchAligned, &mipSizeAligned);
     rowPitchAligned = footprint.Footprint.RowPitch;
     mipSizeAligned = rowPitchAligned * footprint.Footprint.Height;
+    const uint32 numSlices = resourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? Math::Max(1, resourceDesc.DepthOrArraySize >> mipIndex) : 1;
+    const uint64 sliceSizeAligned = numSlices * mipSizeAligned;
 
     // Allocate data
-    const DynamicAllocation allocation = Allocate(mipSizeAligned, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
-    if (allocation.Size != mipSizeAligned)
+    const DynamicAllocation allocation = Allocate(sliceSizeAligned, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+    if (allocation.Size != sliceSizeAligned)
         return true;
 
-    // Check if can copy rows at once
     byte* ptr = (byte*)srcData;
-    ASSERT(srcSlicePitch <= mipSizeAligned);
-    if (srcRowPitch == rowPitchAligned)
+    ASSERT(srcSlicePitch <= sliceSizeAligned);
+    if (srcSlicePitch == sliceSizeAligned)
     {
         // Copy data at once
         Platform::MemoryCopy(allocation.CPUAddress, ptr, srcSlicePitch);
     }
     else
     {
-        // Use per row copy
+        // Copy data per-row
         byte* dst = static_cast<byte*>(allocation.CPUAddress);
         ASSERT(srcRowPitch <= rowPitchAligned);
-        for (uint32 i = 0; i < numRows; i++)
+        const uint32 numCopies = numSlices * numRows;
+        for (uint32 i = 0; i < numCopies; i++)
         {
             Platform::MemoryCopy(dst, ptr, srcRowPitch);
-
             dst += rowPitchAligned;
             ptr += srcRowPitch;
         }
@@ -228,7 +229,7 @@ UploadBufferPageDX12::UploadBufferPageDX12(GPUDeviceDX12* device, uint64 size)
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
     ID3D12Resource* resource;
-    VALIDATE_DIRECTX_RESULT(_device->GetDevice()->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&resource)));
+    VALIDATE_DIRECTX_CALL(_device->GetDevice()->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&resource)));
 
     // Set state
     initResource(resource, D3D12_RESOURCE_STATE_GENERIC_READ, 1);
@@ -237,7 +238,7 @@ UploadBufferPageDX12::UploadBufferPageDX12(GPUDeviceDX12* device, uint64 size)
     GPUAddress = _resource->GetGPUVirtualAddress();
 
     // Map buffer
-    VALIDATE_DIRECTX_RESULT(_resource->Map(0, nullptr, &CPUAddress));
+    VALIDATE_DIRECTX_CALL(_resource->Map(0, nullptr, &CPUAddress));
 }
 
 void UploadBufferPageDX12::OnReleaseGPU()

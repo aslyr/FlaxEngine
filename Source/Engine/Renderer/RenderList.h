@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -8,24 +8,29 @@
 #include "Engine/Graphics/DynamicBuffer.h"
 #include "Engine/Scripting/ScriptingObject.h"
 #include "DrawCall.h"
+#include "RenderListBuffer.h"
+#include "RendererAllocation.h"
+#include "RenderSetup.h"
 
 enum class StaticFlags;
 class RenderBuffers;
+class PostProcessEffect;
+class SceneRendering;
 class LightWithShadow;
 class IPostFxSettingsProvider;
 class CubeTexture;
-class PostProcessBase;
 struct RenderContext;
+struct RenderContextBatch;
 
 struct RendererDirectionalLightData
 {
-    Vector3 Position;
+    Float3 Position;
     float MinRoughness;
 
-    Vector3 Color;
+    Float3 Color;
     float ShadowsStrength;
 
-    Vector3 Direction;
+    Float3 Direction;
     float ShadowsFadeDistance;
 
     float ShadowsNormalOffsetScale;
@@ -33,26 +38,37 @@ struct RendererDirectionalLightData
     float ShadowsSharpness;
     float VolumetricScatteringIntensity;
 
-    int8 CastVolumetricShadow : 1;
-    int8 RenderedVolumetricFog : 1;
+    StaticFlags StaticFlags;
+    float IndirectLightingIntensity;
+    int16 ShadowDataIndex = -1;
+    uint8 CastVolumetricShadow : 1;
+    uint8 RenderedVolumetricFog : 1;
 
     float ShadowsDistance;
     int32 CascadeCount;
+    float Cascade1Spacing;
+    float Cascade2Spacing;
+    float Cascade3Spacing;
+    float Cascade4Spacing;
+
+    PartitionMode PartitionMode;
     float ContactShadowsLength;
     ShadowsCastingMode ShadowsMode;
 
-    void SetupLightData(LightData* data, const RenderView& view, bool useShadow) const;
+    Guid ID;
+
+    void SetupLightData(LightData* data, bool useShadow) const;
 };
 
 struct RendererSpotLightData
 {
-    Vector3 Position;
+    Float3 Position;
     float MinRoughness;
 
-    Vector3 Color;
+    Float3 Color;
     float ShadowsStrength;
 
-    Vector3 Direction;
+    Float3 Direction;
     float ShadowsFadeDistance;
 
     float ShadowsNormalOffsetScale;
@@ -65,32 +81,36 @@ struct RendererSpotLightData
     float FallOffExponent;
     float SourceRadius;
 
-    Vector3 UpVector;
+    Float3 UpVector;
     float OuterConeAngle;
 
     float CosOuterCone;
     float InvCosConeDifference;
     float ContactShadowsLength;
+    float IndirectLightingIntensity;
     ShadowsCastingMode ShadowsMode;
 
-    int8 CastVolumetricShadow : 1;
-    int8 RenderedVolumetricFog : 1;
-    int8 UseInverseSquaredFalloff : 1;
+    StaticFlags StaticFlags;
+    int16 ShadowDataIndex = -1;
+    uint8 CastVolumetricShadow : 1;
+    uint8 RenderedVolumetricFog : 1;
+    uint8 UseInverseSquaredFalloff : 1;
 
     GPUTexture* IESTexture;
+    Guid ID;
 
-    void SetupLightData(LightData* data, const RenderView& view, bool useShadow) const;
+    void SetupLightData(LightData* data, bool useShadow) const;
 };
 
 struct RendererPointLightData
 {
-    Vector3 Position;
+    Float3 Position;
     float MinRoughness;
 
-    Vector3 Color;
+    Float3 Color;
     float ShadowsStrength;
 
-    Vector3 Direction;
+    Float3 Direction;
     float ShadowsFadeDistance;
 
     float ShadowsNormalOffsetScale;
@@ -105,33 +125,40 @@ struct RendererPointLightData
 
     float SourceLength;
     float ContactShadowsLength;
+    float IndirectLightingIntensity;
     ShadowsCastingMode ShadowsMode;
 
-    int8 CastVolumetricShadow : 1;
-    int8 RenderedVolumetricFog : 1;
-    int8 UseInverseSquaredFalloff : 1;
+    StaticFlags StaticFlags;
+    int16 ShadowDataIndex = -1;
+    uint8 CastVolumetricShadow : 1;
+    uint8 RenderedVolumetricFog : 1;
+    uint8 UseInverseSquaredFalloff : 1;
 
     GPUTexture* IESTexture;
+    Guid ID;
 
-    void SetupLightData(LightData* data, const RenderView& view, bool useShadow) const;
+    void SetupLightData(LightData* data, bool useShadow) const;
 };
 
 struct RendererSkyLightData
 {
-    Vector3 Position;
+    Float3 Position;
     float VolumetricScatteringIntensity;
 
-    Vector3 Color;
+    Float3 Color;
     float Radius;
 
-    Vector3 AdditiveColor;
+    Float3 AdditiveColor;
+    float IndirectLightingIntensity;
 
-    int8 CastVolumetricShadow : 1;
-    int8 RenderedVolumetricFog : 1;
+    StaticFlags StaticFlags;
+    uint8 CastVolumetricShadow : 1;
+    uint8 RenderedVolumetricFog : 1;
 
     CubeTexture* Image;
+    Guid ID;
 
-    void SetupLightData(LightData* data, const RenderView& view, bool useShadow) const;
+    void SetupLightData(LightData* data, bool useShadow) const;
 };
 
 /// <summary>
@@ -180,7 +207,7 @@ struct DrawBatch
     /// <summary>
     /// Draw calls sorting key (shared by the all draw calls withing a patch).
     /// </summary>
-    uint32 SortKey;
+    uint64 SortKey;
 
     /// <summary>
     /// The first draw call index.
@@ -203,91 +230,10 @@ struct DrawBatch
     }
 };
 
-class RenderListAllocation
-{
-public:
-
-    static FLAXENGINE_API void* Allocate(uintptr size);
-    static FLAXENGINE_API void Free(void* ptr, uintptr size);
-
-    template<typename T>
-    class Data
-    {
-        T* _data = nullptr;
-        uintptr _size;
-
-    public:
-
-        FORCE_INLINE Data()
-        {
-        }
-
-        FORCE_INLINE ~Data()
-        {
-            if (_data)
-                RenderListAllocation::Free(_data, _size);
-        }
-
-        FORCE_INLINE T* Get()
-        {
-            return _data;
-        }
-
-        FORCE_INLINE const T* Get() const
-        {
-            return _data;
-        }
-
-        FORCE_INLINE int32 CalculateCapacityGrow(int32 capacity, int32 minCapacity) const
-        {
-            capacity = capacity ? capacity * 2 : 64;
-            if (capacity < minCapacity)
-                capacity = minCapacity;
-            return capacity;
-        }
-
-        FORCE_INLINE void Allocate(uint64 capacity)
-        {
-            _size = capacity * sizeof(T);
-            _data = (T*)RenderListAllocation::Allocate(_size);
-        }
-
-        FORCE_INLINE void Relocate(uint64 capacity, int32 oldCount, int32 newCount)
-        {
-            T* newData = capacity != 0 ? (T*)RenderListAllocation::Allocate(capacity * sizeof(T)) : nullptr;
-            if (oldCount)
-            {
-                if (newCount > 0)
-                    Memory::MoveItems(newData, _data, newCount);
-                Memory::DestructItems(_data, oldCount);
-            }
-            if (_data)
-                RenderListAllocation::Free(_data, _size);
-            _data = newData;
-            _size = capacity * sizeof(T);
-        }
-
-        FORCE_INLINE void Free()
-        {
-            if (_data)
-            {
-                RenderListAllocation::Free(_data, _size);
-                _data = nullptr;
-            }
-        }
-
-        FORCE_INLINE void Swap(Data& other)
-        {
-            ::Swap(_data, other._data);
-            ::Swap(_size, other._size);
-        }
-    };
-};
-
 struct BatchedDrawCall
 {
     DrawCall DrawCall;
-    Array<struct InstanceData, RenderListAllocation> Instances;
+    Array<struct InstanceData, RendererAllocation> Instances;
 };
 
 /// <summary>
@@ -298,12 +244,12 @@ struct DrawCallsList
     /// <summary>
     /// The list of draw calls indices to render.
     /// </summary>
-    Array<int32> Indices;
+    RenderListBuffer<int32> Indices;
 
     /// <summary>
     /// The list of external draw calls indices to render.
     /// </summary>
-    Array<int32> PreBatchedDrawCalls;
+    RenderListBuffer<int32> PreBatchedDrawCalls;
 
     /// <summary>
     /// The draw calls batches (for instancing).
@@ -322,9 +268,9 @@ struct DrawCallsList
 /// <summary>
 /// Rendering cache container object for the draw calls collecting, sorting and executing.
 /// </summary>
-API_CLASS(Sealed) class FLAXENGINE_API RenderList : public PersistentScriptingObject
+API_CLASS(Sealed) class FLAXENGINE_API RenderList : public ScriptingObject
 {
-DECLARE_SCRIPTING_TYPE(RenderList);
+    DECLARE_SCRIPTING_TYPE(RenderList);
 
     /// <summary>
     /// Allocates the new renderer list object or reuses already allocated one.
@@ -344,21 +290,30 @@ DECLARE_SCRIPTING_TYPE(RenderList);
     static void CleanupCache();
 
 public:
+    /// <summary>
+    /// All scenes for rendering.
+    /// </summary>
+    Array<SceneRendering*> Scenes;
 
     /// <summary>
     /// Draw calls list (for all draw passes).
     /// </summary>
-    Array<DrawCall> DrawCalls;
+    RenderListBuffer<DrawCall> DrawCalls;
 
     /// <summary>
     /// Draw calls list with pre-batched instances (for all draw passes).
     /// </summary>
-    Array<BatchedDrawCall> BatchedDrawCalls;
+    RenderListBuffer<BatchedDrawCall> BatchedDrawCalls;
 
     /// <summary>
     /// The draw calls lists. Each for the separate draw pass.
     /// </summary>
     DrawCallsList DrawCallsLists[(int32)DrawCallsListType::MAX];
+
+    /// <summary>
+    /// The additional draw calls list for Depth drawing into Shadow Projections that use DrawCalls from main render context. This assumes that RenderContextBatch contains main context and shadow projections only.
+    /// </summary>
+    DrawCallsList ShadowDepthDrawCallsList;
 
     /// <summary>
     /// Light pass members - directional lights
@@ -411,9 +366,14 @@ public:
     IFogRenderer* Fog;
 
     /// <summary>
-    /// Post effect to render (TEMPORARY! cleared after and before rendering).
+    /// Post effects to render.
     /// </summary>
-    Array<PostProcessBase*> PostFx;
+    Array<PostProcessEffect*> PostFx;
+
+    /// <summary>
+    /// The renderer setup for the frame drawing.
+    /// </summary>
+    RenderSetup Setup;
 
     /// <summary>
     /// The post process settings.
@@ -440,19 +400,17 @@ public:
     /// <summary>
     /// Camera frustum corners in World Space
     /// </summary>
-    Vector3 FrustumCornersWs[8];
+    Float3 FrustumCornersWs[8];
 
     /// <summary>
     /// Camera frustum corners in View Space
     /// </summary>
-    Vector3 FrustumCornersVs[8];
+    Float3 FrustumCornersVs[8];
 
 private:
-
     DynamicVertexBuffer _instanceBuffer;
 
 public:
-
     /// <summary>
     /// Blends the postprocessing settings into the final options.
     /// </summary>
@@ -494,7 +452,7 @@ public:
     /// <param name="renderContext">The rendering context.</param>
     /// <param name="postProcess">The PostFx location to check (for scripts).</param>
     /// <returns>True if render any postFx of the given type, otherwise false.</returns>
-    bool HasAnyPostFx(RenderContext& renderContext, PostProcessEffectLocation postProcess) const;
+    bool HasAnyPostFx(const RenderContext& renderContext, PostProcessEffectLocation postProcess) const;
 
     /// <summary>
     /// Determines whether any Material PostFx specified by given type. Used to pick a faster rendering path by the frame rendering module.
@@ -502,7 +460,7 @@ public:
     /// <param name="renderContext">The rendering context.</param>
     /// <param name="materialPostFx">The PostFx location to check (for materials).</param>
     /// <returns>True if render any postFx of the given type, otherwise false.</returns>
-    bool HasAnyPostFx(RenderContext& renderContext, MaterialPostFxLocation materialPostFx) const;
+    bool HasAnyPostFx(const RenderContext& renderContext, MaterialPostFxLocation materialPostFx) const;
 
     /// <summary>
     /// Determines whether any Custom PostFx or Material PostFx specified by given type. Used to pick a faster rendering path by the frame rendering module.
@@ -511,13 +469,12 @@ public:
     /// <param name="postProcess">The PostFx location to check (for scripts).</param>
     /// <param name="materialPostFx">The PostFx location to check (for materials).</param>
     /// <returns>True if render any postFx of the given type, otherwise false.</returns>
-    bool HasAnyPostFx(RenderContext& renderContext, PostProcessEffectLocation postProcess, MaterialPostFxLocation materialPostFx) const
+    bool HasAnyPostFx(const RenderContext& renderContext, PostProcessEffectLocation postProcess, MaterialPostFxLocation materialPostFx) const
     {
         return HasAnyPostFx(renderContext, postProcess) || HasAnyPostFx(renderContext, materialPostFx);
     }
 
 public:
-
     /// <summary>
     /// Init cache for given task
     /// </summary>
@@ -530,15 +487,29 @@ public:
     void Clear();
 
 public:
-
     /// <summary>
     /// Adds the draw call to the draw lists.
     /// </summary>
+    /// <param name="renderContext">The rendering context.</param>
     /// <param name="drawModes">The object draw modes.</param>
     /// <param name="staticFlags">The object static flags.</param>
     /// <param name="drawCall">The draw call data.</param>
     /// <param name="receivesDecals">True if the rendered mesh can receive decals.</param>
-    void AddDrawCall(DrawPass drawModes, StaticFlags staticFlags, DrawCall& drawCall, bool receivesDecals);
+    /// <param name="sortOrder">Object sorting key.</param>
+    void AddDrawCall(const RenderContext& renderContext, DrawPass drawModes, StaticFlags staticFlags, DrawCall& drawCall, bool receivesDecals = true, int16 sortOrder = 0);
+
+    /// <summary>
+    /// Adds the draw call to the draw lists and references it in other render contexts. Performs additional per-context frustum culling.
+    /// </summary>
+    /// <param name="renderContextBatch">The rendering context batch. This assumes that RenderContextBatch contains main context and shadow projections only.</param>
+    /// <param name="drawModes">The object draw modes.</param>
+    /// <param name="staticFlags">The object static flags.</param>
+    /// <param name="shadowsMode">The object shadows casting mode.</param>
+    /// <param name="bounds">The object bounds.</param>
+    /// <param name="drawCall">The draw call data.</param>
+    /// <param name="receivesDecals">True if the rendered mesh can receive decals.</param>
+    /// <param name="sortOrder">Object sorting key.</param>
+    void AddDrawCall(const RenderContextBatch& renderContextBatch, DrawPass drawModes, StaticFlags staticFlags, ShadowsCastingMode shadowsMode, const BoundingSphere& bounds, DrawCall& drawCall, bool receivesDecals = true, int16 sortOrder = 0);
 
     /// <summary>
     /// Sorts the collected draw calls list.
@@ -548,7 +519,7 @@ public:
     /// <param name="listType">The collected draw calls list type.</param>
     API_FUNCTION() FORCE_INLINE void SortDrawCalls(API_PARAM(Ref) const RenderContext& renderContext, bool reverseDistance, DrawCallsListType listType)
     {
-        SortDrawCalls(renderContext, reverseDistance, DrawCallsLists[(int32)listType]);
+        SortDrawCalls(renderContext, reverseDistance, DrawCallsLists[(int32)listType], DrawCalls);
     }
 
     /// <summary>
@@ -556,44 +527,59 @@ public:
     /// </summary>
     /// <param name="renderContext">The rendering context.</param>
     /// <param name="reverseDistance">If set to <c>true</c> reverse draw call distance to the view. Results in back to front sorting.</param>
-    /// <param name="list">The collected draw calls list.</param>
-    void SortDrawCalls(const RenderContext& renderContext, bool reverseDistance, DrawCallsList& list);
+    /// <param name="list">The collected draw calls indices list.</param>
+    /// <param name="drawCalls">The collected draw calls list.</param>
+    void SortDrawCalls(const RenderContext& renderContext, bool reverseDistance, DrawCallsList& list, const RenderListBuffer<DrawCall>& drawCalls);
 
     /// <summary>
     /// Executes the collected draw calls.
     /// </summary>
     /// <param name="renderContext">The rendering context.</param>
     /// <param name="listType">The collected draw calls list type.</param>
-    API_FUNCTION() FORCE_INLINE void ExecuteDrawCalls(API_PARAM(Ref) const RenderContext& renderContext, DrawCallsListType listType)
+    /// <param name="input">The input scene color. It's optional and used in forward/postFx rendering.</param>
+    API_FUNCTION() FORCE_INLINE void ExecuteDrawCalls(API_PARAM(Ref) const RenderContext& renderContext, DrawCallsListType listType, GPUTextureView* input = nullptr)
     {
-        ExecuteDrawCalls(renderContext, DrawCallsLists[(int32)listType]);
+        ExecuteDrawCalls(renderContext, DrawCallsLists[(int32)listType], DrawCalls, input);
     }
 
     /// <summary>
     /// Executes the collected draw calls.
     /// </summary>
     /// <param name="renderContext">The rendering context.</param>
-    /// <param name="list">The collected draw calls list.</param>
-    void ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsList& list);
+    /// <param name="list">The collected draw calls indices list.</param>
+    /// <param name="input">The input scene color. It's optional and used in forward/postFx rendering.</param>
+    FORCE_INLINE void ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsList& list, GPUTextureView* input = nullptr)
+    {
+        ExecuteDrawCalls(renderContext, list, DrawCalls, input);
+    }
+
+    /// <summary>
+    /// Executes the collected draw calls.
+    /// </summary>
+    /// <param name="renderContext">The rendering context.</param>
+    /// <param name="list">The collected draw calls indices list.</param>
+    /// <param name="drawCalls">The collected draw calls list.</param>
+    /// <param name="input">The input scene color. It's optional and used in forward/postFx rendering.</param>
+    void ExecuteDrawCalls(const RenderContext& renderContext, DrawCallsList& list, const RenderListBuffer<DrawCall>& drawCalls, GPUTextureView* input);
 };
 
 /// <summary>
 /// Represents data per instance element used for instanced rendering.
 /// </summary>
-struct FLAXENGINE_API InstanceData
-{
-    Vector3 InstanceOrigin;
+PACK_STRUCT(struct FLAXENGINE_API InstanceData
+    {
+    Float3 InstanceOrigin;
     float PerInstanceRandom;
-    Vector3 InstanceTransform1;
+    Float3 InstanceTransform1;
     float LODDitherFactor;
-    Vector3 InstanceTransform2;
-    Vector3 InstanceTransform3;
+    Float3 InstanceTransform2;
+    Float3 InstanceTransform3;
     Half4 InstanceLightmapArea;
-};
+    });
 
 struct SurfaceDrawCallHandler
 {
-    static void GetHash(const DrawCall& drawCall, int32& batchKey);
+    static void GetHash(const DrawCall& drawCall, uint32& batchKey);
     static bool CanBatch(const DrawCall& a, const DrawCall& b);
     static void WriteDrawCall(InstanceData* instanceData, const DrawCall& drawCall);
 };

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Builder.h"
 #include "Engine/Core/Log.h"
@@ -186,8 +186,10 @@ bool ShadowsOfMordor::Builder::doWorkInner(DateTime buildStart)
         const int32 atlasSize = (int32)_scenes[_workerActiveSceneIndex]->GetSettings().AtlasSize;
         auto tempDesc = GPUTextureDescription::New2D(atlasSize, atlasSize, HemispheresFormatToPixelFormat[CACHE_POSITIONS_FORMAT]);
         _cachePositions = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(_cachePositions, "ShadowsOfMordor.Positions");
         tempDesc.Format = HemispheresFormatToPixelFormat[CACHE_NORMALS_FORMAT];
         _cacheNormals = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(_cachePositions, "ShadowsOfMordor.Normals");
         if (_cachePositions == nullptr || _cacheNormals == nullptr)
         {
             LOG(Warning, "Failed to get textures for cache.");

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -19,7 +19,7 @@ namespace FlaxEditor.GUI.Tree
         /// <summary>
         /// The key updates timeout in seconds.
         /// </summary>
-        public static float KeyUpdateTimeout = 0.12f;
+        public static float KeyUpdateTimeout = 0.25f;
 
         /// <summary>
         /// Delegate for selected tree nodes collection change.
@@ -33,12 +33,17 @@ namespace FlaxEditor.GUI.Tree
         /// </summary>
         /// <param name="node">The node.</param>
         /// <param name="location">The location.</param>
-        public delegate void NodeClickDelegate(TreeNode node, Vector2 location);
+        public delegate void NodeClickDelegate(TreeNode node, Float2 location);
 
         private float _keyUpdateTime;
         private readonly bool _supportMultiSelect;
         private Margin _margin;
         private bool _autoSize = true;
+
+        /// <summary>
+        /// The TreeNode that is being dragged over. This could have a value when not dragging.
+        /// </summary>
+        public TreeNode DraggedOverNode = null;
 
         /// <summary>
         /// Action fired when tree nodes selection gets changed.
@@ -108,10 +113,10 @@ namespace FlaxEditor.GUI.Tree
             AutoFocus = false;
 
             _supportMultiSelect = supportMultiSelect;
-            _keyUpdateTime = KeyUpdateTimeout * 10;
+            _keyUpdateTime = KeyUpdateTimeout;
         }
 
-        internal void OnRightClickInternal(TreeNode node, ref Vector2 location)
+        internal void OnRightClickInternal(TreeNode node, ref Float2 location)
         {
             RightClick?.Invoke(node, location);
         }
@@ -233,7 +238,7 @@ namespace FlaxEditor.GUI.Tree
             {
                 if (node.GetChild(i) is TreeNode child && child.Visible)
                 {
-                    Vector2 pos = child.PointToParent(this, Vector2.One);
+                    var pos = child.PointToParent(this, Float2.One);
                     if (range.Contains(pos))
                     {
                         selection.Add(child);
@@ -248,8 +253,8 @@ namespace FlaxEditor.GUI.Tree
 
         private Rectangle CalcNodeRangeRect(TreeNode node)
         {
-            Vector2 pos = node.PointToParent(this, Vector2.One);
-            return new Rectangle(pos, new Vector2(10000, 4));
+            var pos = node.PointToParent(this, Float2.One);
+            return new Rectangle(pos, new Float2(10000, 4));
         }
 
         /// <summary>
@@ -333,45 +338,21 @@ namespace FlaxEditor.GUI.Tree
             }
         }
 
-        /// <summary>
-        /// Updates the tree size.
-        /// </summary>
-        public void UpdateSize()
-        {
-            if (!_autoSize)
-                return;
-
-            // Use max of parent clint area width and root node width
-            float width = 0;
-            if (HasParent)
-                width = Parent.GetClientArea().Width;
-            var rightBottom = Vector2.Zero;
-            for (int i = 0; i < _children.Count; i++)
-            {
-                if (_children[i] is TreeNode node && node.Visible)
-                {
-                    width = Mathf.Max(width, node.MinimumWidth);
-                    rightBottom = Vector2.Max(rightBottom, node.BottomRight);
-                }
-            }
-            Size = new Vector2(width + _margin.Width, rightBottom.Y + _margin.Bottom);
-        }
-
         /// <inheritdoc />
         public override void Update(float deltaTime)
         {
             var node = SelectedNode;
 
             // Check if has focus and if any node is focused and it isn't a root
-            if (ContainsFocus && node != null && !node.IsRoot)
+            if (ContainsFocus && node != null && node.AutoFocus)
             {
                 var window = Root;
-
-                // Check if can perform update
-                if (_keyUpdateTime >= KeyUpdateTimeout)
+                if (window.GetKeyDown(KeyboardKeys.ArrowUp) || window.GetKeyDown(KeyboardKeys.ArrowDown))
+                    _keyUpdateTime = KeyUpdateTimeout;
+                if (_keyUpdateTime >= KeyUpdateTimeout && window is WindowRootControl windowRoot && windowRoot.Window.IsFocused)
                 {
-                    bool keyUpArrow = window.GetKeyDown(KeyboardKeys.ArrowUp);
-                    bool keyDownArrow = window.GetKeyDown(KeyboardKeys.ArrowDown);
+                    bool keyUpArrow = window.GetKey(KeyboardKeys.ArrowUp);
+                    bool keyDownArrow = window.GetKey(KeyboardKeys.ArrowDown);
 
                     // Check if arrow flags are different
                     if (keyDownArrow != keyUpArrow)
@@ -382,38 +363,29 @@ namespace FlaxEditor.GUI.Tree
                         Assert.AreNotEqual(-1, myIndex);
 
                         // Up
+                        TreeNode toSelect = null;
                         if (keyUpArrow)
                         {
-                            TreeNode toSelect = null;
                             if (myIndex == 0)
                             {
-                                // Select parent (if it exists and it isn't a root)
-                                if (parentNode != null && !parentNode.IsRoot)
-                                    toSelect = parentNode;
+                                // Select parent
+                                toSelect = parentNode;
                             }
                             else
                             {
                                 // Select previous parent child
                                 toSelect = nodeParent.GetChild(myIndex - 1) as TreeNode;
 
-                                // Check if is valid and expanded and has any children
+                                // Select last child if is valid and expanded and has any children
                                 if (toSelect != null && toSelect.IsExpanded && toSelect.HasAnyVisibleChild)
                                 {
-                                    // Select last child
                                     toSelect = toSelect.GetChild(toSelect.ChildrenCount - 1) as TreeNode;
                                 }
-                            }
-                            if (toSelect != null)
-                            {
-                                // Select
-                                Select(toSelect);
-                                toSelect.Focus();
                             }
                         }
                         // Down
                         else
                         {
-                            TreeNode toSelect = null;
                             if (node.IsExpanded && node.HasAnyVisibleChild)
                             {
                                 // Select the first child
@@ -422,13 +394,14 @@ namespace FlaxEditor.GUI.Tree
                             else if (myIndex == nodeParent.ChildrenCount - 1)
                             {
                                 // Select next node after parent
-                                if (parentNode != null)
+                                while (parentNode != null && toSelect == null)
                                 {
                                     int parentIndex = parentNode.IndexInParent;
                                     if (parentIndex != -1 && parentIndex < parentNode.Parent.ChildrenCount - 1)
                                     {
                                         toSelect = parentNode.Parent.GetChild(parentIndex + 1) as TreeNode;
                                     }
+                                    parentNode = parentNode.Parent as TreeNode;
                                 }
                             }
                             else
@@ -436,12 +409,12 @@ namespace FlaxEditor.GUI.Tree
                                 // Select next parent child
                                 toSelect = nodeParent.GetChild(myIndex + 1) as TreeNode;
                             }
-                            if (toSelect != null)
-                            {
-                                // Select
-                                Select(toSelect);
-                                toSelect.Focus();
-                            }
+                        }
+                        if (toSelect != null && toSelect.AutoFocus)
+                        {
+                            // Select
+                            Select(toSelect);
+                            toSelect.Focus();
                         }
 
                         // Reset time
@@ -476,7 +449,7 @@ namespace FlaxEditor.GUI.Tree
                     if (node.IsCollapsed)
                     {
                         // Select parent if has and is not a root
-                        if (node.HasParent && node.Parent is TreeNode nodeParentNode && !nodeParentNode.IsRoot)
+                        if (node.HasParent && node.Parent is TreeNode nodeParentNode && nodeParentNode.AutoFocus)
                         {
                             Select(nodeParentNode);
                             nodeParentNode.Focus();
@@ -522,36 +495,64 @@ namespace FlaxEditor.GUI.Tree
         }
 
         /// <inheritdoc />
-        public override void OnChildResized(Control control)
-        {
-            UpdateSize();
-
-            base.OnChildResized(control);
-        }
-
-        /// <inheritdoc />
         public override void OnParentResized()
         {
-            UpdateSize();
+            PerformLayout();
 
             base.OnParentResized();
         }
 
         /// <inheritdoc />
+        protected override void PerformLayoutBeforeChildren()
+        {
+            if (_autoSize)
+            {
+                // Use max of parent clint area width and root node width
+                var parent = Parent;
+                var width = parent != null ? Mathf.Max(parent.GetClientArea().Width, 0) : 0.0f;
+                for (int i = 0; i < _children.Count; i++)
+                {
+                    if (_children[i] is TreeNode node && node.Visible)
+                        width = Mathf.Max(width, node.MinimumWidth);
+                }
+                for (int i = 0; i < _children.Count; i++)
+                {
+                    if (_children[i] is TreeNode node && node.Visible)
+                        node.Width = width;
+                }
+                Width = width + _margin.Width;
+            }
+
+            base.PerformLayoutBeforeChildren();
+        }
+
+        /// <inheritdoc />
         protected override void PerformLayoutAfterChildren()
         {
+            base.PerformLayoutAfterChildren();
+
             // Arrange children
             float y = _margin.Top;
             for (int i = 0; i < _children.Count; i++)
             {
                 if (_children[i] is TreeNode node && node.Visible)
                 {
-                    node.Location = new Vector2(_margin.Left, y);
+                    node.Location = new Float2(_margin.Left, y);
                     y += node.Height + TreeNode.DefaultNodeOffsetY;
                 }
             }
 
-            UpdateSize();
+            if (_autoSize)
+            {
+                // Update height based on the nodes
+                var bottom = 0.0f;
+                for (int i = 0; i < _children.Count; i++)
+                {
+                    if (_children[i] is TreeNode node && node.Visible)
+                        bottom = Mathf.Max(bottom, node.Bottom);
+                }
+                Height = bottom + _margin.Bottom;
+            }
         }
     }
 }

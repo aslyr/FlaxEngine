@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,12 +10,14 @@
 class TerrainMaterialShader : public MaterialShader
 {
 private:
-
     struct Cache
     {
         PipelineStateCache Default;
         PipelineStateCache DefaultLightmap;
         PipelineStateCache Depth;
+#if USE_EDITOR
+        PipelineStateCache QuadOverdraw;
+#endif
 
         FORCE_INLINE PipelineStateCache* GetPS(const DrawPass pass, const bool useLightmap)
         {
@@ -24,7 +26,13 @@ private:
             case DrawPass::Depth:
                 return &Depth;
             case DrawPass::GBuffer:
+            case DrawPass::GBuffer | DrawPass::GlobalSurfaceAtlas:
+            case DrawPass::GlobalSurfaceAtlas:
                 return useLightmap ? &DefaultLightmap : &Default;
+#if USE_EDITOR
+            case DrawPass::QuadOverdraw:
+                return &QuadOverdraw;
+#endif
             default:
                 return nullptr;
             }
@@ -35,15 +43,16 @@ private:
             Default.Release();
             DefaultLightmap.Release();
             Depth.Release();
+#if USE_EDITOR
+            QuadOverdraw.Release();
+#endif
         }
     };
 
 private:
-
     Cache _cache;
 
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -54,7 +63,6 @@ public:
     }
 
 public:
-
     // [MaterialShader]
     DrawPass GetDrawModes() const override;
     bool CanUseLightmap() const override;
@@ -62,7 +70,6 @@ public:
     void Unload() override;
 
 protected:
-
     // [MaterialShader]
     bool Load() override;
 };

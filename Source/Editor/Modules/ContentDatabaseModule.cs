@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using FlaxEditor.Content;
 using FlaxEditor.Content.Settings;
 using FlaxEditor.Scripting;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Modules
 {
@@ -19,6 +20,7 @@ namespace FlaxEditor.Modules
     {
         private bool _enableEvents;
         private bool _isDuringFastSetup;
+        private bool _rebuildFlag;
         private int _itemsCreated;
         private int _itemsDeleted;
         private readonly HashSet<MainContentTreeNode> _dirtyNodes = new HashSet<MainContentTreeNode>();
@@ -39,9 +41,9 @@ namespace FlaxEditor.Modules
         public readonly List<ProjectTreeNode> Projects = new List<ProjectTreeNode>();
 
         /// <summary>
-        /// The list with all content items proxy objects.
+        /// The list with all content items proxy objects. Use <see cref="AddProxy"/> and <see cref="RemoveProxy"/> to modify this or <see cref="Rebuild"/> to refresh database when adding new item proxy types.
         /// </summary>
-        public readonly List<ContentProxy> Proxy = new List<ContentProxy>(64);
+        public readonly List<ContentProxy> Proxy = new List<ContentProxy>(128);
 
         /// <summary>
         /// Occurs when new items is added to the workspace content database.
@@ -57,6 +59,16 @@ namespace FlaxEditor.Modules
         /// Occurs when workspace has been modified.
         /// </summary>
         public event Action WorkspaceModified;
+
+        /// <summary>
+        /// Occurs when workspace has will be rebuilt.
+        /// </summary>
+        public event Action WorkspaceRebuilding;
+
+        /// <summary>
+        /// Occurs when workspace has been rebuilt.
+        /// </summary>
+        public event Action WorkspaceRebuilt;
 
         /// <summary>
         /// Gets the amount of created items.
@@ -177,6 +189,25 @@ namespace FlaxEditor.Modules
             for (int i = 0; i < Proxy.Count; i++)
             {
                 if (Proxy[i] is AssetProxy proxy && proxy.AcceptsAsset(typeName, path))
+                {
+                    return proxy;
+                }
+            }
+
+            return null;
+        }
+        /// <summary>
+        /// Gets the virtual proxy object from given path.
+        /// <br></br>use case if the asset u trying to display is not a flax asset but u like to add custom functionality
+        /// <br></br>to context menu,or display it the asset
+        /// </summary>
+        /// <param name="path">The asset path.</param>
+        /// <returns>Asset proxy or null if cannot find.</returns>
+        public AssetProxy GetAssetVirtuallProxy(string path)
+        {
+            for (int i = 0; i < Proxy.Count; i++)
+            {
+                if (Proxy[i] is AssetProxy proxy && proxy.IsVirtualProxy() && path.EndsWith(proxy.FileExtension, StringComparison.OrdinalIgnoreCase))
                 {
                     return proxy;
                 }
@@ -361,7 +392,6 @@ namespace FlaxEditor.Modules
                 // Note: we use content backend because file may be in use or sth, it's safe
                 if (FlaxEngine.Content.RenameAsset(oldPath, newPath))
                 {
-                    // Error
                     Editor.LogError(string.Format("Cannot rename asset \'{0}\' to \'{1}\'", oldPath, newPath));
                     return true;
                 }
@@ -375,7 +405,6 @@ namespace FlaxEditor.Modules
                 }
                 catch (Exception ex)
                 {
-                    // Error
                     Editor.LogWarning(ex);
                     Editor.LogError(string.Format("Cannot rename asset \'{0}\' to \'{1}\'", oldPath, newPath));
                     return true;
@@ -406,7 +435,6 @@ namespace FlaxEditor.Modules
                 }
                 catch (Exception ex)
                 {
-                    // Error
                     Editor.LogWarning(ex);
                     Editor.LogError(string.Format("Cannot move folder \'{0}\' to \'{1}\'", oldPath, newPath));
                     return;
@@ -467,7 +495,6 @@ namespace FlaxEditor.Modules
 
             if (item.IsFolder && Directory.Exists(newPath))
             {
-                // Error
                 MessageBox.Show("Cannot move folder. Target location already exists.");
                 return;
             }
@@ -477,7 +504,6 @@ namespace FlaxEditor.Modules
             var newParent = Find(newDirPath) as ContentFolder;
             if (newParent == null)
             {
-                // Error
                 MessageBox.Show("Cannot move item. Missing target location.");
                 return;
             }
@@ -499,7 +525,6 @@ namespace FlaxEditor.Modules
                     }
                     catch (Exception ex)
                     {
-                        // Error
                         Editor.LogWarning(ex);
                         Editor.LogError(string.Format("Cannot move folder \'{0}\' to \'{1}\'", oldPath, newPath));
                         return;
@@ -519,7 +544,6 @@ namespace FlaxEditor.Modules
                     }
                     catch (Exception ex)
                     {
-                        // Error
                         Editor.LogWarning(ex);
                         Editor.LogWarning(string.Format("Cannot remove folder \'{0}\'", oldPath));
                         return;
@@ -554,7 +578,6 @@ namespace FlaxEditor.Modules
         {
             if (item == null || !item.Exists)
             {
-                // Error
                 MessageBox.Show("Cannot move item. It's missing.");
                 return;
             }
@@ -578,7 +601,6 @@ namespace FlaxEditor.Modules
                         }
                         catch (Exception ex)
                         {
-                            // Error
                             Editor.LogWarning(ex);
                             Editor.LogError(string.Format("Cannot copy folder \'{0}\' to \'{1}\'", sourcePath, targetPath));
                             return;
@@ -603,7 +625,6 @@ namespace FlaxEditor.Modules
                         // Note: we use content backend because file may be in use or sth, it's safe
                         if (Editor.ContentEditing.CloneAssetFile(sourcePath, targetPath, Guid.NewGuid()))
                         {
-                            // Error
                             Editor.LogError(string.Format("Cannot copy asset \'{0}\' to \'{1}\'", sourcePath, targetPath));
                             return;
                         }
@@ -617,7 +638,6 @@ namespace FlaxEditor.Modules
                         }
                         catch (Exception ex)
                         {
-                            // Error
                             Editor.LogWarning(ex);
                             Editor.LogError(string.Format("Cannot copy asset \'{0}\' to \'{1}\'", sourcePath, targetPath));
                             return;
@@ -631,7 +651,8 @@ namespace FlaxEditor.Modules
         /// Deletes the specified item.
         /// </summary>
         /// <param name="item">The item.</param>
-        public void Delete(ContentItem item)
+        /// <param name="deletedByUser">If the file was deleted by the user and not outside the editor.</param>
+        public void Delete(ContentItem item, bool deletedByUser = false)
         {
             if (item == null)
                 throw new ArgumentNullException();
@@ -647,28 +668,28 @@ namespace FlaxEditor.Modules
             // Special case for folders
             if (item is ContentFolder folder)
             {
-                // TODO: maybe don't remove folders recursive but at once?
-
                 // Delete all children
                 if (folder.Children.Count > 0)
                 {
                     var children = folder.Children.ToArray();
                     for (int i = 0; i < children.Length; i++)
                     {
-                        Delete(children[0]);
+                        Delete(children[i], deletedByUser);
                     }
                 }
 
                 // Remove directory
-                if (Directory.Exists(path))
+                if (deletedByUser && Directory.Exists(path))
                 {
+                    // Flush files removal before removing folder (loaded assets remove file during object destruction in Asset::OnDeleteObject)
+                    FlaxEngine.Scripting.FlushRemovedObjects();
+
                     try
                     {
                         Directory.Delete(path, true);
                     }
                     catch (Exception ex)
                     {
-                        // Error
                         Editor.LogWarning(ex);
                         Editor.LogWarning(string.Format("Cannot remove folder \'{0}\'", path));
                         return;
@@ -689,7 +710,7 @@ namespace FlaxEditor.Modules
                     // Delete asset by using content pool
                     FlaxEngine.Content.DeleteAsset(path);
                 }
-                else
+                else if (deletedByUser)
                 {
                     // Delete file
                     if (File.Exists(path))
@@ -707,37 +728,161 @@ namespace FlaxEditor.Modules
                 WorkspaceModified?.Invoke();
         }
 
+        /// <summary>
+        /// Adds the proxy.
+        /// </summary>
+        /// <param name="proxy">The proxy type.</param>
+        /// <param name="rebuild">Should rebuild entire database after addition.</param>
+        public void AddProxy(ContentProxy proxy, bool rebuild = false)
+        {
+            Proxy.Insert(0, proxy);
+            if (rebuild)
+                Rebuild();
+        }
+
+        /// <summary>
+        /// Removes the proxy.
+        /// </summary>
+        /// <param name="proxy">The proxy type.</param>
+        /// <param name="rebuild">Should rebuild entire database after removal.</param>
+        public void RemoveProxy(ContentProxy proxy, bool rebuild = false)
+        {
+            Proxy.Remove(proxy);
+            if (rebuild)
+                Rebuild();
+        }
+
+        /// <summary>
+        /// Rebuilds the whole database (eg. when adding custom item types from plugin).
+        /// </summary>
+        /// <param name="immediate">True if rebuild now, otherwise will be scheduled for the next editor update (eg. to batch multiple rebuilds within a frame).</param>
+        public void Rebuild(bool immediate = false)
+        {
+            _rebuildFlag = true;
+            if (immediate)
+                RebuildInternal();
+        }
+
+        private void RebuildInternal()
+        {
+            var enableEvents = _enableEvents;
+            if (enableEvents)
+            {
+                WorkspaceRebuilding?.Invoke();
+            }
+
+            Profiler.BeginEvent("ContentDatabase.Rebuild");
+            var startTime = Platform.TimeSeconds;
+            _rebuildFlag = false;
+            _enableEvents = false;
+
+            // Load all folders
+            // TODO: we should create async task for gathering content and whole workspace contents if it takes too long
+            // TODO: create progress bar in content window and after end we should enable events and update it
+            _isDuringFastSetup = true;
+            var startItems = _itemsCreated;
+            foreach (var project in Projects)
+            {
+                if (project.Content != null)
+                    LoadFolder(project.Content, true);
+                if (project.Source != null)
+                    LoadFolder(project.Source, true);
+            }
+            _isDuringFastSetup = false;
+
+            _enableEvents = enableEvents;
+            var endTime = Platform.TimeSeconds;
+            Editor.Log(string.Format("Project database created in {0} ms. Items count: {1}", (int)((endTime - startTime) * 1000.0), _itemsCreated - startItems));
+            Profiler.EndEvent();
+
+            if (enableEvents)
+            {
+                WorkspaceModified?.Invoke();
+                WorkspaceRebuilt?.Invoke();
+            }
+        }
+
+        private void Dispose(ContentItem item)
+        {
+            if (_enableEvents)
+                ItemRemoved?.Invoke(item);
+
+            if (item is ContentFolder folder)
+            {
+                if (folder.Children.Count > 0)
+                {
+                    var children = folder.Children.ToArray();
+                    for (int i = 0; i < children.Length; i++)
+                        Dispose(children[i]);
+                }
+
+                item.ParentFolder = null;
+                folder.Node.Dispose();
+            }
+            else
+            {
+                item.ParentFolder = null;
+                item.Dispose();
+            }
+        }
+
         private void LoadFolder(ContentTreeNode node, bool checkSubDirs)
         {
             if (node == null)
                 return;
-
-            // Temporary data
             var folder = node.Folder;
             var path = folder.Path;
+            var canHaveAssets = node.CanHaveAssets;
 
-            // Check for missing files/folders (skip it during fast tree setup)
-            if (!_isDuringFastSetup)
+            if (_isDuringFastSetup)
             {
+                // Remove any spawned children
+                for (int i = 0; i < folder.Children.Count; i++)
+                {
+                    Dispose(folder.Children[i]);
+                    i--;
+                }
+            }
+            else
+            {
+                // Check for missing files/folders (skip it during fast tree setup)
                 for (int i = 0; i < folder.Children.Count; i++)
                 {
                     var child = folder.Children[i];
                     if (!child.Exists)
                     {
-                        // Send info
+                        // Item doesn't exist anymore
                         Editor.Log(string.Format($"Content item \'{child.Path}\' has been removed"));
-
-                        // Destroy it
-                        Delete(child);
-
+                        Delete(child, false);
                         i--;
+                    }
+                    else if (canHaveAssets && child is AssetItem childAsset)
+                    {
+                        // Check if asset type doesn't match the item proxy (eg. item reimported as Material Instance instead of Material)
+                        if (FlaxEngine.Content.GetAssetInfo(child.Path, out var assetInfo))
+                        {
+                            bool changed = assetInfo.ID != childAsset.ID;
+                            if (!changed && assetInfo.TypeName != childAsset.TypeName)
+                            {
+                                // Use proxy check (eg. scene asset might accept different typename than AssetInfo reports)
+                                var proxy = GetAssetProxy(childAsset.TypeName, child.Path);
+                                if (proxy == null)
+                                    proxy = GetAssetProxy(assetInfo.TypeName, child.Path);
+                                changed = !proxy.AcceptsAsset(assetInfo.TypeName, child.Path);
+                            }
+                            if (changed)
+                            {
+                                OnAssetTypeInfoChanged(childAsset, ref assetInfo);
+                                i--;
+                            }
+                        }
                     }
                 }
             }
 
             // Find files
             var files = Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly);
-            if (node.CanHaveAssets)
+            if (canHaveAssets)
             {
                 LoadAssets(node, files);
             }
@@ -783,6 +928,23 @@ namespace FlaxEditor.Modules
             }
             if (sortChildren)
                 node.SortChildren();
+
+            // Ignore some special folders
+            if (node is MainContentTreeNode mainNode && mainNode.Folder.ShortName == "Source")
+            {
+                var mainNodeChild = mainNode.Folder.Find(StringUtils.CombinePaths(mainNode.Path, "obj")) as ContentFolder;
+                if (mainNodeChild != null)
+                {
+                    mainNodeChild.Visible = false;
+                    mainNodeChild.Node.Visible = false;
+                }
+                mainNodeChild = mainNode.Folder.Find(StringUtils.CombinePaths(mainNode.Path, "Properties")) as ContentFolder;
+                if (mainNodeChild != null)
+                {
+                    mainNodeChild.Visible = false;
+                    mainNodeChild.Node.Visible = false;
+                }
+            }
         }
 
         private void LoadScripts(ContentTreeNode parent, string[] files)
@@ -794,6 +956,11 @@ namespace FlaxEditor.Modules
                 // Check if node already has that element (skip during init when we want to walk project dir very fast)
                 if (_isDuringFastSetup || !parent.Folder.ContainsChild(path))
                 {
+#if PLATFORM_MAC
+                    if (path.EndsWith(".DS_Store", StringComparison.Ordinal))
+                        continue;
+#endif
+
                     // Create file item
                     ContentItem item;
                     if (path.EndsWith(".cs"))
@@ -835,6 +1002,11 @@ namespace FlaxEditor.Modules
                 // Check if node already has that element (skip during init when we want to walk project dir very fast)
                 if (_isDuringFastSetup || !parent.Folder.ContainsChild(path))
                 {
+#if PLATFORM_MAC
+                    if (path.EndsWith(".DS_Store", StringComparison.Ordinal))
+                        continue;
+#endif
+
                     // Create file item
                     ContentItem item = null;
                     if (FlaxEngine.Content.GetAssetInfo(path, out var assetInfo))
@@ -843,7 +1015,14 @@ namespace FlaxEditor.Modules
                         item = proxy?.ConstructItem(path, assetInfo.TypeName, ref assetInfo.ID);
                     }
                     if (item == null)
-                        item = new FileItem(path);
+                    {
+                        var proxy = GetAssetVirtuallProxy(path);
+                        item = proxy?.ConstructItem(path, assetInfo.TypeName, ref assetInfo.ID);
+                        if (item == null)
+                        {
+                            item = new FileItem(path);
+                        }
+                    }
 
                     // Link
                     item.ParentFolder = parent.Folder;
@@ -925,6 +1104,7 @@ namespace FlaxEditor.Modules
             Proxy.Add(new SkeletonMaskProxy());
             Proxy.Add(new GameplayGlobalsProxy());
             Proxy.Add(new VisualScriptProxy());
+            Proxy.Add(new BehaviorTreeProxy());
             Proxy.Add(new LocalizedStringTableProxy());
             Proxy.Add(new FileProxy());
             Proxy.Add(new SpawnableJsonAssetProxy<PhysicalMaterial>());
@@ -935,6 +1115,7 @@ namespace FlaxEditor.Modules
             Proxy.Add(new SettingsProxy(typeof(LayersAndTagsSettings), Editor.Instance.Icons.LayersTagsSettings128));
             Proxy.Add(new SettingsProxy(typeof(PhysicsSettings), Editor.Instance.Icons.PhysicsSettings128));
             Proxy.Add(new SettingsProxy(typeof(GraphicsSettings), Editor.Instance.Icons.GraphicsSettings128));
+            Proxy.Add(new SettingsProxy(typeof(NetworkSettings), Editor.Instance.Icons.Document128));
             Proxy.Add(new SettingsProxy(typeof(NavigationSettings), Editor.Instance.Icons.NavigationSettings128));
             Proxy.Add(new SettingsProxy(typeof(LocalizationSettings), Editor.Instance.Icons.LocalizationSettings128));
             Proxy.Add(new SettingsProxy(typeof(AudioSettings), Editor.Instance.Icons.AudioSettings128));
@@ -945,6 +1126,8 @@ namespace FlaxEditor.Modules
             Proxy.Add(new SettingsProxy(typeof(UWPPlatformSettings), Editor.Instance.Icons.UWPSettings128));
             Proxy.Add(new SettingsProxy(typeof(LinuxPlatformSettings), Editor.Instance.Icons.LinuxSettings128));
             Proxy.Add(new SettingsProxy(typeof(AndroidPlatformSettings), Editor.Instance.Icons.AndroidSettings128));
+            Proxy.Add(new SettingsProxy(typeof(MacPlatformSettings), Editor.Instance.Icons.AppleSettings128));
+            Proxy.Add(new SettingsProxy(typeof(iOSPlatformSettings), Editor.Instance.Icons.AppleSettings128));
 
             var typePS4PlatformSettings = TypeUtils.GetManagedType(GameSettings.PS4PlatformSettingsTypename);
             if (typePS4PlatformSettings != null)
@@ -962,11 +1145,14 @@ namespace FlaxEditor.Modules
             if (typeSwitchPlatformSettings != null)
                 Proxy.Add(new SettingsProxy(typeSwitchPlatformSettings, Editor.Instance.Icons.SwitchSettings128));
 
+            var typePS5PlatformSettings = TypeUtils.GetManagedType(GameSettings.PS5PlatformSettingsTypename);
+            if (typePS5PlatformSettings != null)
+                Proxy.Add(new SettingsProxy(typePS5PlatformSettings, Editor.Instance.Icons.PlaystationSettings128));
+
             // Last add generic json (won't override other json proxies)
             Proxy.Add(new GenericJsonAssetProxy());
 
             // Create content folders nodes
-            var startTime = Platform.TimeSeconds;
             Engine = new ProjectTreeNode(Editor.EngineProject)
             {
                 Content = new MainContentTreeNode(Engine, ContentFolderType.Content, Globals.EngineContentFolder),
@@ -990,34 +1176,21 @@ namespace FlaxEditor.Modules
                 LoadProjects(Game.Project);
             }
 
-            // Load all folders
-            // TODO: we should create async task for gathering content and whole workspace contents if it takes too long
-            // TODO: create progress bar in content window and after end we should enable events and update it
-            _isDuringFastSetup = true;
-            foreach (var project in Projects)
+            RebuildInternal();
+
+            Editor.ContentImporting.ImportFileEnd += (obj, failed) =>
             {
-                if (project.Content != null)
-                    LoadFolder(project.Content, true);
-                if (project.Source != null)
-                    LoadFolder(project.Source, true);
-            }
-            _isDuringFastSetup = false;
-
-            // Enable events
+                var path = obj.ResultUrl;
+                if (!failed)
+                    FlaxEngine.Scripting.InvokeOnUpdate(() => OnImportFileDone(path));
+            };
             _enableEvents = true;
-            Editor.ContentImporting.ImportFileEnd += ContentImporting_ImportFileDone;
-            var endTime = Platform.TimeSeconds;
-
-            Editor.Log(string.Format("Project database created in {0} ms. Items count: {1}", (int)((endTime - startTime) * 1000.0), _itemsCreated));
         }
 
-        private void ContentImporting_ImportFileDone(IFileEntryAction obj, bool failed)
+        private void OnImportFileDone(string path)
         {
-            if (failed)
-                return;
-
             // Check if already has that element
-            var item = Find(obj.ResultUrl);
+            var item = Find(path);
             if (item is BinaryAssetItem binaryAssetItem)
             {
                 // Get asset info from the registry (content layer will update cache it just after import)
@@ -1027,19 +1200,8 @@ namespace FlaxEditor.Modules
                     // For eg. change texture to sprite atlas on reimport
                     if (binaryAssetItem.TypeName != assetInfo.TypeName)
                     {
-                        // Asset type has been changed!
-                        Editor.LogWarning(string.Format("Asset \'{0}\' changed type from {1} to {2}", item.Path, binaryAssetItem.TypeName, assetInfo.TypeName));
-                        Editor.Windows.CloseAllEditors(item);
-
-                        // Remove this item from the database and some related data
                         var toRefresh = binaryAssetItem.ParentFolder;
-                        binaryAssetItem.Dispose();
-                        toRefresh.Children.Remove(binaryAssetItem);
-                        if (!binaryAssetItem.HasDefaultThumbnail)
-                        {
-                            // Delete old thumbnail and remove it from the cache
-                            Editor.Instance.Thumbnails.DeletePreview(binaryAssetItem);
-                        }
+                        OnAssetTypeInfoChanged(binaryAssetItem, ref assetInfo);
 
                         // Refresh the parent folder to find the new asset (it should have different type or some other format)
                         RefreshFolder(toRefresh, false);
@@ -1056,6 +1218,23 @@ namespace FlaxEditor.Modules
             }
         }
 
+        private void OnAssetTypeInfoChanged(AssetItem assetItem, ref AssetInfo assetInfo)
+        {
+            // Asset type has been changed!
+            Editor.LogWarning(string.Format("Asset \'{0}\' changed type from {1} to {2}", assetItem.Path, assetItem.TypeName, assetInfo.TypeName));
+            Editor.Windows.CloseAllEditors(assetItem);
+
+            // Remove this item from the database and some related data
+            assetItem.Dispose();
+            assetItem.ParentFolder.Children.Remove(assetItem);
+
+            // Delete old thumbnail and remove it from the cache
+            if (!assetItem.HasDefaultThumbnail)
+            {
+                Editor.Instance.Thumbnails.DeletePreview(assetItem);
+            }
+        }
+
         internal void OnDirectoryEvent(MainContentTreeNode node, FileSystemEventArgs e)
         {
             // Ensure to be ready for external events
@@ -1069,6 +1248,7 @@ namespace FlaxEditor.Modules
             {
             case WatcherChangeTypes.Created:
             case WatcherChangeTypes.Deleted:
+            case WatcherChangeTypes.Renamed:
             {
                 lock (_dirtyNodes)
                 {
@@ -1094,6 +1274,10 @@ namespace FlaxEditor.Modules
                 }
                 _dirtyNodes.Clear();
             }
+
+            // Lazy-rebuilds
+            if (_rebuildFlag)
+                RebuildInternal();
         }
 
         /// <inheritdoc />

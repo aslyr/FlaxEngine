@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using FlaxEditor.GUI.Drag;
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -112,13 +113,24 @@ namespace FlaxEditor.Content
         public override ContentItemSearchFilter SearchFilter => ContentItemSearchFilter.Other;
 
         /// <inheritdoc />
-        public override bool CanRename => ParentFolder != null; // Deny rename action for root folders
+        public override bool CanRename
+        {
+            get
+            {
+                var hasParentFolder = ParentFolder != null;
+                var isContentFolder = Node is MainContentTreeNode;
+                return hasParentFolder && !isContentFolder;
+            }
+        }
 
         /// <inheritdoc />
         public override bool CanDrag => ParentFolder != null; // Deny rename action for root folders
 
         /// <inheritdoc />
         public override bool Exists => Directory.Exists(Path);
+
+        /// <inheritdoc />
+        public override string TypeDescription => "Folder";
 
         /// <inheritdoc />
         public override SpriteHandle DefaultThumbnail => Editor.Instance.Icons.Folder128;
@@ -135,9 +147,10 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        protected override void UpdateTooltipText()
+        protected override void OnBuildTooltipText(StringBuilder sb)
         {
-            TooltipText = Path;
+            sb.Append("Type: ").Append(TypeDescription).AppendLine();
+            sb.Append("Path: ").Append(Utilities.Utils.GetAssetNamePathWithExt(Path)).AppendLine();
         }
 
         /// <inheritdoc />
@@ -228,7 +241,7 @@ namespace FlaxEditor.Content
 
             // Check if drag is over
             if (IsDragOver && _validDragOver)
-                Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), Style.Current.BackgroundSelected * 0.6f);
+                Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), Style.Current.BackgroundSelected * 0.6f);
         }
 
         private bool ValidateDragItem(ContentItem item)
@@ -238,7 +251,7 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragEnter(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragEnter(ref Float2 location, DragData data)
         {
             base.OnDragEnter(ref location, data);
 
@@ -258,7 +271,7 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragMove(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragMove(ref Float2 location, DragData data)
         {
             base.OnDragMove(ref location, data);
 
@@ -268,7 +281,7 @@ namespace FlaxEditor.Content
         }
 
         /// <inheritdoc />
-        public override DragDropEffect OnDragDrop(ref Vector2 location, DragData data)
+        public override DragDropEffect OnDragDrop(ref Float2 location, DragData data)
         {
             var result = base.OnDragDrop(ref location, data);
 

@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI;
+using FlaxEditor.GUI.ContextMenu;
 using FlaxEditor.GUI.Input;
 using FlaxEngine;
 using FlaxEngine.GUI;
@@ -18,7 +19,7 @@ namespace FlaxEditor.Surface
     {
         private Rectangle _colorButtonRect;
         private Rectangle _resizeButtonRect;
-        private Vector2 _startResizingSize;
+        private Float2 _startResizingSize;
 
         /// <summary>
         /// True if sizing tool is in use.
@@ -46,10 +47,16 @@ namespace FlaxEditor.Surface
             set => SetValue(1, value, false);
         }
 
-        private Vector2 SizeValue
+        private Float2 SizeValue
         {
-            get => (Vector2)Values[2];
+            get => (Float2)Values[2];
             set => SetValue(2, value, false);
+        }
+
+        private int OrderValue
+        {
+            get => (int)Values[3];
+            set => SetValue(3, value, false);
         }
 
         /// <inheritdoc />
@@ -59,23 +66,40 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override void OnSurfaceLoaded()
+        public override void OnSurfaceLoaded(SurfaceNodeActions action)
         {
-            base.OnSurfaceLoaded();
+            base.OnSurfaceLoaded(action);
 
             // Read node data
             Title = TitleValue;
             Color = ColorValue;
             Size = SizeValue;
+
+            // Order
+            // Backwards compatibility - When opening with an older version send the old comments to the back
+            if (Values.Length < 4)
+            {
+                if (IndexInParent > 0)
+                    IndexInParent = 0;
+                OrderValue = IndexInParent;
+            }
+            else if(OrderValue != -1)
+            {
+                IndexInParent = OrderValue;
+            }
         }
 
         /// <inheritdoc />
-        public override void OnSpawned()
+        public override void OnSpawned(SurfaceNodeActions action)
         {
-            base.OnSpawned();
+            base.OnSpawned(action);
 
             // Randomize color
             Color = ColorValue = Color.FromHSV(new Random().NextFloat(0, 360), 0.7f, 0.25f, 0.8f);
+
+            if(OrderValue == -1)
+                OrderValue = Context.CommentCount - 1;
+            IndexInParent = OrderValue;
         }
 
         /// <inheritdoc />
@@ -104,7 +128,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override bool CanSelect(ref Vector2 location)
+        public override bool CanSelect(ref Float2 location)
         {
             return _headerRect.MakeOffsetted(Location).Contains(ref location) && !_resizeButtonRect.MakeOffsetted(Location).Contains(ref location);
         }
@@ -132,13 +156,13 @@ namespace FlaxEditor.Surface
         {
             var style = Style.Current;
             var color = Color;
-            var backgroundRect = new Rectangle(Vector2.Zero, Size);
+            var backgroundRect = new Rectangle(Float2.Zero, Size);
             var headerColor = new Color(Mathf.Clamp(color.R, 0.1f, 0.3f), Mathf.Clamp(color.G, 0.1f, 0.3f), Mathf.Clamp(color.B, 0.1f, 0.3f), 0.4f);
             if (IsSelected)
                 headerColor *= 2.0f;
 
             // Paint background
-            Render2D.FillRectangle(new Rectangle(Vector2.Zero, Size), BackgroundColor);
+            Render2D.FillRectangle(new Rectangle(Float2.Zero, Size), BackgroundColor);
 
             // Draw child controls
             DrawChildren();
@@ -174,7 +198,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        protected override Vector2 CalculateNodeSize(float width, float height)
+        protected override Float2 CalculateNodeSize(float width, float height)
         {
             return Size;
         }
@@ -207,13 +231,13 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override bool ContainsPoint(ref Vector2 location)
+        public override bool ContainsPoint(ref Float2 location)
         {
             return _headerRect.Contains(ref location) || _resizeButtonRect.Contains(ref location);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDown(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
             if (base.OnMouseDown(location, button))
                 return true;
@@ -233,13 +257,13 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override void OnMouseMove(Vector2 location)
+        public override void OnMouseMove(Float2 location)
         {
             // Check if is resizing
             if (_isResizing)
             {
                 // Update size
-                Size = Vector2.Max(location, new Vector2(140.0f, _headerRect.Bottom));
+                Size = Float2.Max(location, new Float2(140.0f, _headerRect.Bottom));
             }
             else
             {
@@ -249,7 +273,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override bool OnMouseDoubleClick(Vector2 location, MouseButton button)
+        public override bool OnMouseDoubleClick(Float2 location, MouseButton button)
         {
             if (base.OnMouseDoubleClick(location, button))
                 return true;
@@ -281,7 +305,7 @@ namespace FlaxEditor.Surface
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseUp(Float2 location, MouseButton button)
         {
             if (button == MouseButton.Left && _isResizing)
             {
@@ -313,6 +337,39 @@ namespace FlaxEditor.Surface
         {
             Color = ColorValue = color;
             Surface.MarkAsEdited(false);
+        }
+
+        /// <inheritdoc />
+        public override void OnShowSecondaryContextMenu(FlaxEditor.GUI.ContextMenu.ContextMenu menu, Float2 location)
+        {
+            base.OnShowSecondaryContextMenu(menu, location);
+
+            menu.AddSeparator();
+            ContextMenuChildMenu cmOrder = menu.AddChildMenu("Order");
+            {
+                cmOrder.ContextMenu.AddButton("Bring Forward", () =>
+                {
+                    if(IndexInParent < Context.CommentCount-1) 
+                        IndexInParent++;
+                    OrderValue = IndexInParent;
+                });
+                cmOrder.ContextMenu.AddButton("Bring to Front", () =>
+                {
+                    IndexInParent = Context.CommentCount-1;
+                    OrderValue = IndexInParent;
+                });
+                cmOrder.ContextMenu.AddButton("Send Backward", () =>
+                {
+                    if(IndexInParent > 0) 
+                        IndexInParent--;
+                    OrderValue = IndexInParent;
+                });
+                cmOrder.ContextMenu.AddButton("Send to Back", () =>
+                {
+                    IndexInParent = 0;
+                    OrderValue = IndexInParent;
+                });
+            }
         }
     }
 }

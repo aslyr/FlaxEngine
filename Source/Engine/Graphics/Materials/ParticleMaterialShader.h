@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,12 +10,14 @@
 class ParticleMaterialShader : public MaterialShader
 {
 private:
-
     struct Cache
     {
         PipelineStateCache Default;
         PipelineStateCache Depth;
         PipelineStateCache Distortion;
+#if USE_EDITOR
+        PipelineStateCache QuadOverdraw;
+#endif
 
         FORCE_INLINE PipelineStateCache* GetPS(const DrawPass pass)
         {
@@ -27,6 +29,10 @@ private:
                 return &Distortion;
             case DrawPass::Forward:
                 return &Default;
+#if USE_EDITOR
+            case DrawPass::QuadOverdraw:
+                return &QuadOverdraw;
+#endif
             default:
                 return nullptr;
             }
@@ -37,11 +43,13 @@ private:
             Default.Release();
             Depth.Release();
             Distortion.Release();
+#if USE_EDITOR
+            QuadOverdraw.Release();
+#endif
         }
     };
 
 private:
-
     Cache _cacheSprite;
     Cache _cacheModel;
     Cache _cacheRibbon;
@@ -49,7 +57,6 @@ private:
     DrawPass _drawModes = DrawPass::None;
 
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -60,14 +67,12 @@ public:
     }
 
 public:
-
     // [MaterialShader]
     DrawPass GetDrawModes() const override;
     void Bind(BindParameters& params) override;
     void Unload() override;
 
 protected:
-
     // [MaterialShader]
     bool Load() override;
 };

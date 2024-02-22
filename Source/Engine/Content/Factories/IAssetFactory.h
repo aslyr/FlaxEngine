@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -15,7 +15,6 @@ class IAssetUpgrader;
 class FLAXENGINE_API IAssetFactory
 {
 public:
-
     typedef Dictionary<StringView, IAssetFactory*> Collection;
 
     /// <summary>
@@ -28,7 +27,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="IAssetFactory"/> class.
     /// </summary>
@@ -37,7 +35,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Determines whenever the virtual assets are supported by this asset tpe factory.
     /// </summary>

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_VULKAN
 
@@ -6,8 +6,10 @@
 #include "GPUBufferVulkan.h"
 #include "GPUContextVulkan.h"
 #include "RenderToolsVulkan.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
 #include "Engine/Graphics/Textures/TextureData.h"
+#include "Engine/Scripting/Enums.h"
 
 void GPUTextureViewVulkan::Init(GPUDeviceVulkan* device, ResourceOwnerVulkan* owner, VkImage image, int32 totalMipLevels, PixelFormat format, MSAALevel msaa, VkExtent3D extent, VkImageViewType viewType, int32 mipLevels, int32 firstMipIndex, int32 arraySize, int32 firstArraySlice, bool readOnlyDepth)
 {
@@ -238,6 +240,11 @@ bool GPUTextureVulkan::OnInit()
     if (useDSV)
         format = PixelFormatExtensions::FindDepthStencilFormat(format);
     _desc.Format = _device->GetClosestSupportedPixelFormat(format, _desc.Flags, optimalTiling);
+    if (_desc.Format == PixelFormat::Unknown)
+    {
+        LOG(Error, "Unsupported texture format {0}.", ScriptingEnum::ToString(format));
+        return true;
+    }
 
     // Setup texture description
     VkImageCreateInfo imageInfo;
@@ -265,6 +272,11 @@ bool GPUTextureVulkan::OnInit()
         imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (useUAV)
         imageInfo.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+#if PLATFORM_MAC || PLATFORM_IOS
+    // MoltenVK: VK_ERROR_FEATURE_NOT_PRESENT: vkCreateImageView(): 2D views on 3D images can only be used as color attachments.
+    if (IsVolume() && _desc.HasPerSliceViews())
+        imageInfo.usage &= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+#endif
     imageInfo.tiling = optimalTiling ? VK_IMAGE_TILING_OPTIMAL : VK_IMAGE_TILING_LINEAR;
     imageInfo.samples = (VkSampleCountFlagBits)MultiSampleLevel();
     // TODO: set initialLayout to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL for IsRegularTexture() ???
@@ -409,35 +421,25 @@ void GPUTextureVulkan::initHandles()
     }
 
     // Read-only depth-stencil
-    if (_desc.Flags & GPUTextureFlags::ReadOnlyDepthView)
+    if (EnumHasAnyFlags(_desc.Flags, GPUTextureFlags::ReadOnlyDepthView))
     {
         _handleReadOnlyDepth.Init(_device, this, _image, mipLevels, format, msaa, extent, VK_IMAGE_VIEW_TYPE_2D, mipLevels, 0, 1, 0, true);
     }
 }
 
-void GPUTextureVulkan::onResidentMipsChanged()
+void GPUTextureVulkan::OnResidentMipsChanged()
 {
-    // We support changing resident mip maps only for regular textures (render targets and depth buffers don't use that feature at all)
-    ASSERT(IsRegularTexture() && _handlesPerSlice.Count() == 1);
-    ASSERT(!IsVolume());
-
-    // Change view
-    auto& handle = _handlesPerSlice[0];
-    handle.Release();
+    // Update view
     VkExtent3D extent;
     extent.width = Width();
     extent.height = Height();
     extent.depth = Depth();
     const int32 firstMipIndex = MipLevels() - ResidentMipLevels();
     const int32 mipLevels = ResidentMipLevels();
-    if (IsCubeMap())
-    {
-        handle.Init(_device, this, _image, mipLevels, Format(), MultiSampleLevel(), extent, VK_IMAGE_VIEW_TYPE_CUBE, mipLevels, firstMipIndex, ArraySize());
-    }
-    else
-    {
-        handle.Init(_device, this, _image, mipLevels, Format(), MultiSampleLevel(), extent, VK_IMAGE_VIEW_TYPE_2D, mipLevels, firstMipIndex, ArraySize());
-    }
+    const VkImageViewType viewType = IsVolume() ? VK_IMAGE_VIEW_TYPE_3D : (IsCubeMap() ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D);
+    GPUTextureViewVulkan& view = IsVolume() ? _handleVolume : _handlesPerSlice[0];
+    view.Release();
+    view.Init(_device, this, _image, mipLevels, Format(), MultiSampleLevel(), extent, viewType, mipLevels, firstMipIndex, ArraySize());
 }
 
 void GPUTextureVulkan::OnReleaseGPU()

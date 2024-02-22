@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -37,12 +37,6 @@ public:
         return *this;
     }
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="GPUAdapterVulkan"/> class.
-    /// </summary>
-    /// <param name="gpu">The GPU device handle.</param>
-    GPUAdapterVulkan(VkPhysicalDevice gpu);
-
 public:
 
     /// <summary>
@@ -67,12 +61,14 @@ public:
     {
         return Gpu != VK_NULL_HANDLE;
     }
-
+    void* GetNativePtr() const override
+    {
+        return (void*)Gpu;
+    }
     uint32 GetVendorId() const override
     {
         return GpuProps.vendorID;
     }
-
     String GetDescription() const override
     {
         return Description;

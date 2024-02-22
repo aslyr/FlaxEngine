@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -51,6 +51,9 @@ namespace FlaxEditor.Modules.SourceCodeEditing
             case CodeEditorTypes.VS2019:
                 Name = "Visual Studio 2019";
                 break;
+            case CodeEditorTypes.VS2022:
+                Name = "Visual Studio 2022";
+                break;
             case CodeEditorTypes.VSCode:
                 Name = "Visual Studio Code";
                 break;
@@ -75,8 +78,8 @@ namespace FlaxEditor.Modules.SourceCodeEditing
                 switch (Type)
                 {
                 case CodeEditorTypes.VSCodeInsiders:
-                case CodeEditorTypes.VSCode: return "-vscode -vs2019";
-                case CodeEditorTypes.Rider: return "-vs2019";
+                case CodeEditorTypes.VSCode: return "-vscode -vs2022";
+                case CodeEditorTypes.Rider: return "-vs2022";
                 default: return null;
                 }
             }
@@ -106,6 +109,7 @@ namespace FlaxEditor.Modules.SourceCodeEditing
             case CodeEditorTypes.VS2015:
             case CodeEditorTypes.VS2017:
             case CodeEditorTypes.VS2019:
+            case CodeEditorTypes.VS2022:
                 // TODO: finish dynamic files adding to the project
                 //Editor.Instance.ProgressReporting.GenerateScriptsProjectFiles.RunAsync();
                 break;

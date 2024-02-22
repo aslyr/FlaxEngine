@@ -1,6 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using FlaxEditor.GUI.ContextMenu;
 using FlaxEditor.SceneGraph;
 using FlaxEngine;
@@ -26,6 +28,7 @@ namespace FlaxEditor.Windows
             bool hasSthSelected = Editor.SceneEditing.HasSthSelected;
             bool isSingleActorSelected = Editor.SceneEditing.SelectionCount == 1 && Editor.SceneEditing.Selection[0] is ActorNode;
             bool canEditScene = Editor.StateMachine.CurrentState.CanEditScene && Level.IsAnySceneLoaded;
+            var inputOptions = Editor.Options.Options.Input;
 
             // Create popup
 
@@ -44,63 +47,101 @@ namespace FlaxEditor.Windows
 
             if (hasSthSelected)
             {
-                contextMenu.AddButton(Editor.Windows.EditWin.IsPilotActorActive ? "Stop piloting actor" : "Pilot actor", Editor.UI.PilotActor);
+                contextMenu.AddButton(Editor.Windows.EditWin.IsPilotActorActive ? "Stop piloting actor" : "Pilot actor", inputOptions.PilotActor, Editor.UI.PilotActor);
             }
 
             contextMenu.AddSeparator();
 
             // Basic editing options
 
-            b = contextMenu.AddButton("Rename", Rename);
+            b = contextMenu.AddButton("Rename", inputOptions.Rename, Rename);
             b.Enabled = isSingleActorSelected;
 
-            b = contextMenu.AddButton("Duplicate", Editor.SceneEditing.Duplicate);
+            b = contextMenu.AddButton("Duplicate", inputOptions.Duplicate, Editor.SceneEditing.Duplicate);
             b.Enabled = hasSthSelected;
 
-            if (Editor.SceneEditing.SelectionCount == 1)
+            if (isSingleActorSelected)
             {
                 var convertMenu = contextMenu.AddChildMenu("Convert");
-                var convertActorCm = convertMenu.ContextMenu;
-                for (int i = 0; i < SpawnActorsGroups.Length; i++)
+                convertMenu.ContextMenu.AutoSort = true;
+                foreach (var actorType in Editor.CodeEditing.Actors.Get())
                 {
-                    var group = SpawnActorsGroups[i];
-
-                    if (group.Types.Length == 1)
+                    if (actorType.IsAbstract)
+                        continue;
+                    ActorContextMenuAttribute attribute = null;
+                    foreach (var e in actorType.GetAttributes(false))
                     {
-                        var type = group.Types[0].Value;
-                        convertActorCm.AddButton(group.Types[0].Key, () => Editor.SceneEditing.Convert(type));
-                    }
-                    else
-                    {
-                        var groupCm = convertActorCm.AddChildMenu(group.Name).ContextMenu;
-                        for (int j = 0; j < group.Types.Length; j++)
+                        if (e is ActorContextMenuAttribute actorContextMenuAttribute)
                         {
-                            var type = group.Types[j].Value;
-                            groupCm.AddButton(group.Types[j].Key, () => Editor.SceneEditing.Convert(type));
+                            attribute = actorContextMenuAttribute;
+                            break;
+                        }
+                    }
+                    if (attribute == null)
+                        continue;
+                    var parts = attribute.Path.Split('/');
+                    ContextMenuChildMenu childCM = convertMenu;
+                    bool mainCM = true;
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        var part = parts[i].Trim();
+                        if (i == parts.Length - 1)
+                        {
+                            if (mainCM)
+                            {
+                                convertMenu.ContextMenu.AddButton(part, () => Editor.SceneEditing.Convert(actorType.Type));
+                                mainCM = false;
+                            }
+                            else
+                            {
+                                childCM.ContextMenu.AddButton(part, () => Editor.SceneEditing.Convert(actorType.Type));
+                                childCM.ContextMenu.AutoSort = true;
+                            }
+                        }
+                        else
+                        {
+                            // Remove new path for converting menu
+                            if (parts[i] == "New")
+                                continue;
+
+                            if (mainCM)
+                            {
+                                childCM = convertMenu.ContextMenu.GetOrAddChildMenu(part);
+                                childCM.ContextMenu.AutoSort = true;
+                                mainCM = false;
+                            }
+                            else
+                            {
+                                childCM = childCM.ContextMenu.GetOrAddChildMenu(part);
+                                childCM.ContextMenu.AutoSort = true;
+                            }
                         }
                     }
                 }
             }
-            b = contextMenu.AddButton("Delete", Editor.SceneEditing.Delete);
+            b = contextMenu.AddButton("Delete", inputOptions.Delete, Editor.SceneEditing.Delete);
             b.Enabled = hasSthSelected;
 
             contextMenu.AddSeparator();
 
-            b = contextMenu.AddButton("Copy", Editor.SceneEditing.Copy);
+            b = contextMenu.AddButton("Copy", inputOptions.Copy, Editor.SceneEditing.Copy);
 
             b.Enabled = hasSthSelected;
-            contextMenu.AddButton("Paste", Editor.SceneEditing.Paste);
+            contextMenu.AddButton("Paste", inputOptions.Paste, Editor.SceneEditing.Paste);
 
-            b = contextMenu.AddButton("Cut", Editor.SceneEditing.Cut);
+            b = contextMenu.AddButton("Cut", inputOptions.Cut, Editor.SceneEditing.Cut);
             b.Enabled = canEditScene;
 
-            // Prefab options
+            // Create option
 
             contextMenu.AddSeparator();
+
+            b = contextMenu.AddButton("Create parent for selected actors", Editor.SceneEditing.CreateParentForSelectedActors);
+            b.Enabled = canEditScene && hasSthSelected;
 
             b = contextMenu.AddButton("Create Prefab", Editor.Prefabs.CreatePrefab);
             b.Enabled = isSingleActorSelected &&
-                        (Editor.SceneEditing.Selection[0] as ActorNode).CanCreatePrefab &&
+                        ((ActorNode)Editor.SceneEditing.Selection[0]).CanCreatePrefab &&
                         Editor.Windows.ContentWin.CurrentViewFolder.CanHaveAssets;
 
             bool hasPrefabLink = canEditScene && isSingleActorSelected && (Editor.SceneEditing.Selection[0] as ActorNode).HasPrefabLink;
@@ -110,28 +151,79 @@ namespace FlaxEditor.Windows
                 contextMenu.AddButton("Break Prefab Link", Editor.Prefabs.BreakLinks);
             }
 
+            // Load additional scenes option
+
+            if (!hasSthSelected)
+            {
+                var allScenes = FlaxEngine.Content.GetAllAssetsByType(typeof(SceneAsset));
+                var loadedSceneIds = Editor.Instance.Scene.Root.ChildNodes.Select(node => node.ID).ToList();
+                var unloadedScenes = allScenes.Where(sceneId => !loadedSceneIds.Contains(sceneId)).ToList();
+                if (unloadedScenes.Count > 0)
+                {
+                    contextMenu.AddSeparator();
+                    var childCM = contextMenu.GetOrAddChildMenu("Open Scene");
+                    foreach (var sceneGuid in unloadedScenes)
+                    {
+                        if (FlaxEngine.Content.GetAssetInfo(sceneGuid, out var unloadedScene))
+                        {
+                            var splitPath = unloadedScene.Path.Split('/');
+                            var sceneName = splitPath[^1];
+                            if (splitPath[^1].EndsWith(".scene"))
+                                sceneName = sceneName[..^6];
+                            childCM.ContextMenu.AddButton(sceneName, () => { Editor.Instance.Scene.OpenScene(sceneGuid, true); });
+                        }
+                    }
+                }
+            }
+
             // Spawning actors options
 
             contextMenu.AddSeparator();
 
-            var spawnMenu = contextMenu.AddChildMenu("New");
-            var newActorCm = spawnMenu.ContextMenu;
-            for (int i = 0; i < SpawnActorsGroups.Length; i++)
+            // go through each actor and add it to the context menu if it has the ActorContextMenu attribute
+            foreach (var actorType in Editor.CodeEditing.Actors.Get())
             {
-                var group = SpawnActorsGroups[i];
+                if (actorType.IsAbstract || !actorType.HasAttribute(typeof(ActorContextMenuAttribute), false))
+                    continue;
 
-                if (group.Types.Length == 1)
+                ActorContextMenuAttribute attribute = null;
+                foreach (var actorAttribute in actorType.GetAttributes(false))
                 {
-                    var type = group.Types[0].Value;
-                    newActorCm.AddButton(group.Types[0].Key, () => Spawn(type));
-                }
-                else
-                {
-                    var groupCm = newActorCm.AddChildMenu(group.Name).ContextMenu;
-                    for (int j = 0; j < group.Types.Length; j++)
+                    if (actorAttribute is ActorContextMenuAttribute actorContextMenuAttribute)
                     {
-                        var type = group.Types[j].Value;
-                        groupCm.AddButton(group.Types[j].Key, () => Spawn(type));
+                        attribute = actorContextMenuAttribute;
+                    }
+                }
+                var splitPath = attribute?.Path.Split('/');
+                ContextMenuChildMenu childCM = null;
+                bool mainCM = true;
+                for (int i = 0; i < splitPath?.Length; i++)
+                {
+                    if (i == splitPath.Length - 1)
+                    {
+                        if (mainCM)
+                        {
+                            contextMenu.AddButton(splitPath[i].Trim(), () => Spawn(actorType.Type));
+                            mainCM = false;
+                        }
+                        else
+                        {
+                            childCM?.ContextMenu.AddButton(splitPath[i].Trim(), () => Spawn(actorType.Type));
+                            childCM.ContextMenu.AutoSort = true;
+                        }
+                    }
+                    else
+                    {
+                        if (mainCM)
+                        {
+                            childCM = contextMenu.GetOrAddChildMenu(splitPath[i].Trim());
+                            mainCM = false;
+                        }
+                        else
+                        {
+                            childCM = childCM?.ContextMenu.GetOrAddChildMenu(splitPath[i].Trim());
+                        }
+                        childCM.ContextMenu.AutoSort = true;
                     }
                 }
             }
@@ -153,7 +245,7 @@ namespace FlaxEditor.Windows
             }
             if (showCustomNodeOptions)
             {
-                Editor.SceneEditing.Selection[0].OnContextMenu(contextMenu);
+                Editor.SceneEditing.Selection[0].OnContextMenu(contextMenu, this);
             }
 
             ContextMenuShow?.Invoke(contextMenu);
@@ -166,7 +258,7 @@ namespace FlaxEditor.Windows
         /// </summary>
         /// <param name="parent">The parent control.</param>
         /// <param name="location">The location (within a given control).</param>
-        private void ShowContextMenu(Control parent, Vector2 location)
+        private void ShowContextMenu(Control parent, Float2 location)
         {
             var contextMenu = CreateContextMenu();
 

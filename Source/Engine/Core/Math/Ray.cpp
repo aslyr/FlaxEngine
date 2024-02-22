@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Ray.h"
 #include "Matrix.h"
@@ -12,7 +12,7 @@ String Ray::ToString() const
     return String::Format(TEXT("{}"), *this);
 }
 
-Vector3 Ray::GetPoint(float distance) const
+Vector3 Ray::GetPoint(Real distance) const
 {
     return Position + Direction * distance;
 }

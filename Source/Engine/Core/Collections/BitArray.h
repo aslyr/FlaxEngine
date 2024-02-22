@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -13,20 +13,26 @@ template<typename AllocationType = HeapAllocation>
 API_CLASS(InBuild) class BitArray
 {
     friend BitArray;
-
 public:
-
     typedef uint64 ItemType;
     typedef typename AllocationType::template Data<ItemType> AllocationData;
 
 private:
-
     int32 _count;
     int32 _capacity;
     AllocationData _allocation;
 
-public:
+    FORCE_INLINE static int32 ToItemCount(int32 size)
+    {
+        return Math::DivideAndRoundUp<int32>(size, sizeof(ItemType));
+    }
 
+    FORCE_INLINE static int32 ToItemCapacity(int32 size)
+    {
+        return Math::Max<int32>(Math::DivideAndRoundUp<int32>(size, sizeof(ItemType)), 1);
+    }
+
+public:
     /// <summary>
     /// Initializes a new instance of the <see cref="BitArray"/> class.
     /// </summary>
@@ -45,18 +51,38 @@ public:
         , _capacity(capacity)
     {
         if (capacity > 0)
-            _allocation.Allocate(Math::Max<ItemType>(capacity / sizeof(ItemType), 1));
+            _allocation.Allocate(ToItemCapacity(capacity));
     }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="BitArray"/> class.
     /// </summary>
     /// <param name="other">The other collection to copy.</param>
-    BitArray(const BitArray& other)
+    BitArray(const BitArray& other) noexcept
     {
-        _count = _capacity = other._count;
+        _count = _capacity = other.Count();
         if (_capacity > 0)
-            _allocation.Allocate(Math::Max<ItemType>(_capacity / sizeof(ItemType), 1));
+        {
+            const int32 itemsCapacity = ToItemCapacity(_capacity);
+            _allocation.Allocate(itemsCapacity);
+            Platform::MemoryCopy(Get(), other.Get(), itemsCapacity * sizeof(ItemType));
+        }
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="BitArray"/> class.
+    /// </summary>
+    /// <param name="other">The other collection to copy.</param>
+    template<typename OtherAllocationType = AllocationType>
+    explicit BitArray(const BitArray<OtherAllocationType>& other) noexcept
+    {
+        _count = _capacity = other.Count();
+        if (_capacity > 0)
+        {
+            const int32 itemsCapacity = ToItemCapacity(_capacity);
+            _allocation.Allocate(itemsCapacity);
+            Platform::MemoryCopy(Get(), other.Get(), itemsCapacity * sizeof(ItemType));
+        }
     }
 
     /// <summary>
@@ -85,7 +111,9 @@ public:
             {
                 _allocation.Free();
                 _capacity = other._count;
-                _allocation.Allocate(Math::Max<ItemType>(_capacity / sizeof(ItemType), 1));
+                const int32 itemsCapacity = ToItemCapacity(_capacity);
+                _allocation.Allocate(itemsCapacity);
+                Platform::MemoryCopy(Get(), other.Get(), itemsCapacity * sizeof(ItemType));
             }
             _count = other._count;
         }
@@ -119,11 +147,9 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Gets the pointer to the bits storage data (linear allocation).
     /// </summary>
-    /// <returns>The data pointer.</returns>
     FORCE_INLINE ItemType* Get()
     {
         return _allocation.Get();
@@ -132,7 +158,6 @@ public:
     /// <summary>
     /// Gets the pointer to the bits storage data (linear allocation).
     /// </summary>
-    /// <returns>The data pointer.</returns>
     FORCE_INLINE const ItemType* Get() const
     {
         return _allocation.Get();
@@ -141,7 +166,6 @@ public:
     /// <summary>
     /// Gets the amount of the items in the collection.
     /// </summary>
-    /// <returns>The amount of items.</returns>
     FORCE_INLINE int32 Count() const
     {
         return _count;
@@ -150,7 +174,6 @@ public:
     /// <summary>
     /// Gets the amount of the items that can be contained by collection without resizing.
     /// </summary>
-    /// <returns>The collection capacity.</returns>
     FORCE_INLINE int32 Capacity() const
     {
         return _capacity;
@@ -159,7 +182,6 @@ public:
     /// <summary>
     /// Returns true if collection isn't empty.
     /// </summary>
-    /// <returns>True if collection isn't empty, otherwise false.</returns>
     FORCE_INLINE bool HasItems() const
     {
         return _count != 0;
@@ -168,7 +190,6 @@ public:
     /// <summary>
     /// Returns true if collection is empty.
     /// </summary>
-    /// <returns>True if collection is empty, otherwise false.</returns>
     FORCE_INLINE bool IsEmpty() const
     {
         return _count == 0;
@@ -203,7 +224,7 @@ public:
     /// </summary>
     /// <param name="index">The index of the item.</param>
     /// <param name="value">The value to set.</param>
-    void Set(int32 index, bool value) const
+    void Set(int32 index, bool value)
     {
         ASSERT(index >= 0 && index < _count);
         const ItemType offset = index / sizeof(ItemType);
@@ -216,7 +237,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Clear the collection without changing its capacity.
     /// </summary>
@@ -236,7 +256,7 @@ public:
             return;
         ASSERT(capacity >= 0);
         const int32 count = preserveContents ? (_count < capacity ? _count : capacity) : 0;
-        _allocation.Relocate(Math::Max<ItemType>(capacity / sizeof(ItemType), 1), _count / sizeof(ItemType), count / sizeof(ItemType));
+        _allocation.Relocate(ToItemCapacity(capacity), ToItemCount(_count), ToItemCount(count));
         _capacity = capacity;
         _count = count;
     }
@@ -262,7 +282,7 @@ public:
     {
         if (_capacity < minCapacity)
         {
-            const int32 capacity = _allocation.CalculateCapacityGrow(Math::Max<int32>(_capacity / sizeof(ItemType), 1), minCapacity);
+            const int32 capacity = _allocation.CalculateCapacityGrow(ToItemCapacity(_capacity), minCapacity);
             SetCapacity(capacity, preserveContents);
         }
     }
@@ -274,7 +294,7 @@ public:
     void SetAll(const bool value)
     {
         if (_count != 0)
-            Platform::MemorySet(_allocation.Get(), Math::Max<ItemType>(_count / sizeof(ItemType), 1), value ? MAX_int32 : 0);
+            Platform::MemorySet(_allocation.Get(), ToItemCount(_count) * sizeof(ItemType), value ? MAX_uint32 : 0);
     }
 
     /// <summary>
@@ -320,5 +340,27 @@ public:
         ::Swap(_count, other._count);
         ::Swap(_capacity, other._capacity);
         _allocation.Swap(other._allocation);
+    }
+
+public:
+    template<typename OtherAllocationType = AllocationType>
+    bool operator==(const BitArray<OtherAllocationType>& other) const
+    {
+        if (_count == other.Count())
+        {
+            for (int32 i = 0; i < _count; i++)
+            {
+                if (!(Get(i) == other.Get(i)))
+                    return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    template<typename OtherAllocationType = AllocationType>
+    bool operator!=(const BitArray<OtherAllocationType>& other) const
+    {
+        return !operator==(other);
     }
 };

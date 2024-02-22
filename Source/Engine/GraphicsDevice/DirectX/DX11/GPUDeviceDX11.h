@@ -1,9 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPUResource.h"
+#include "Engine/Core/Collections/Dictionary.h"
 #include "../GPUDeviceDX.h"
 #include "../IncludeDirectXHeaders.h"
 
@@ -20,7 +21,6 @@ class GPUDeviceDX11 : public GPUDeviceDX
 {
     friend GPUContextDX11;
     friend GPUSwapChainDX11;
-
 private:
 
     // Private Stuff
@@ -29,6 +29,7 @@ private:
     IDXGIFactory* _factoryDXGI;
 
     GPUContextDX11* _mainContext;
+    bool _allowTearing = false;
 
     // Static Samplers
     ID3D11SamplerState* _samplerLinearClamp;
@@ -45,7 +46,6 @@ private:
     ID3D11DepthStencilState* DepthStencilStates[9 * 2 * 2]; // Index = ComparisonFunc[0-8] + DepthTestEnable[0?9] + DepthWriteEnable[0?18]
 
 public:
-
     static GPUDevice* Create();
     GPUDeviceDX11(IDXGIFactory* dxgiFactory, GPUAdapterDX* adapter);
     ~GPUDeviceDX11();
@@ -75,8 +75,6 @@ public:
         return _mainContext;
     }
 
-public:
-
     ID3D11BlendState* GetBlendState(const BlendingMode& blending);
 
 public:
@@ -101,6 +99,7 @@ public:
     GPUBuffer* CreateBuffer(const StringView& name) override;
     GPUSampler* CreateSampler() override;
     GPUSwapChain* CreateSwapChain(Window* window) override;
+    GPUConstantBuffer* CreateConstantBuffer(uint32 size, const StringView& name) override;
 };
 
 /// <summary>
@@ -130,7 +129,7 @@ public:
     /// <param name="device">The graphics device.</param>
     /// <param name="name">The resource name.</param>
     GPUResourceDX11(GPUDeviceDX11* device, const StringView& name) noexcept
-        : GPUResourceBase(device, name)
+        : GPUResourceBase<GPUDeviceDX11, BaseType>(device, name)
     {
     }
 };

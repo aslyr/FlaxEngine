@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -12,7 +12,6 @@
 class FLAXENGINE_API GPUTimerQuery : public GPUResource
 {
 public:
-
     /// <summary>
     /// Finalizes an instance of the <see cref="GPUTimerQuery"/> class.
     /// </summary>
@@ -21,7 +20,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Starts the counter.
     /// </summary>
@@ -45,20 +43,13 @@ public:
     virtual float GetResult() = 0;
 
 public:
-
     // [GPUResource]
     String ToString() const override
     {
         return TEXT("TimerQuery");
     }
-
-    ResourceType GetResourceType() const final override
+    GPUResourceType GetResourceType() const final override
     {
-        return ResourceType::Query;
-    }
-
-    ObjectType GetObjectType() const final override
-    {
-        return ObjectType::Other;
+        return GPUResourceType::Query;
     }
 };

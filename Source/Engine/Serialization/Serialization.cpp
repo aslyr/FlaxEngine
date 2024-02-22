@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Serialization.h"
 #include "Engine/Core/Log.h"
@@ -15,18 +15,15 @@
 #include "Engine/Core/Math/BoundingSphere.h"
 #include "Engine/Core/Math/Rectangle.h"
 #include "Engine/Core/Math/Transform.h"
-#include "Engine/Core/Math/Int2.h"
-#include "Engine/Core/Math/Int3.h"
-#include "Engine/Core/Math/Int4.h"
 #include "Engine/Core/Math/Color.h"
 #include "Engine/Core/Math/Color32.h"
 #include "Engine/Core/Math/Matrix.h"
-#include "Engine/Scripting/ManagedSerialization.h"
+#include "Engine/Scripting/Internal/ManagedSerialization.h"
 #include "Engine/Scripting/ManagedCLR/MUtils.h"
+#include "Engine/Scripting/ManagedCLR/MClass.h"
+#include "Engine/Scripting/ScriptingObjectReference.h"
+#include "Engine/Content/Asset.h"
 #include "Engine/Utilities/Encryption.h"
-#if USE_MONO
-#include <ThirdParty/mono-2.0/mono/metadata/object.h>
-#endif
 
 void ISerializable::DeserializeIfExists(DeserializeStream& stream, const char* memberName, ISerializeModifier* modifier)
 {
@@ -148,53 +145,62 @@ void Serialization::Serialize(ISerializable::SerializeStream& stream, const Vari
     case VariantType::Asset:
         stream.Guid(v.AsAsset ? v.AsAsset->GetID() : Guid::Empty);
         break;
-    case VariantType::Vector2:
-        stream.Vector2(*(Vector2*)v.AsData);
+    case VariantType::Float2:
+        stream.Float2(*(Float2*)v.AsData);
         break;
-    case VariantType::Vector3:
-        stream.Vector3(*(Vector3*)v.AsData);
+    case VariantType::Float3:
+        stream.Float3(*(Float3*)v.AsData);
         break;
-    case VariantType::Vector4:
-        stream.Vector4(*(Vector4*)v.AsData);
+    case VariantType::Float4:
+        stream.Float4(*(Float4*)v.AsData);
+        break;
+    case VariantType::Double2:
+        stream.Double2(v.AsDouble2());
+        break;
+    case VariantType::Double3:
+        stream.Double3(v.AsDouble3());
+        break;
+    case VariantType::Double4:
+        stream.Double4(v.AsDouble4());
         break;
     case VariantType::Int2:
-        stream.Int2(*(Int2*)v.AsData);
+        stream.Int2(v.AsInt2());
         break;
     case VariantType::Int3:
-        stream.Int3(*(Int3*)v.AsData);
+        stream.Int3(v.AsInt3());
         break;
     case VariantType::Int4:
-        stream.Int4(*(Int4*)v.AsData);
+        stream.Int4(v.AsInt4());
         break;
     case VariantType::Color:
-        stream.Color(*(Color*)v.AsData);
+        stream.Color(v.AsColor());
         break;
     case VariantType::Guid:
-        stream.Guid(*(Guid*)v.AsData);
+        stream.Guid(v.AsGuid());
         break;
     case VariantType::BoundingSphere:
-        stream.BoundingSphere(*(BoundingSphere*)v.AsData);
+        stream.BoundingSphere(v.AsBoundingSphere());
         break;
     case VariantType::Quaternion:
-        stream.Quaternion(*(Quaternion*)v.AsData);
+        stream.Quaternion(v.AsQuaternion());
         break;
     case VariantType::Rectangle:
-        stream.Rectangle(*(Rectangle*)v.AsData);
+        stream.Rectangle(v.AsRectangle());
         break;
     case VariantType::BoundingBox:
-        stream.BoundingBox(*(BoundingBox*)v.AsBlob.Data);
+        stream.BoundingBox(v.AsBoundingBox());
         break;
     case VariantType::Transform:
-        stream.Transform(*(Transform*)v.AsBlob.Data);
+        stream.Transform(v.AsTransform());
         break;
     case VariantType::Ray:
-        stream.Ray(*(Ray*)v.AsBlob.Data);
+        stream.Ray(v.AsRay());
         break;
     case VariantType::Matrix:
-        stream.Matrix(*(Matrix*)v.AsBlob.Data);
+        stream.Matrix(v.AsMatrix());
         break;
     case VariantType::Array:
-        Serialize(stream, *(Array<Variant, HeapAllocation>*)v.AsData, nullptr);
+        Serialize(stream, v.AsArray(), nullptr);
         break;
     case VariantType::Dictionary:
         Serialize(stream, *v.AsDictionary, nullptr);
@@ -208,12 +214,14 @@ void Serialization::Serialize(ISerializable::SerializeStream& stream, const Vari
     case VariantType::ManagedObject:
     case VariantType::Structure:
     {
-        MonoObject* obj;
+#if USE_CSHARP
+        MObject* obj;
         if (v.Type.Type == VariantType::Structure)
             obj = MUtils::BoxVariant(v);
         else
-            obj = (MonoObject*)v;
+            obj = (MObject*)v;
         ManagedSerialization::Serialize(stream, obj);
+#endif
         break;
     }
     default:
@@ -288,14 +296,23 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Varian
         v.SetBlob(id.A);
         Encryption::Base64Decode(value.GetString(), id.A, (byte*)v.AsBlob.Data);
         break;
-    case VariantType::Vector2:
-        Deserialize(value, *(Vector2*)v.AsData, modifier);
+    case VariantType::Float2:
+        Deserialize(value, *(Float2*)v.AsData, modifier);
         break;
-    case VariantType::Vector3:
-        Deserialize(value, *(Vector3*)v.AsData, modifier);
+    case VariantType::Float3:
+        Deserialize(value, *(Float3*)v.AsData, modifier);
         break;
-    case VariantType::Vector4:
-        Deserialize(value, *(Vector4*)v.AsData, modifier);
+    case VariantType::Float4:
+        Deserialize(value, *(Float4*)v.AsData, modifier);
+        break;
+    case VariantType::Double2:
+        Deserialize(value, *(Double2*)v.AsData, modifier);
+        break;
+    case VariantType::Double3:
+        Deserialize(value, *(Double3*)v.AsData, modifier);
+        break;
+    case VariantType::Double4:
+        Deserialize(value, *(Double4*)v.AsBlob.Data, modifier);
         break;
     case VariantType::Int2:
         Deserialize(value, *(Int2*)v.AsData, modifier);
@@ -313,7 +330,7 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Varian
         Deserialize(value, *(Guid*)v.AsData, modifier);
         break;
     case VariantType::BoundingSphere:
-        Deserialize(value, *(BoundingSphere*)v.AsData, modifier);
+        Deserialize(value, v.AsBoundingSphere(), modifier);
         break;
     case VariantType::Quaternion:
         Deserialize(value, *(Quaternion*)v.AsData, modifier);
@@ -322,13 +339,13 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Varian
         Deserialize(value, *(Rectangle*)v.AsData, modifier);
         break;
     case VariantType::BoundingBox:
-        Deserialize(value, *(BoundingBox*)v.AsBlob.Data, modifier);
+        Deserialize(value, v.AsBoundingBox(), modifier);
         break;
     case VariantType::Transform:
-        Deserialize(value, *(Transform*)v.AsBlob.Data, modifier);
+        Deserialize(value, v.AsTransform(), modifier);
         break;
     case VariantType::Ray:
-        Deserialize(value, *(Ray*)v.AsBlob.Data, modifier);
+        Deserialize(value, v.AsRay(), modifier);
         break;
     case VariantType::Matrix:
         Deserialize(value, *(Matrix*)v.AsBlob.Data, modifier);
@@ -346,29 +363,31 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Varian
     case VariantType::ManagedObject:
     case VariantType::Structure:
     {
-        auto obj = (MonoObject*)v;
+#if USE_CSHARP
+        auto obj = (MObject*)v;
         if (!obj && v.Type.TypeName)
         {
-            MonoClass* klass = MUtils::GetClass(v.Type);
+            MClass* klass = MUtils::GetClass(v.Type);
             if (!klass)
             {
                 LOG(Error, "Invalid variant type {0}", v.Type);
                 return;
             }
-            obj = mono_object_new(mono_domain_get(), klass);
+            obj = MCore::Object::New(klass);
             if (!obj)
             {
                 LOG(Error, "Failed to managed instance of the variant type {0}", v.Type);
                 return;
             }
-            if (!mono_class_is_valuetype(klass))
-                mono_runtime_object_init(obj);
+            if (!klass->IsValueType())
+                MCore::Object::Init(obj);
             if (v.Type.Type == VariantType::ManagedObject)
                 v.SetManagedObject(obj);
         }
         ManagedSerialization::Deserialize(value, obj);
         if (v.Type.Type == VariantType::Structure)
             v = MUtils::UnboxVariant(obj);
+#endif
         break;
     }
     default:
@@ -460,7 +479,7 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Versio
                 const auto mBuild = SERIALIZE_FIND_MEMBER(stream, "Build");
                 if (mBuild != stream.MemberEnd())
                 {
-                    const auto mRevision = SERIALIZE_FIND_MEMBER(stream, "mRevision");
+                    const auto mRevision = SERIALIZE_FIND_MEMBER(stream, "Revision");
                     if (mRevision != stream.MemberEnd())
                         v = Version(mMajor->value.GetInt(), mMinor->value.GetInt(), mBuild->value.GetInt(), mRevision->value.GetInt());
                     else
@@ -477,12 +496,12 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Versio
     }
 }
 
-bool Serialization::ShouldSerialize(const Vector2& v, const void* otherObj)
+bool Serialization::ShouldSerialize(const Float2& v, const void* otherObj)
 {
-    return !otherObj || !Vector2::NearEqual(v, *(Vector2*)otherObj, SERIALIZE_EPSILON);
+    return !otherObj || !Float2::NearEqual(v, *(Float2*)otherObj, SERIALIZE_EPSILON);
 }
 
-void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Vector2& v, ISerializeModifier* modifier)
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Float2& v, ISerializeModifier* modifier)
 {
     const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
     const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
@@ -490,12 +509,12 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Vector
     v.Y = mY != stream.MemberEnd() ? mY->value.GetFloat() : 0.0f;
 }
 
-bool Serialization::ShouldSerialize(const Vector3& v, const void* otherObj)
+bool Serialization::ShouldSerialize(const Float3& v, const void* otherObj)
 {
-    return !otherObj || !Vector3::NearEqual(v, *(Vector3*)otherObj, SERIALIZE_EPSILON);
+    return !otherObj || !Float3::NearEqual(v, *(Float3*)otherObj, SERIALIZE_EPSILON);
 }
 
-void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Vector3& v, ISerializeModifier* modifier)
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Float3& v, ISerializeModifier* modifier)
 {
     const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
     const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
@@ -505,12 +524,57 @@ void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Vector
     v.Z = mZ != stream.MemberEnd() ? mZ->value.GetFloat() : 0.0f;
 }
 
-bool Serialization::ShouldSerialize(const Vector4& v, const void* otherObj)
+bool Serialization::ShouldSerialize(const Float4& v, const void* otherObj)
 {
-    return !otherObj || !Vector4::NearEqual(v, *(Vector4*)otherObj, SERIALIZE_EPSILON);
+    return !otherObj || !Float4::NearEqual(v, *(Float4*)otherObj, SERIALIZE_EPSILON);
 }
 
-void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Vector4& v, ISerializeModifier* modifier)
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Float4& v, ISerializeModifier* modifier)
+{
+    const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
+    const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
+    const auto mZ = SERIALIZE_FIND_MEMBER(stream, "Z");
+    const auto mW = SERIALIZE_FIND_MEMBER(stream, "W");
+    v.X = mX != stream.MemberEnd() ? mX->value.GetFloat() : 0.0f;
+    v.Y = mY != stream.MemberEnd() ? mY->value.GetFloat() : 0.0f;
+    v.Z = mZ != stream.MemberEnd() ? mZ->value.GetFloat() : 0.0f;
+    v.W = mW != stream.MemberEnd() ? mW->value.GetFloat() : 0.0f;
+}
+
+bool Serialization::ShouldSerialize(const Double2& v, const void* otherObj)
+{
+    return !otherObj || !Double2::NearEqual(v, *(Double2*)otherObj, SERIALIZE_EPSILON_DOUBLE);
+}
+
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Double2& v, ISerializeModifier* modifier)
+{
+    const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
+    const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
+    v.X = mX != stream.MemberEnd() ? mX->value.GetFloat() : 0.0f;
+    v.Y = mY != stream.MemberEnd() ? mY->value.GetFloat() : 0.0f;
+}
+
+bool Serialization::ShouldSerialize(const Double3& v, const void* otherObj)
+{
+    return !otherObj || !Double3::NearEqual(v, *(Double3*)otherObj, SERIALIZE_EPSILON_DOUBLE);
+}
+
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Double3& v, ISerializeModifier* modifier)
+{
+    const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
+    const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
+    const auto mZ = SERIALIZE_FIND_MEMBER(stream, "Z");
+    v.X = mX != stream.MemberEnd() ? mX->value.GetFloat() : 0.0f;
+    v.Y = mY != stream.MemberEnd() ? mY->value.GetFloat() : 0.0f;
+    v.Z = mZ != stream.MemberEnd() ? mZ->value.GetFloat() : 0.0f;
+}
+
+bool Serialization::ShouldSerialize(const Double4& v, const void* otherObj)
+{
+    return !otherObj || !Double4::NearEqual(v, *(Double4*)otherObj, SERIALIZE_EPSILON_DOUBLE);
+}
+
+void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Double4& v, ISerializeModifier* modifier)
 {
     const auto mX = SERIALIZE_FIND_MEMBER(stream, "X");
     const auto mY = SERIALIZE_FIND_MEMBER(stream, "Y");
@@ -683,9 +747,21 @@ bool Serialization::ShouldSerialize(const Transform& v, const void* otherObj)
 
 void Serialization::Deserialize(ISerializable::DeserializeStream& stream, Transform& v, ISerializeModifier* modifier)
 {
-    DESERIALIZE_HELPER(stream, "Translation", v.Translation, Vector3::Zero);
-    DESERIALIZE_HELPER(stream, "Scale", v.Scale, Vector3::One);
-    DESERIALIZE_HELPER(stream, "Orientation", v.Orientation, Quaternion::Identity);
+    {
+        const auto m = SERIALIZE_FIND_MEMBER(stream, "Translation");
+        if (m != stream.MemberEnd())
+            Deserialize(m->value, v.Translation, modifier);
+    }
+    {
+        const auto m = SERIALIZE_FIND_MEMBER(stream, "Scale");
+        if (m != stream.MemberEnd())
+            Deserialize(m->value, v.Scale, modifier);
+    }
+    {
+        const auto m = SERIALIZE_FIND_MEMBER(stream, "Orientation");
+        if (m != stream.MemberEnd())
+            Deserialize(m->value, v.Orientation, modifier);
+    }
 }
 
 bool Serialization::ShouldSerialize(const Matrix& v, const void* otherObj)

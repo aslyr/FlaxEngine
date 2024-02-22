@@ -1,16 +1,18 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Log.h"
 #include "Engine/Engine/CommandLine.h"
 #include "Engine/Core/Types/DateTime.h"
-#include "Engine/Core/Collections/Sorting.h"
+#include "Engine/Core/Collections/Array.h"
 #include "Engine/Engine/Time.h"
 #include "Engine/Engine/Globals.h"
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Platform/CriticalSection.h"
 #include "Engine/Serialization/FileWriteStream.h"
-#include "Engine/Serialization/MemoryWriteStream.h"
 #include "Engine/Debug/Exceptions/Exceptions.h"
+#if USE_EDITOR
+#include "Engine/Core/Collections/Sorting.h"
+#endif
 #include <iostream>
 
 #define LOG_ENABLE_FILE (!PLATFORM_SWITCH)
@@ -56,7 +58,7 @@ bool Log::Logger::Init()
         int32 remaining = oldLogs.Count() - maxLogFiles + 1;
         if (remaining > 0)
         {
-            Sorting::QuickSort(oldLogs.Get(), oldLogs.Count());
+            Sorting::QuickSort(oldLogs);
 
             // Delete the oldest logs
             int32 i = 0;
@@ -86,7 +88,7 @@ bool Log::Logger::Init()
 
     // Write BOM (UTF-16 (LE); BOM: FF FE)
     byte bom[] = { 0xFF, 0xFE };
-    LogFile->Write(bom, 2);
+    LogFile->WriteBytes(bom, 2);
 
     // Write startup info
     WriteFloor();
@@ -104,6 +106,8 @@ void Log::Logger::Write(const StringView& msg)
 {
     const auto ptr = msg.Get();
     const auto length = msg.Length();
+    if (length <= 0)
+        return;
 
     LogLocker.Lock();
     if (IsDuringLog)
@@ -132,8 +136,8 @@ void Log::Logger::Write(const StringView& msg)
     // Write message to log file
     if (LogAfterInit)
     {
-        LogFile->Write(ptr, length);
-        LogFile->Write(TEXT(PLATFORM_LINE_TERMINATOR), ARRAY_COUNT(PLATFORM_LINE_TERMINATOR) - 1);
+        LogFile->WriteBytes(ptr, length * sizeof(Char));
+        LogFile->WriteBytes(TEXT(PLATFORM_LINE_TERMINATOR), (ARRAY_COUNT(PLATFORM_LINE_TERMINATOR) - 1) * sizeof(Char));
 #if LOG_ENABLE_AUTO_FLUSH
         LogFile->Flush();
 #endif
@@ -194,39 +198,42 @@ void Log::Logger::WriteFloor()
 void Log::Logger::ProcessLogMessage(LogType type, const StringView& msg, fmt_flax::memory_buffer& w)
 {
     const TimeSpan time = DateTime::Now() - LogStartTime;
+    const int32 msgLength = msg.Length();
 
     fmt_flax::format(w, TEXT("[ {0} ]: [{1}] "), *time.ToString('a'), ToString(type));
 
     // On Windows convert all '\n' into '\r\n'
 #if PLATFORM_WINDOWS
-    const int32 msgLength = msg.Length();
-    if (msgLength > 1)
+    bool hasWindowsNewLine = false;
+    for (int32 i = 1; i < msgLength && !hasWindowsNewLine; i++)
+        hasWindowsNewLine |= msg.Get()[i - 1] != '\r' && msg.Get()[i] == '\n';
+    if (hasWindowsNewLine)
     {
-        MemoryWriteStream msgStream(msgLength * sizeof(Char));
-        msgStream.WriteChar(msg[0]);
+        Array<Char> msgStream;
+        msgStream.EnsureCapacity(msgLength);
+        msgStream.Add(msg.Get()[0]);
         for (int32 i = 1; i < msgLength; i++)
         {
-            if (msg[i - 1] != '\r' && msg[i] == '\n')
-                msgStream.WriteChar(TEXT('\r'));
-            msgStream.WriteChar(msg[i]);
+            if (msg.Get()[i - 1] != '\r' && msg.Get()[i] == '\n')
+                msgStream.Add(TEXT('\r'));
+            msgStream.Add(msg.Get()[i]);
         }
-        msgStream.WriteChar(msg[msgLength]);
-        msgStream.WriteChar(TEXT('\0'));
-        fmt_flax::format(w, TEXT("{}"), (const Char*)msgStream.GetHandle());
-        //w.append(msgStream.GetHandle(), msgStream.GetHandle() + msgStream.GetPosition());
+        msgStream.Add(TEXT('\0'));
+        w.append(msgStream.Get(), (const Char*)(msgStream.Get() + msgStream.Count()));
+        //fmt_flax::format(w, TEXT("{}"), (const Char*)msgStream.Get());
+        return;
     }
-    else
-    {
-        //w.append(msg.Get(), msg.Get() + msg.Length());
-        fmt_flax::format(w, TEXT("{}"), (const Char*)msg.Get());
-    }
-#else
-    fmt_flax::format(w, TEXT("{}"), (const Char*)msg.Get());
 #endif
+
+    // Output raw message to the log
+    w.append(msg.Get(), msg.Get() + msg.Length());
+    //fmt_flax::format(w, TEXT("{}"), msg);
 }
 
 void Log::Logger::Write(LogType type, const StringView& msg)
 {
+    if (msg.Length() <= 0)
+        return;
     const bool isError = IsError(type);
 
     // Create message for the log file
@@ -244,19 +251,13 @@ void Log::Logger::Write(LogType type, const StringView& msg)
         OnError(type, msg);
     }
 
-    // Check if need to show message box with that log message
-    if (type == LogType::Fatal)
-    {
+    // Ensure the error gets written to the disk
+    if (type == LogType::Fatal || type == LogType::Error)
         Flush();
 
-        // Process message further
-        if (type == LogType::Fatal)
-            Platform::Fatal(msg);
-        else if (type == LogType::Error)
-            Platform::Error(msg);
-        else
-            Platform::Info(msg);
-    }
+    // Check if need to show message box with that log message
+    if (type == LogType::Fatal)
+        Platform::Fatal(msg);
 }
 
 const Char* ToString(LogType e)

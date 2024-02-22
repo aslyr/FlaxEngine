@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -23,14 +23,12 @@ template<class NodeType, class BoxType, class ParameterType>
 class Graph
 {
 public:
-
     typedef Graph<NodeType, BoxType, ParameterType> GraphType;
     typedef NodeType Node;
     typedef BoxType Box;
     typedef ParameterType Parameter;
 
 private:
-
     struct TmpConnectionHint
     {
         Node* Node;
@@ -56,7 +54,6 @@ public:
     VisjectMeta Meta;
 
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph"/> class.
     /// </summary>
@@ -72,7 +69,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Save graph to the stream
     /// </summary>
@@ -106,7 +102,7 @@ public:
         {
             const Parameter* param = &Parameters[i];
             stream->WriteVariantType(param->Type);
-            stream->Write(&param->Identifier);
+            stream->Write(param->Identifier);
             stream->WriteString(param->Name, 97);
             stream->WriteBool(param->IsPublic);
             stream->WriteVariant(param->Value);
@@ -225,7 +221,7 @@ public:
 
                 // Properties
                 auto type = stream->ReadByte();
-                stream->Read(&param->Identifier);
+                stream->Read(param->Identifier);
                 stream->ReadString(&param->Name, 97);
                 param->IsPublic = stream->ReadBool();
                 bool isStatic = stream->ReadBool();
@@ -363,7 +359,7 @@ public:
             {
                 auto param = &Parameters[i];
                 stream->ReadVariantType(&param->Type);
-                stream->Read(&param->Identifier);
+                stream->Read(param->Identifier);
                 stream->ReadString(&param->Name, 97);
                 param->IsPublic = stream->ReadBool();
                 stream->ReadVariant(&param->Value);
@@ -456,7 +452,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Find node by ID
     /// </summary>
@@ -528,7 +523,6 @@ public:
     }
 
 public:
-
 #if USE_EDITOR
 
     /// <summary>
@@ -561,7 +555,6 @@ public:
 #endif
 
 protected:
-
     virtual bool onNodeCreated(Node* n)
     {
         return false;

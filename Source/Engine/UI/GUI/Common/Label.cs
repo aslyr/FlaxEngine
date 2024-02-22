@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.ComponentModel;
 
@@ -18,8 +18,8 @@ namespace FlaxEngine.GUI
         private bool _autoWidth;
         private bool _autoHeight;
         private bool _autoFitText;
-        private Vector2 _textSize;
-        private Vector2 _autoFitTextRange = new Vector2(0.1f, 100.0f);
+        private Float2 _textSize;
+        private Float2 _autoFitTextRange = new Float2(0.1f, 100.0f);
 
         /// <summary>
         /// The font.
@@ -38,7 +38,7 @@ namespace FlaxEngine.GUI
                 if (_text != value)
                 {
                     _text = value;
-                    _textSize = Vector2.Zero;
+                    _textSize = Float2.Zero;
                     PerformLayout();
                 }
             }
@@ -47,37 +47,43 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the color of the text.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color of the text.")]
+        [EditorDisplay("Text Style"), EditorOrder(2010), Tooltip("The color of the text."), ExpandGroups]
         public Color TextColor { get; set; }
 
         /// <summary>
         /// Gets or sets the color of the text when it is highlighted (mouse is over).
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000), Tooltip("The color of the text when it is highlighted (mouse is over).")]
+        [EditorDisplay("Text Style"), EditorOrder(2011), Tooltip("The color of the text when it is highlighted (mouse is over).")]
         public Color TextColorHighlighted { get; set; }
 
         /// <summary>
         /// Gets or sets the horizontal text alignment within the control bounds.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2010), Tooltip("The horizontal text alignment within the control bounds.")]
+        [EditorDisplay("Text Style"), EditorOrder(2020), Tooltip("The horizontal text alignment within the control bounds.")]
         public TextAlignment HorizontalAlignment { get; set; } = TextAlignment.Center;
 
         /// <summary>
         /// Gets or sets the vertical text alignment within the control bounds.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2020), Tooltip("The vertical text alignment within the control bounds.")]
+        [EditorDisplay("Text Style"), EditorOrder(2021), Tooltip("The vertical text alignment within the control bounds.")]
         public TextAlignment VerticalAlignment { get; set; } = TextAlignment.Center;
 
         /// <summary>
         /// Gets or sets the text wrapping within the control bounds.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2030), Tooltip("The text wrapping within the control bounds.")]
+        [EditorDisplay("Text Style"), EditorOrder(2022), Tooltip("The text wrapping within the control bounds.")]
         public TextWrapping Wrapping { get; set; } = TextWrapping.NoWrap;
+
+        /// <summary>
+        /// Gets or sets the text wrapping within the control bounds.
+        /// </summary>
+        [EditorDisplay("Text Style"), EditorOrder(2023), Tooltip("The gap between lines when wrapping and more than a single line is displayed."), Limit(0f)]
+        public float BaseLinesGapScale { get; set; } = 1.0f;
 
         /// <summary>
         /// Gets or sets the font.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Text Style"), EditorOrder(2024)]
         public FontReference Font
         {
             get => _font;
@@ -89,7 +95,7 @@ namespace FlaxEngine.GUI
 
                     if (_autoWidth || _autoHeight || _autoFitText)
                     {
-                        _textSize = Vector2.Zero;
+                        _textSize = Float2.Zero;
                         PerformLayout();
                     }
                 }
@@ -99,7 +105,7 @@ namespace FlaxEngine.GUI
         /// <summary>
         /// Gets or sets the custom material used to render the text. It must has domain set to GUI and have a public texture parameter named Font used to sample font atlas texture with font characters data.
         /// </summary>
-        [EditorDisplay("Style"), EditorOrder(2000)]
+        [EditorDisplay("Text Style"), EditorOrder(2025)]
         public MaterialBase Material { get; set; }
 
         /// <summary>
@@ -169,8 +175,8 @@ namespace FlaxEngine.GUI
         /// Gets or sets the text scale range (min and max) for automatic fit text option. Can be used to constraint the text scale adjustment.
         /// </summary>
         [VisibleIf(nameof(AutoFitText))]
-        [EditorOrder(110), DefaultValue(typeof(Vector2), "0.1, 100"), Tooltip("The text scale range (min and max) for automatic fit text option. Can be used to constraint the text scale adjustment.")]
-        public Vector2 AutoFitTextRange
+        [EditorOrder(110), DefaultValue(typeof(Float2), "0.1, 100"), Tooltip("The text scale range (min and max) for automatic fit text option. Can be used to constraint the text scale adjustment.")]
+        public Float2 AutoFitTextRange
         {
             get => _autoFitTextRange;
             set => _autoFitTextRange = value;
@@ -201,16 +207,16 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public override void Draw()
+        public override void DrawSelf()
         {
-            base.Draw();
+            base.DrawSelf();
 
-            var rect = new Rectangle(new Vector2(Margin.Left, Margin.Top), Size - Margin.Size);
+            var rect = new Rectangle(new Float2(Margin.Left, Margin.Top), Size - Margin.Size);
 
             if (ClipText)
-                Render2D.PushClip(new Rectangle(Vector2.Zero, Size));
+                Render2D.PushClip(new Rectangle(Float2.Zero, Size));
 
-            var color = IsMouseOver ? TextColorHighlighted : TextColor;
+            var color = IsMouseOver || IsNavFocused ? TextColorHighlighted : TextColor;
 
             if (!EnabledInHierarchy)
                 color *= 0.6f;
@@ -227,7 +233,7 @@ namespace FlaxEngine.GUI
                 }
             }
 
-            Render2D.DrawText(_font.GetFont(), Material, _text, rect, color, hAlignment, wAlignment, Wrapping, 1.0f, scale);
+            Render2D.DrawText(_font.GetFont(), Material, _text, rect, color, hAlignment, wAlignment, Wrapping, BaseLinesGapScale, scale);
 
             if (ClipText)
                 Render2D.PopClip();
@@ -249,6 +255,7 @@ namespace FlaxEngine.GUI
                     else if (_autoWidth && !_autoHeight)
                         layout.Bounds.Size.Y = Height - Margin.Height;
                     _textSize = font.MeasureText(_text, ref layout);
+                    _textSize.Y *= BaseLinesGapScale;
 
                     // Check if size is controlled via text
                     if (_autoWidth || _autoHeight)

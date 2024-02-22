@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,6 @@
 class ForwardMaterialShader : public MaterialShader
 {
 private:
-
     struct Cache
     {
         PipelineStateCache Default;
@@ -19,6 +18,10 @@ private:
         PipelineStateCache DepthSkinned;
         PipelineStateCache Distortion;
         PipelineStateCache DistortionSkinned;
+#if USE_EDITOR
+        PipelineStateCache QuadOverdraw;
+        PipelineStateCache QuadOverdrawSkinned;
+#endif
 
         FORCE_INLINE PipelineStateCache* GetPS(const DrawPass pass, const bool useSkinning)
         {
@@ -30,6 +33,10 @@ private:
                 return useSkinning ? &DistortionSkinned : &Distortion;
             case DrawPass::Forward:
                 return useSkinning ? &DefaultSkinned : &Default;
+#if USE_EDITOR
+            case DrawPass::QuadOverdraw:
+                return useSkinning ? &QuadOverdrawSkinned : &QuadOverdraw;
+#endif
             default:
                 return nullptr;
             }
@@ -47,13 +54,11 @@ private:
     };
 
 private:
-
     Cache _cache;
     Cache _cacheInstanced;
     DrawPass _drawModes = DrawPass::None;
 
 public:
-
     /// <summary>
     /// Init
     /// </summary>
@@ -64,7 +69,6 @@ public:
     }
 
 public:
-
     // [MaterialShader]
     DrawPass GetDrawModes() const override;
     bool CanUseInstancing(InstancingHandler& handler) const override;
@@ -72,7 +76,6 @@ public:
     void Unload() override;
 
 protected:
-
     // [MaterialShader]
     bool Load() override;
 };

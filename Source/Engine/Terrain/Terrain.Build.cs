@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using Flax.Build;
 using Flax.Build.NativeCpp;
@@ -14,7 +14,6 @@ public class Terrain : EngineModule
         base.Setup(options);
 
         options.PrivateDependencies.Add("Physics");
-        options.PrivateDependencies.Add("PhysX");
 
         if (options.Target.IsEditor)
         {

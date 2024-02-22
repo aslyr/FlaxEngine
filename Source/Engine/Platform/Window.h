@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -18,6 +18,12 @@
 #include "Android/AndroidWindow.h"
 #elif PLATFORM_SWITCH
 #include "Platforms/Switch/Engine/Platform/SwitchWindow.h"
+#elif PLATFORM_PS5
+#include "Platforms/PS5/Engine/Platform/PS5Window.h"
+#elif PLATFORM_MAC
+#include "Mac/MacWindow.h"
+#elif PLATFORM_IOS
+#include "iOS/iOSWindow.h"
 #else
 #error Missing Window implementation!
 #endif

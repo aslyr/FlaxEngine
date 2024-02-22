@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "GPUBuffer.h"
 #include "GPUDevice.h"
+#include "GPUResourceProperty.h"
 #include "GPUBufferDescription.h"
 #include "PixelFormatExtensions.h"
 #include "Async/Tasks/GPUCopyResourceTask.h"
@@ -10,9 +11,10 @@
 #include "Engine/Core/Types/DataContainer.h"
 #include "Engine/Debug/Exceptions/InvalidOperationException.h"
 #include "Engine/Debug/Exceptions/ArgumentNullException.h"
-#include "Engine/Threading/ThreadPoolTask.h"
-#include "Engine/Graphics/GPUResourceProperty.h"
 #include "Engine/Debug/Exceptions/ArgumentOutOfRangeException.h"
+#include "Engine/Profiler/ProfilerCPU.h"
+#include "Engine/Scripting/Enums.h"
+#include "Engine/Threading/ThreadPoolTask.h"
 #include "Engine/Threading/Threading.h"
 
 GPUBufferDescription GPUBufferDescription::Buffer(uint32 size, GPUBufferFlags flags, PixelFormat format, const void* initData, uint32 stride, GPUResourceUsage usage)
@@ -80,34 +82,11 @@ bool GPUBufferDescription::Equals(const GPUBufferDescription& other) const
 
 String GPUBufferDescription::ToString() const
 {
-    // TODO: add tool to Format to string
-
-    String flags;
-    if (Flags == GPUBufferFlags::None)
-    {
-        flags = TEXT("None");
-    }
-    else
-    {
-        // TODO: create tool to auto convert flag enums to string
-
-#define CONVERT_FLAGS_FLAGS_2_STR(value) if(Flags & GPUBufferFlags::value) { if (flags.HasChars()) flags += TEXT('|'); flags += TEXT(#value); }
-        CONVERT_FLAGS_FLAGS_2_STR(ShaderResource);
-        CONVERT_FLAGS_FLAGS_2_STR(VertexBuffer);
-        CONVERT_FLAGS_FLAGS_2_STR(IndexBuffer);
-        CONVERT_FLAGS_FLAGS_2_STR(UnorderedAccess);
-        CONVERT_FLAGS_FLAGS_2_STR(Append);
-        CONVERT_FLAGS_FLAGS_2_STR(Counter);
-        CONVERT_FLAGS_FLAGS_2_STR(Argument);
-        CONVERT_FLAGS_FLAGS_2_STR(Structured);
-#undef CONVERT_FLAGS_FLAGS_2_STR
-    }
-
     return String::Format(TEXT("Size: {0}, Stride: {1}, Flags: {2}, Format: {3}, Usage: {4}"),
                           Size,
                           Stride,
-                          flags,
-                          (int32)Format,
+                          ScriptingEnum::ToStringFlags(Flags),
+                          ScriptingEnum::ToString(Format),
                           (int32)Usage);
 }
 
@@ -137,6 +116,7 @@ GPUBuffer* GPUBuffer::New()
 }
 
 GPUBuffer::GPUBuffer()
+    : GPUResource(SpawnParams(Guid::New(), TypeInitializer))
 {
     // Buffer with size 0 is considered to be invalid
     _desc.Size = 0;
@@ -148,7 +128,7 @@ bool GPUBuffer::Init(const GPUBufferDescription& desc)
         && Math::IsInRange<uint32>(desc.Stride, 0, 1024));
 
     // Validate description
-    if (desc.Flags & GPUBufferFlags::Structured)
+    if (EnumHasAnyFlags(desc.Flags, GPUBufferFlags::Structured))
     {
         if (desc.Stride <= 0)
         {
@@ -156,7 +136,7 @@ bool GPUBuffer::Init(const GPUBufferDescription& desc)
             return true;
         }
     }
-    if (desc.Flags & GPUBufferFlags::RawBuffer)
+    if (EnumHasAnyFlags(desc.Flags, GPUBufferFlags::RawBuffer))
     {
         if (desc.Format != PixelFormat::R32_Typeless)
         {
@@ -210,7 +190,7 @@ GPUBuffer* GPUBuffer::ToStagingUpload() const
 
 bool GPUBuffer::Resize(uint32 newSize)
 {
-    // Validate input
+    PROFILE_CPU();
     if (!IsAllocated())
     {
         Log::InvalidOperationException(TEXT("Buffer.Resize"));
@@ -234,16 +214,17 @@ bool GPUBuffer::DownloadData(BytesContainer& result)
         LOG(Warning, "Cannot download GPU buffer data from an empty buffer.");
         return true;
     }
-
     if (_desc.Usage == GPUResourceUsage::StagingReadback || _desc.Usage == GPUResourceUsage::Dynamic)
     {
         // Use faster path for staging resources
         return GetData(result);
     }
+    PROFILE_CPU();
 
     // Ensure not running on main thread
     if (IsInMainThread())
     {
+        // TODO: support mesh data download from GPU on a main thread during rendering
         LOG(Warning, "Cannot download GPU buffer data on a main thread. Use staging readback buffer or invoke this function from another thread.");
         return true;
     }
@@ -270,13 +251,11 @@ bool GPUBuffer::DownloadData(BytesContainer& result)
 class BufferDownloadDataTask : public ThreadPoolTask
 {
 private:
-
     BufferReference _buffer;
     GPUBuffer* _staging;
     BytesContainer& _data;
 
 public:
-
     BufferDownloadDataTask(GPUBuffer* buffer, GPUBuffer* staging, BytesContainer& data)
         : _buffer(buffer)
         , _staging(staging)
@@ -290,7 +269,6 @@ public:
     }
 
 public:
-
     // [ThreadPoolTask]
     bool HasReference(Object* resource) const override
     {
@@ -298,7 +276,6 @@ public:
     }
 
 protected:
-
     // [ThreadPoolTask]
     bool Run() override
     {
@@ -359,6 +336,7 @@ Task* GPUBuffer::DownloadDataAsync(BytesContainer& result)
 
 bool GPUBuffer::GetData(BytesContainer& output)
 {
+    PROFILE_CPU();
     void* mapped = Map(GPUResourceMapMode::Read);
     if (!mapped)
         return true;
@@ -369,6 +347,7 @@ bool GPUBuffer::GetData(BytesContainer& output)
 
 void GPUBuffer::SetData(const void* data, uint32 size)
 {
+    PROFILE_CPU();
     if (size == 0 || data == nullptr)
     {
         Log::ArgumentNullException(TEXT("Buffer.SetData"));
@@ -379,12 +358,9 @@ void GPUBuffer::SetData(const void* data, uint32 size)
         Log::ArgumentOutOfRangeException(TEXT("Buffer.SetData"));
         return;
     }
-
     void* mapped = Map(GPUResourceMapMode::Write);
     if (!mapped)
-    {
         return;
-    }
     Platform::MemoryCopy(mapped, data, size);
     Unmap();
 }
@@ -398,14 +374,9 @@ String GPUBuffer::ToString() const
 #endif
 }
 
-GPUResource::ResourceType GPUBuffer::GetResourceType() const
+GPUResourceType GPUBuffer::GetResourceType() const
 {
-    return ResourceType::Buffer;
-}
-
-GPUResource::ObjectType GPUBuffer::GetObjectType() const
-{
-    return ObjectType::Buffer;
+    return GPUResourceType::Buffer;
 }
 
 void GPUBuffer::OnReleaseGPU()

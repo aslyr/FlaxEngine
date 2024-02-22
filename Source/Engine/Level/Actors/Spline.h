@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -8,17 +8,16 @@
 /// <summary>
 /// Spline shape actor that defines spatial curve with utility functions for general purpose usage.
 /// </summary>
-API_CLASS() class FLAXENGINE_API Spline : public Actor
+API_CLASS(Attributes="ActorContextMenu(\"New/Other/Spline\"), ActorToolbox(\"Other\")")
+class FLAXENGINE_API Spline : public Actor
 {
-DECLARE_SCENE_OBJECT(Spline);
+    DECLARE_SCENE_OBJECT(Spline);
     typedef BezierCurveKeyframe<Transform> Keyframe;
 private:
-
     bool _loop = false;
     BoundingBox _localBounds;
 
 public:
-
     /// <summary>
     /// The spline bezier curve points represented as series of transformations in 3D space (with tangents). Points are stored in local-space of the actor.
     /// </summary>
@@ -37,7 +36,6 @@ public:
     API_PROPERTY() void SetIsLoop(bool value);
 
 public:
-
     /// <summary>
     /// Evaluates the spline curve at the given time and calculates the point location in 3D (world-space).
     /// </summary>
@@ -170,6 +168,13 @@ public:
     API_PROPERTY() float GetSplineLength() const;
 
     /// <summary>
+    /// Gets the length of the spline segment (distance between pair of two points).
+    /// </summary>
+    /// <param name="index">The index of the segment end index. Zero-based, smaller than GetSplinePointsCount().</param>
+    /// <returns>The spline segment length.</returns>
+    API_FUNCTION() float GetSplineSegmentLength(int32 index) const;
+
+    /// <summary>
     /// Gets the time of the spline keyframe.
     /// </summary>
     /// <param name="index">The curve keyframe index. Zero-based, smaller than GetSplinePointsCount().</param>
@@ -215,7 +220,6 @@ public:
     API_FUNCTION() void GetSplineLocalPoints(API_PARAM(Out) Array<Transform>& points) const;
 
 public:
-
     /// <summary>
     /// Clears the spline to be empty.
     /// </summary>
@@ -345,7 +349,6 @@ public:
     API_FUNCTION() void SetTangentsSmooth();
 
 public:
-
     /// <summary>
     /// Called when spline gets updated (eg. after curve modification).
     /// </summary>
@@ -357,8 +360,8 @@ public:
     API_FUNCTION() virtual void UpdateSpline();
 
 protected:
-
 #if USE_EDITOR
+    // Spline color getter for debug drawing, can be overriden by custom spline types.
     virtual Color GetSplineColor()
     {
         return Color::White;
@@ -366,20 +369,20 @@ protected:
 #endif
 
 private:
-
     // Internal bindings
-    API_FUNCTION(NoProxy) void GetKeyframes(MonoArray* data);
-    API_FUNCTION(NoProxy) void SetKeyframes(MonoArray* data);
+#if !COMPILE_WITHOUT_CSHARP
+    API_FUNCTION(NoProxy) void GetKeyframes(MArray* data);
+    API_FUNCTION(NoProxy) void SetKeyframes(MArray* data);
+#endif
 
 public:
-
     // [Actor]
 #if USE_EDITOR
     void OnDebugDraw() override;
     void OnDebugDrawSelected() override;
 #endif
     void OnTransformChanged() override;
-    void PostLoad() override;
+    void Initialize() override;
     void Serialize(SerializeStream& stream, const void* otherObj) override;
     void Deserialize(DeserializeStream& stream, ISerializeModifier* modifier) override;
 };

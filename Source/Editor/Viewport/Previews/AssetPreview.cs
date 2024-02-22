@@ -1,4 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+
+#if USE_LARGE_WORLDS
+using Real = System.Double;
+#else
+using Real = System.Single;
+#endif
 
 using System;
 using FlaxEditor.Gizmo;
@@ -108,7 +114,7 @@ namespace FlaxEditor.Viewport.Previews
                 {
                     _editorPrimitives = Object.New<EditorPrimitives>();
                     _editorPrimitives.Viewport = this;
-                    Task.CustomPostFx.Add(_editorPrimitives);
+                    Task.AddCustomPostFx(_editorPrimitives);
                     Task.PostRender += OnPostRender;
                     var view = Task.View;
                     view.Flags |= ViewFlags.CustomPostProcess;
@@ -121,6 +127,18 @@ namespace FlaxEditor.Viewport.Previews
         /// Gets the editor primitives renderer. Valid only if <see cref="ShowEditorPrimitives"/> is true.
         /// </summary>
         public EditorPrimitives EditorPrimitives => _editorPrimitives;
+
+        /// <summary>
+        /// Custom debug drawing event (via <see cref="FlaxEngine.DebugDraw"/>).
+        /// </summary>
+        public event CustomDebugDrawDelegate CustomDebugDraw;
+
+        /// <summary>
+        /// Debug shapes drawing delegate.
+        /// </summary>
+        /// <param name="context">The GPU context.</param>
+        /// <param name="renderContext">The render context.</param>
+        public delegate void CustomDebugDrawDelegate(GPUContext context, ref RenderContext renderContext);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="AssetPreview"/> class.
@@ -143,7 +161,7 @@ namespace FlaxEditor.Viewport.Previews
             Task.ViewFlags = ViewFlags.DefaultAssetPreview;
             Task.AllowGlobalCustomPostFx = false;
 
-            var orbitRadius = 200.0f;
+            Real orbitRadius = 200.0f;
             if (camera is ArcBallCamera arcBallCamera)
                 orbitRadius = arcBallCamera.OrbitRadius;
             camera.SetArcBallView(new Quaternion(-0.08f, -0.92f, 0.31f, -0.23f), Vector3.Zero, orbitRadius);
@@ -153,6 +171,7 @@ namespace FlaxEditor.Viewport.Previews
                 // Show Default Scene
                 _showDefaultSceneButton = ViewWidgetShowMenu.AddButton("Default Scene", () => ShowDefaultSceneActors = !ShowDefaultSceneActors);
                 _showDefaultSceneButton.Checked = true;
+                _showDefaultSceneButton.CloseMenuOnClick = false;
             }
 
             // Setup preview scene
@@ -165,7 +184,6 @@ namespace FlaxEditor.Viewport.Previews
             //
             EnvProbe = new EnvironmentProbe
             {
-                AutoUpdate = false,
                 CustomProbe = FlaxEngine.Content.LoadAsyncInternal<CubeTexture>(EditorAssets.DefaultSkyCubeTexture)
             };
             //
@@ -196,9 +214,9 @@ namespace FlaxEditor.Viewport.Previews
             Task.AddCustomActor(PostFxVolume);
         }
 
-        private void OnPostRender(GPUContext context, RenderContext renderContext)
+        private void OnPostRender(GPUContext context, ref RenderContext renderContext)
         {
-            if (renderContext.View.Mode != ViewMode.Default && _editorPrimitives && _editorPrimitives.CanRender)
+            if (renderContext.View.Mode != ViewMode.Default && _editorPrimitives && _editorPrimitives.CanRender())
             {
                 // Render editor primitives, gizmo and debug shapes in debug view modes
                 // Note: can use Output buffer as both input and output because EditorPrimitives is using a intermediate buffers
@@ -216,7 +234,7 @@ namespace FlaxEditor.Viewport.Previews
         }
 
         /// <inheritdoc />
-        public override bool HasLoadedAssets => base.HasLoadedAssets && Sky.HasContentLoaded && EnvProbe.Probe.IsLoaded && PostFxVolume.HasContentLoaded;
+        public override bool HasLoadedAssets => base.HasLoadedAssets && Sky.HasContentLoaded && EnvProbe.HasContentLoaded && PostFxVolume.HasContentLoaded;
 
         /// <inheritdoc />
         public override void OnDestroy()
@@ -244,6 +262,7 @@ namespace FlaxEditor.Viewport.Previews
             {
                 DebugDraw.SetContext(_debugDrawContext);
                 DebugDraw.UpdateContext(_debugDrawContext, 1.0f / Mathf.Max(Engine.FramesPerSecond, 1));
+                CustomDebugDraw?.Invoke(context, ref renderContext);
                 OnDebugDraw(context, ref renderContext);
                 DebugDraw.Draw(ref renderContext, target.View(), targetDepth.View(), true);
                 DebugDraw.SetContext(IntPtr.Zero);

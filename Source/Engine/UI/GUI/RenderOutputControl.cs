@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -182,7 +182,7 @@ namespace FlaxEngine.GUI
         /// <inheritdoc />
         public override void Draw()
         {
-            var bounds = new Rectangle(Vector2.Zero, Size);
+            var bounds = new Rectangle(Float2.Zero, Size);
 
             // Draw background
             var backgroundColor = BackgroundColor;

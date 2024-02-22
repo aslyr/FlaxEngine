@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -197,7 +197,7 @@ public:
     // [IShaderResourceDX12]
     bool IsDepthStencilResource() const override
     {
-        return (_desc.Flags & GPUTextureFlags::DepthStencil) != 0;
+        return (_desc.Flags & GPUTextureFlags::DepthStencil) != GPUTextureFlags::None;
     }
     D3D12_CPU_DESCRIPTOR_HANDLE SRV() const override
     {
@@ -216,7 +216,7 @@ protected:
 
     // [GPUTexture]
     bool OnInit() override;
-    void onResidentMipsChanged() override;
+    void OnResidentMipsChanged() override;
     void OnReleaseGPU() override;
 };
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if GRAPHICS_API_DIRECTX11
 
@@ -114,7 +114,15 @@ GPUDevice* GPUDeviceDX11::Create()
     // Create DXGI factory
 #if PLATFORM_WINDOWS
     IDXGIFactory1* dxgiFactory;
-    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+    IDXGIFactory6* dxgiFactory6;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory6));
+    if (hr == S_OK)
+        dxgiFactory = dxgiFactory6;
+    else
+    {
+        dxgiFactory6 = nullptr;
+        hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
+    }
 #else
     IDXGIFactory2* dxgiFactory;
     HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
@@ -126,16 +134,17 @@ GPUDevice* GPUDeviceDX11::Create()
     }
 
     // Enumerate the DXGIFactory's adapters
+    int32 selectedAdapterIndex = -1;
     Array<GPUAdapterDX> adapters;
-    IDXGIAdapter* tmpAdapter;
-    for (uint32 index = 0; dxgiFactory->EnumAdapters(index, &tmpAdapter) != DXGI_ERROR_NOT_FOUND; index++)
+    IDXGIAdapter* tempAdapter;
+    for (uint32 index = 0; dxgiFactory->EnumAdapters(index, &tempAdapter) != DXGI_ERROR_NOT_FOUND; index++)
     {
         GPUAdapterDX adapter;
-        if (tmpAdapter && TryCreateDevice(tmpAdapter, maxAllowedFeatureLevel, &adapter.MaxFeatureLevel))
+        if (tempAdapter && TryCreateDevice(tempAdapter, maxAllowedFeatureLevel, &adapter.MaxFeatureLevel))
         {
             adapter.Index = index;
-            VALIDATE_DIRECTX_RESULT(tmpAdapter->GetDesc(&adapter.Description));
-            uint32 outputs = RenderToolsDX::CountAdapterOutputs(tmpAdapter);
+            VALIDATE_DIRECTX_CALL(tempAdapter->GetDesc(&adapter.Description));
+            uint32 outputs = RenderToolsDX::CountAdapterOutputs(tempAdapter);
 
             LOG(Info, "Adapter {1}: '{0}', DirectX {2}", adapter.Description.Description, index, RenderToolsDX::GetFeatureLevelString(adapter.MaxFeatureLevel));
             LOG(Info, "	Dedicated Video Memory: {0}, Dedicated System Memory: {1}, Shared System Memory: {2}, Output(s): {3}", Utilities::BytesToText(adapter.Description.DedicatedVideoMemory), Utilities::BytesToText(adapter.Description.DedicatedSystemMemory), Utilities::BytesToText(adapter.Description.SharedSystemMemory), outputs);
@@ -143,9 +152,41 @@ GPUDevice* GPUDeviceDX11::Create()
             adapters.Add(adapter);
         }
     }
+#if PLATFORM_WINDOWS
+    // Find the best performing adapter and prefer using it instead of the first device
+    const auto gpuPreference = DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE;
+    if (dxgiFactory6 != nullptr && selectedAdapterIndex == -1)
+    {
+        if (dxgiFactory6->EnumAdapterByGpuPreference(0, gpuPreference, IID_PPV_ARGS(&tempAdapter)) != DXGI_ERROR_NOT_FOUND)
+        {
+            GPUAdapterDX adapter;
+            if (tempAdapter && TryCreateDevice(tempAdapter, maxAllowedFeatureLevel, &adapter.MaxFeatureLevel))
+            {
+                DXGI_ADAPTER_DESC desc;
+                VALIDATE_DIRECTX_CALL(tempAdapter->GetDesc(&desc));
+                for (int i = 0; i < adapters.Count(); i++)
+                {
+                    if (adapters[i].Description.AdapterLuid.LowPart == desc.AdapterLuid.LowPart &&
+                        adapters[i].Description.AdapterLuid.HighPart == desc.AdapterLuid.HighPart)
+                    {
+                        selectedAdapterIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+#endif
 
     // Select the adapter to use
-    GPUAdapterDX selectedAdapter = adapters[0];
+    if (selectedAdapterIndex < 0)
+        selectedAdapterIndex = 0;
+    if (adapters.Count() == 0 || selectedAdapterIndex >= adapters.Count())
+    {
+        LOG(Error, "Failed to find valid DirectX adapter!");
+        return nullptr;
+    }
+    GPUAdapterDX selectedAdapter = adapters[selectedAdapterIndex];
     uint32 vendorId = 0;
     if (CommandLine::Options.NVIDIA)
         vendorId = GPU_VENDOR_ID_NVIDIA;
@@ -233,7 +274,7 @@ ID3D11BlendState* GPUDeviceDX11::GetBlendState(const BlendingMode& blending)
 #endif
 
     // Create object
-    VALIDATE_DIRECTX_RESULT(_device->CreateBlendState(&desc, &blendState));
+    VALIDATE_DIRECTX_CALL(_device->CreateBlendState(&desc, &blendState));
 
     // Cache blend state
     BlendStates.Add(blending, blendState);
@@ -266,6 +307,22 @@ bool GPUDeviceDX11::Init()
     }
     UpdateOutputs(adapter);
 
+    ComPtr<IDXGIFactory5> factory5;
+    _factoryDXGI->QueryInterface(IID_PPV_ARGS(&factory5));
+    if (factory5)
+    {
+        BOOL allowTearing;
+        if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))
+            && allowTearing
+#if PLATFORM_WINDOWS
+            && GetModuleHandleA("renderdoc.dll") == nullptr // Disable tearing with RenderDoc (prevents crashing)
+#endif
+        )
+        {
+            _allowTearing = true;
+        }
+    }
+
     // Get flags and device type base on current configuration
     uint32 flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 #if GPU_ENABLE_DIAGNOSTICS
@@ -276,18 +333,7 @@ bool GPUDeviceDX11::Init()
     // Create DirectX device
     D3D_FEATURE_LEVEL createdFeatureLevel = static_cast<D3D_FEATURE_LEVEL>(0);
     auto targetFeatureLevel = GetD3DFeatureLevel();
-    VALIDATE_DIRECTX_RESULT(D3D11CreateDevice(
-        adapter,
-        D3D_DRIVER_TYPE_UNKNOWN,
-        NULL,
-        flags,
-        &targetFeatureLevel,
-        1,
-        D3D11_SDK_VERSION,
-        &_device,
-        &createdFeatureLevel,
-        &_imContext
-    ));
+    VALIDATE_DIRECTX_CALL(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, &targetFeatureLevel, 1, D3D11_SDK_VERSION, &_device, &createdFeatureLevel, &_imContext));
 
     // Validate result
     ASSERT(_device);
@@ -313,6 +359,7 @@ bool GPUDeviceDX11::Init()
             limits.HasAppendConsumeBuffers = true;
             limits.HasSeparateRenderTargetBlendState = true;
             limits.HasDepthAsSRV = true;
+            limits.HasDepthClip = true;
             limits.HasReadOnlyDepth = true;
             limits.HasMultisampleDepthAsSRV = true;
             limits.HasTypedUAVLoad = featureDataD3D11Options2.TypedUAVLoadAdditionalFormats != 0;
@@ -336,6 +383,7 @@ bool GPUDeviceDX11::Init()
             limits.HasAppendConsumeBuffers = false;
             limits.HasSeparateRenderTargetBlendState = false;
             limits.HasDepthAsSRV = false;
+            limits.HasDepthClip = true;
             limits.HasReadOnlyDepth = createdFeatureLevel == D3D_FEATURE_LEVEL_10_1;
             limits.HasMultisampleDepthAsSRV = false;
             limits.HasTypedUAVLoad = false;
@@ -363,7 +411,7 @@ bool GPUDeviceDX11::Init()
     // Init debug layer
 #if GPU_ENABLE_DIAGNOSTICS
     ComPtr<ID3D11InfoQueue> infoQueue;
-    VALIDATE_DIRECTX_RESULT(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
+    VALIDATE_DIRECTX_CALL(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
     if (infoQueue)
     {
         D3D11_INFO_QUEUE_FILTER filter;
@@ -411,7 +459,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerLinearClamp);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
         // Point Clamp
         samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -421,7 +469,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerPointClamp);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
         // Linear Wrap
         samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -431,7 +479,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerLinearWrap);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
         // Point Wrap
         samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
@@ -441,7 +489,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerPointWrap);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
         // Shadow
         samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
@@ -454,7 +502,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerShadow);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
 
         // Shadow PCF
         samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
@@ -468,7 +516,7 @@ bool GPUDeviceDX11::Init()
         samplerDesc.MinLOD = 0;
         samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         result = _device->CreateSamplerState(&samplerDesc, &_samplerShadowPCF);
-        LOG_DIRECTX_RESULT_WITH_RETURN(result);
+        LOG_DIRECTX_RESULT_WITH_RETURN(result, true);
     }
 
     // Rasterizer States
@@ -488,7 +536,7 @@ bool GPUDeviceDX11::Init()
 			rDesc.AntialiasedLineEnable = !!wireframe; \
 			rDesc.DepthClipEnable = !!depthClip; \
 			result = _device->CreateRasterizerState(&rDesc, &RasterizerStates[index]); \
-			LOG_DIRECTX_RESULT_WITH_RETURN(result)
+			LOG_DIRECTX_RESULT_WITH_RETURN(result, true)
         CREATE_RASTERIZER_STATE(CullMode::Normal, D3D11_CULL_BACK, false, false);
         CREATE_RASTERIZER_STATE(CullMode::Inverted, D3D11_CULL_FRONT, false, false);
         CREATE_RASTERIZER_STATE(CullMode::TwoSided, D3D11_CULL_NONE, false, false);
@@ -515,14 +563,14 @@ bool GPUDeviceDX11::Init()
         dsDesc.FrontFace = defaultStencilOp;
         dsDesc.BackFace = defaultStencilOp;
         int32 index;
-#define CREATE_DEPTH_STENCIL_STATE(depthTextEnable, depthWrite) \
-			dsDesc.DepthEnable = depthTextEnable; \
+#define CREATE_DEPTH_STENCIL_STATE(depthEnable, depthWrite) \
+			dsDesc.DepthEnable = depthEnable; \
 			dsDesc.DepthWriteMask = depthWrite ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO; \
 			for(int32 depthFunc = 1; depthFunc <= 8; depthFunc++) { \
 			dsDesc.DepthFunc = (D3D11_COMPARISON_FUNC)depthFunc; \
-			index = (int32)depthFunc + (depthTextEnable ? 0 : 9) + (depthWrite ? 0 : 18); \
+			index = (int32)depthFunc + (depthEnable ? 0 : 9) + (depthWrite ? 0 : 18); \
 			HRESULT result = _device->CreateDepthStencilState(&dsDesc, &DepthStencilStates[index]); \
-			LOG_DIRECTX_RESULT_WITH_RETURN(result); }
+			LOG_DIRECTX_RESULT_WITH_RETURN(result, true); }
         CREATE_DEPTH_STENCIL_STATE(false, false);
         CREATE_DEPTH_STENCIL_STATE(false, true);
         CREATE_DEPTH_STENCIL_STATE(true, true);
@@ -620,7 +668,7 @@ void GPUDeviceDX11::DrawEnd()
 #if GPU_ENABLE_DIAGNOSTICS
     // Flush debug messages queue
     ComPtr<ID3D11InfoQueue> infoQueue;
-    VALIDATE_DIRECTX_RESULT(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
+    VALIDATE_DIRECTX_CALL(_device->QueryInterface(IID_PPV_ARGS(&infoQueue)));
     if (infoQueue)
     {
         Array<uint8> data;
@@ -694,6 +742,31 @@ GPUSampler* GPUDeviceDX11::CreateSampler()
 GPUSwapChain* GPUDeviceDX11::CreateSwapChain(Window* window)
 {
     return New<GPUSwapChainDX11>(this, window);
+}
+
+GPUConstantBuffer* GPUDeviceDX11::CreateConstantBuffer(uint32 size, const StringView& name)
+{
+    ID3D11Buffer* buffer = nullptr;
+    uint32 memorySize = 0;
+    if (size)
+    {
+        // Create buffer
+        D3D11_BUFFER_DESC cbDesc;
+        cbDesc.ByteWidth = Math::AlignUp<uint32>(size, 16);
+        cbDesc.Usage = D3D11_USAGE_DEFAULT;
+        cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        cbDesc.CPUAccessFlags = 0;
+        cbDesc.MiscFlags = 0;
+        cbDesc.StructureByteStride = 0;
+        const HRESULT result = _device->CreateBuffer(&cbDesc, nullptr, &buffer);
+        if (FAILED(result))
+        {
+            LOG_DIRECTX_RESULT(result);
+            return nullptr;
+        }
+        memorySize = cbDesc.ByteWidth;
+    }
+    return New<GPUConstantBufferDX11>(this, size, memorySize, buffer, name);
 }
 
 #endif

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Gizmo;
@@ -88,14 +88,14 @@ namespace FlaxEditor.Tools.Terrain
                 var patchCoord = Mode.SelectedPatchCoord;
                 if (!terrain.HasPatch(ref patchCoord) && _planeModel)
                 {
-                    var planeSize = 256.0f;
+                    var planeSize = 100.0f;
                     var patchSize = terrain.ChunkSize * FlaxEngine.Terrain.UnitsPerVertex * FlaxEngine.Terrain.PatchEdgeChunksCount;
-                    Matrix world = Matrix.RotationZ(-Mathf.PiOverTwo) *
+                    Matrix world = Matrix.RotationX(-Mathf.PiOverTwo) *
                                    Matrix.Scaling(patchSize / planeSize) *
                                    Matrix.Translation(patchSize * (0.5f + patchCoord.X), 0, patchSize * (0.5f + patchCoord.Y)) *
                                    Matrix.Scaling(terrain.Scale) *
                                    Matrix.RotationQuaternion(terrain.Orientation) *
-                                   Matrix.Translation(terrain.Position);
+                                   Matrix.Translation(terrain.Position - renderContext.View.Origin);
                     _planeModel.Draw(ref renderContext, _highlightMaterial, ref world);
                 }
 

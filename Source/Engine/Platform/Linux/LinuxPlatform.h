@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #if PLATFORM_LINUX
 
 #include "Engine/Platform/Unix/UnixPlatform.h"
+#include <pthread.h>
 
 /// <summary>
 /// The Linux platform implementation and application management utilities.
@@ -31,6 +32,11 @@ public:
     /// </summary>
     /// <returns>The user home directory.</returns>
     static const String& GetHomeDirectory();
+
+    /// <summary>
+    /// An event that is fired when an XEvent is received during platform tick.
+    /// </summary>
+    static Delegate<void*> xEventRecieved;
 
 public:
 
@@ -92,7 +98,10 @@ public:
     static int32 GetCacheLineSize();
     static MemoryStats GetMemoryStats();
     static ProcessMemoryStats GetProcessMemoryStats();
-    static uint64 GetCurrentThreadID();
+    static uint64 GetCurrentThreadID()
+    {
+        return static_cast<uint64>(pthread_self());
+    }
     static void SetThreadPriority(ThreadPriority priority);
     static void SetThreadAffinityMask(uint64 affinityMask);
     static void Sleep(int32 milliseconds);
@@ -105,6 +114,9 @@ public:
     }
     static void GetSystemTime(int32& year, int32& month, int32& dayOfWeek, int32& day, int32& hour, int32& minute, int32& second, int32& millisecond);
     static void GetUTCTime(int32& year, int32& month, int32& dayOfWeek, int32& day, int32& hour, int32& minute, int32& second, int32& millisecond);
+#if !BUILD_RELEASE
+    static bool IsDebuggerPresent();
+#endif
     static bool Init();
     static void BeforeRun();
     static void Tick();
@@ -113,29 +125,28 @@ public:
     static int32 GetDpi();
     static String GetUserLocaleName();
     static String GetComputerName();
-    static String GetUserName();
     static bool GetHasFocus();
     static bool CanOpenUrl(const StringView& url);
     static void OpenUrl(const StringView& url);
-    static Vector2 GetMousePosition();
-    static void SetMousePosition(const Vector2& pos);
-	static Rectangle GetMonitorBounds(const Vector2& screenPos);
-	static Vector2 GetDesktopSize();
-	static Rectangle GetVirtualDesktopBounds();
-	static String GetMainDirectory();
-	static String GetExecutableFilePath();
-	static Guid GetUniqueDeviceId();
+    static Float2 GetMousePosition();
+    static void SetMousePosition(const Float2& pos);
+    static Rectangle GetMonitorBounds(const Float2& screenPos);
+    static Float2 GetDesktopSize();
+    static Rectangle GetVirtualDesktopBounds();
+    static String GetMainDirectory();
+    static String GetExecutableFilePath();
+    static Guid GetUniqueDeviceId();
     static String GetWorkingDirectory();
-	static bool SetWorkingDirectory(const String& path);
+    static bool SetWorkingDirectory(const String& path);
     static Window* CreateWindow(const CreateWindowSettings& settings);
+    static void GetEnvironmentVariables(Dictionary<String, String, HeapAllocation>& result);
     static bool GetEnvironmentVariable(const String& name, String& value);
     static bool SetEnvironmentVariable(const String& name, const String& value);
-    static int32 StartProcess(const StringView& filename, const StringView& args, const StringView& workingDir, bool hiddenWindow = false, bool waitForEnd = false);
-    static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, bool hiddenWindow = true);
-    static int32 RunProcess(const StringView& cmdLine, const StringView& workingDir, const Dictionary<String, String, HeapAllocation>& environment, bool hiddenWindow = true);
+    static int32 CreateProcess(CreateProcessSettings& settings);
     static void* LoadLibrary(const Char* filename);
     static void FreeLibrary(void* handle);
     static void* GetProcAddress(void* handle, const char* symbol);
+    static Array<StackFrame, HeapAllocation> GetStackFrames(int32 skipCount = 0, int32 maxDepth = 60, void* context = nullptr);
 };
 
 #endif

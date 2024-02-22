@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -167,6 +167,20 @@ namespace FlaxEditor.Surface
                 Name = "Flow",
                 Color = new Color(237, 136, 64),
                 Archetypes = Archetypes.Flow.Nodes
+            },
+            new GroupArchetype
+            {
+                GroupID = 18,
+                Name = "Collections",
+                Color = new Color(110, 180, 81),
+                Archetypes = Archetypes.Collections.Nodes
+            },
+            new GroupArchetype
+            {
+                GroupID = 19,
+                Name = "Behavior Tree",
+                Color = new Color(70, 220, 181),
+                Archetypes = Archetypes.BehaviorTree.Nodes
             },
         };
 

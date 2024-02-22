@@ -1,5 +1,5 @@
 //#define USE_AUTODESK_FBX_SDK
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEditor.GUI.Dialogs;
@@ -19,7 +19,7 @@ namespace FlaxEditor.Windows
         public AboutDialog()
         : base("About Flax")
         {
-            _dialogSize = Size = new Vector2(400, 320);
+            _dialogSize = Size = new Float2(400, 320);
 
             Control header = CreateHeader();
             Control authorsLabel = CreateAuthorsLabels(header);
@@ -47,14 +47,16 @@ namespace FlaxEditor.Windows
             };
             new Label(nameLabel.Left, nameLabel.Bottom + 4, nameLabel.Width, 50)
             {
-                Text = string.Format("Version: {0}\nCopyright (c) 2012-2021 Wojciech Figat.\nAll rights reserved.", Globals.EngineVersion),
+                Text = string.Format("Version: {0}\nCopyright (c) 2012-2023 Wojciech Figat.\nAll rights reserved.", Globals.EngineVersion),
                 HorizontalAlignment = TextAlignment.Near,
                 VerticalAlignment = TextAlignment.Near,
                 Parent = this
             };
-            var copyVersionButton = new Button(Width - 104, 6, 100, 20)
+            var buttonText = "Copy version info";
+            var fontSize = Style.Current.FontMedium.MeasureText(buttonText);
+            var copyVersionButton = new Button(Width - fontSize.X - 8, 6, fontSize.X + 4, 20)
             {
-                Text = "Copy version info",
+                Text = buttonText,
                 TooltipText = "Copies the current engine version information to system clipboard.",
                 Parent = this
             };
@@ -93,6 +95,8 @@ namespace FlaxEditor.Windows
                 "Stefan Brandmair",
                 "Lukáš Jech",
                 "Jean-Baptiste Perrier",
+                "Chandler Cox",
+                "Ari Vuollet",
             });
             authors.Sort();
             var authorsLabel = new Label(4, topParentControl.Bottom + 20, Width - 8, 70)
@@ -123,6 +127,9 @@ namespace FlaxEditor.Windows
                 "Used third party software:",
                 "",
                 "Mono Project - www.mono-project.com",
+#if USE_NETCORE
+                ".NET - www.dotnet.microsoft.com",
+#endif
                 "FreeType Project - www.freetype.org",
                 "Assimp - www.assimp.sourceforge.net",
                 "DirectXMesh - Copyright (c) Microsoft Corporation. All rights reserved.",

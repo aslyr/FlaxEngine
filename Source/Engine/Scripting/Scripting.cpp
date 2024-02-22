@@ -1,8 +1,7 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "BinaryModule.h"
 #include "Scripting.h"
-#include "StdTypesContainer.h"
 #include "ScriptingType.h"
 #include "FlaxEngine.Gen.h"
 #include "Engine/Threading/Threading.h"
@@ -12,6 +11,7 @@
 #include "Engine/Platform/File.h"
 #include "Engine/Debug/DebugLog.h"
 #if USE_EDITOR
+#include "Engine/Level/Level.h"
 #include "Editor/Scripting/ScriptsBuilder.h"
 #endif
 #include "ManagedCLR/MAssembly.h"
@@ -19,8 +19,8 @@
 #include "ManagedCLR/MMethod.h"
 #include "ManagedCLR/MDomain.h"
 #include "ManagedCLR/MCore.h"
-#include "MException.h"
-#include "Engine/Level/Level.h"
+#include "ManagedCLR/MException.h"
+#include "Internal/StdTypesContainer.h"
 #include "Engine/Core/ObjectsRemovalService.h"
 #include "Engine/Core/Types/TimeSpan.h"
 #include "Engine/Profiler/ProfilerCPU.h"
@@ -28,17 +28,15 @@
 #include "Engine/Content/Content.h"
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Engine/Globals.h"
+#include "Engine/Engine/Time.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Serialization/JsonTools.h"
-#include <ThirdParty/mono-2.0/mono/metadata/mono-debug.h>
-#include <ThirdParty/mono-2.0/mono/metadata/object.h>
 
 extern void registerFlaxEngineInternalCalls();
 
 class ScriptingService : public EngineService
 {
 public:
-
     ScriptingService()
         : EngineService(TEXT("Scripting"), -20)
     {
@@ -48,6 +46,7 @@ public:
     void Update() override;
     void LateUpdate() override;
     void FixedUpdate() override;
+    void LateFixedUpdate() override;
     void Draw() override;
     void BeforeExit() override;
     void Dispose() override;
@@ -55,8 +54,8 @@ public:
 
 namespace
 {
-    MDomain* _monoRootDomain = nullptr;
-    MDomain* _monoScriptsDomain = nullptr;
+    MDomain* _rootDomain = nullptr;
+    MDomain* _scriptsDomain = nullptr;
     CriticalSection _objectsLocker;
 #define USE_OBJECTS_DISPOSE_CRASHES_DEBUGGING 0
 #if USE_OBJECTS_DISPOSE_CRASHES_DEBUGGING
@@ -102,9 +101,10 @@ namespace
     MMethod* _method_Update = nullptr;
     MMethod* _method_LateUpdate = nullptr;
     MMethod* _method_FixedUpdate = nullptr;
+    MMethod* _method_LateFixedUpdate = nullptr;
     MMethod* _method_Draw = nullptr;
     MMethod* _method_Exit = nullptr;
-    Array<BinaryModule*, InlinedAllocation<64>> _nonNativeModules;
+    Dictionary<StringAnsi, BinaryModule*, InlinedAllocation<64>> _nonNativeModules;
 #if USE_EDITOR
     bool LastBinariesLoadTriggeredCompilation = false;
 #endif
@@ -115,7 +115,7 @@ Action Scripting::ScriptsLoaded;
 Action Scripting::ScriptsUnload;
 Action Scripting::ScriptsReloading;
 Action Scripting::ScriptsReloaded;
-ThreadLocal<Scripting::IdsMappingTable*, PLATFORM_THREADS_LIMIT, true> Scripting::ObjectsLookupIdMapping;
+ThreadLocal<Scripting::IdsMappingTable*, PLATFORM_THREADS_LIMIT> Scripting::ObjectsLookupIdMapping;
 ScriptingService ScriptingServiceInstance;
 
 bool initFlaxEngine();
@@ -128,30 +128,25 @@ bool ScriptingService::Init()
 {
     const auto startTime = DateTime::NowUTC();
 
-    // Link for assemblies events
-    auto engineAssembly = ((NativeBinaryModule*)GetBinaryModuleFlaxEngine())->Assembly;
-    engineAssembly->Loaded.Bind(onEngineLoaded);
-    engineAssembly->Unloading.Bind(onEngineUnloading);
-
     // Initialize managed runtime
-    if (MCore::Instance()->LoadEngine())
+    if (MCore::LoadEngine())
     {
-        LOG(Fatal, "Mono initialization failed.");
+        LOG(Fatal, "C# runtime initialization failed.");
         return true;
     }
 
     // Cache root domain
-    _monoRootDomain = MCore::Instance()->GetRootDomain();
+    _rootDomain = MCore::GetRootDomain();
 
-#if USE_SINGLE_DOMAIN
+#if USE_SCRIPTING_SINGLE_DOMAIN
     // Use single root domain
-    auto domain = _monoRootDomain;
+    auto domain = _rootDomain;
 #else
-	// Create Mono domain for scripts
-	auto domain = MCore::Instance()->CreateDomain(TEXT("Scripts Domain"));
+    // Create Mono domain for scripts
+    auto domain = MCore::CreateDomain("Scripts Domain");
 #endif
     domain->SetCurrentDomain(true);
-    _monoScriptsDomain = domain;
+    _scriptsDomain = domain;
 
     // Add internal calls
     registerFlaxEngineInternalCalls();
@@ -169,6 +164,9 @@ bool ScriptingService::Init()
     return false;
 }
 
+#if COMPILE_WITHOUT_CSHARP
+#define INVOKE_EVENT(name)
+#else
 #define INVOKE_EVENT(name) \
     if (!_isEngineAssemblyLoaded) return; \
 	if (_method_##name == nullptr) \
@@ -186,53 +184,63 @@ bool ScriptingService::Init()
 			return; \
 		} \
 	} \
-	MonoObject* exception = nullptr; \
+	MObject* exception = nullptr; \
 	_method_##name->Invoke(nullptr, nullptr, &exception); \
 	DebugLog::LogException(exception)
+#endif
 
 void ScriptingService::Update()
 {
     PROFILE_CPU_NAMED("Scripting::Update");
-
     INVOKE_EVENT(Update);
+
+#ifdef USE_NETCORE
+    // Force GC to run in background periodically to avoid large blocking collections causing hitches
+    if (Time::Update.TicksCount % 60 == 0)
+    {
+        MCore::GC::Collect(MCore::GC::MaxGeneration(), MGCCollectionMode::Forced, false, false);
+    }
+#endif
 }
 
 void ScriptingService::LateUpdate()
 {
     PROFILE_CPU_NAMED("Scripting::LateUpdate");
-
     INVOKE_EVENT(LateUpdate);
 }
 
 void ScriptingService::FixedUpdate()
 {
     PROFILE_CPU_NAMED("Scripting::FixedUpdate");
-
     INVOKE_EVENT(FixedUpdate);
+}
+
+void ScriptingService::LateFixedUpdate()
+{
+    PROFILE_CPU_NAMED("Scripting::LateFixedUpdate");
+    INVOKE_EVENT(LateFixedUpdate);
 }
 
 void ScriptingService::Draw()
 {
     PROFILE_CPU_NAMED("Scripting::Draw");
-
     INVOKE_EVENT(Draw);
 }
 
 void ScriptingService::BeforeExit()
 {
     PROFILE_CPU_NAMED("Scripting::BeforeExit");
-
     INVOKE_EVENT(Exit);
 }
 
 MDomain* Scripting::GetRootDomain()
 {
-    return _monoRootDomain;
+    return _rootDomain;
 }
 
 MDomain* Scripting::GetScriptsDomain()
 {
-    return _monoScriptsDomain;
+    return _scriptsDomain;
 }
 
 void Scripting::ProcessBuildInfoPath(String& path, const String& projectFolderPath)
@@ -276,10 +284,9 @@ bool Scripting::LoadBinaryModules(const String& path, const String& projectFolde
 
     // Load all references
     auto referencesMember = document.FindMember("References");
-    if (referencesMember != document.MemberEnd())
+    if (referencesMember != document.MemberEnd() && referencesMember->value.IsArray())
     {
         auto& referencesArray = referencesMember->value;
-        ASSERT(referencesArray.IsArray());
         for (rapidjson::SizeType i = 0; i < referencesArray.Size(); i++)
         {
             auto& reference = referencesArray[i];
@@ -308,10 +315,9 @@ bool Scripting::LoadBinaryModules(const String& path, const String& projectFolde
 
     // Load all binary modules
     auto binaryModulesMember = document.FindMember("BinaryModules");
-    if (binaryModulesMember != document.MemberEnd())
+    if (binaryModulesMember != document.MemberEnd() && binaryModulesMember->value.IsArray())
     {
         auto& binaryModulesArray = binaryModulesMember->value;
-        ASSERT(binaryModulesArray.IsArray());
         for (rapidjson::SizeType i = 0; i < binaryModulesArray.Size(); i++)
         {
             auto& binaryModule = binaryModulesArray[i];
@@ -332,6 +338,8 @@ bool Scripting::LoadBinaryModules(const String& path, const String& projectFolde
             // Check if that module has been already registered
             BinaryModule* module = BinaryModule::GetModule(nameAnsi);
             if (!module)
+                _nonNativeModules.TryGet(nameAnsi, module);
+            if (!module)
             {
                 // C++
                 if (nativePath.HasChars())
@@ -350,10 +358,18 @@ bool Scripting::LoadBinaryModules(const String& path, const String& projectFolde
                     {
                         // Load library
                         const auto startTime = DateTime::NowUTC();
-#if PLATFORM_ANDROID
-                        // On Android all native binaries are side-by-side with the app
-                        nativePath = StringUtils::GetDirectoryName(Platform::GetExecutableFilePath());
-                        nativePath /= StringUtils::GetFileName(nativePath);
+#if PLATFORM_ANDROID || PLATFORM_MAC
+                        // On some platforms all native binaries are side-by-side with the app in a different folder
+                        if (!FileSystem::FileExists(nativePath))
+                        {
+                            nativePath = String(StringUtils::GetDirectoryName(Platform::GetExecutableFilePath())) / StringUtils::GetFileName(nativePath);
+                        }
+#elif PLATFORM_IOS
+                        // iOS uses Frameworks folder with native binaries
+                        if (!FileSystem::FileExists(nativePath))
+                        {
+                            nativePath = Globals::ProjectFolder / TEXT("Frameworks") / StringUtils::GetFileName(nativePath);
+                        }
 #endif
                         auto library = Platform::LoadLibrary(nativePath.Get());
                         if (!library)
@@ -391,20 +407,22 @@ bool Scripting::LoadBinaryModules(const String& path, const String& projectFolde
                 else
                 {
                     // Create module if native library is not used
-                    module = New<ManagedBinaryModule>(nameAnsi, MAssemblyOptions());
-                    _nonNativeModules.Add(module);
+                    module = New<ManagedBinaryModule>(nameAnsi);
+                    _nonNativeModules.Add(nameAnsi, module);
                 }
             }
 
+#if !COMPILE_WITHOUT_CSHARP
             // C#
             if (managedPath.HasChars() && !((ManagedBinaryModule*)module)->Assembly->IsLoaded())
             {
-                if (((ManagedBinaryModule*)module)->Assembly->Load(managedPath))
+                if (((ManagedBinaryModule*)module)->Assembly->Load(managedPath, nativePath))
                 {
                     LOG(Error, "Failed to load C# assembly '{0}' for binary module {1}.", managedPath, name);
                     return true;
                 }
             }
+#endif
 
             BinaryModuleLoaded(module);
         }
@@ -418,20 +436,78 @@ bool Scripting::Load()
     PROFILE_CPU();
     // Note: this action can be called from main thread (due to Mono problems with assemblies actions from other threads)
     ASSERT(IsInMainThread());
+    ScopeLock lock(BinaryModule::Locker);
 
+#if USE_CSHARP
     // Load C# core assembly
-    if (GetBinaryModuleCorlib()->Assembly->Load(mono_get_corlib()))
+    ManagedBinaryModule* corlib = GetBinaryModuleCorlib();
+    if (corlib->Assembly->LoadCorlib())
     {
         LOG(Error, "Failed to load corlib C# assembly.");
         return true;
     }
 
+    // Initialize C# corelib types
+    {
+        const auto& corlibClasses = corlib->Assembly->GetClasses();
+        bool gotAll = true;
+#define CACHE_CORLIB_CLASS(var, name) gotAll &= corlibClasses.TryGet(StringAnsiView(name), MCore::TypeCache::var)
+        CACHE_CORLIB_CLASS(Void, "System.Void");
+        CACHE_CORLIB_CLASS(Object, "System.Object");
+        CACHE_CORLIB_CLASS(Byte, "System.Byte");
+        CACHE_CORLIB_CLASS(Boolean, "System.Boolean");
+        CACHE_CORLIB_CLASS(SByte, "System.SByte");
+        CACHE_CORLIB_CLASS(Char, "System.Char");
+        CACHE_CORLIB_CLASS(Int16, "System.Int16");
+        CACHE_CORLIB_CLASS(UInt16, "System.UInt16");
+        CACHE_CORLIB_CLASS(Int32, "System.Int32");
+        CACHE_CORLIB_CLASS(UInt32, "System.UInt32");
+        CACHE_CORLIB_CLASS(Int64, "System.Int64");
+        CACHE_CORLIB_CLASS(UInt64, "System.UInt64");
+        CACHE_CORLIB_CLASS(IntPtr, "System.IntPtr");
+        CACHE_CORLIB_CLASS(UIntPtr, "System.UIntPtr");
+        CACHE_CORLIB_CLASS(Single, "System.Single");
+        CACHE_CORLIB_CLASS(Double, "System.Double");
+        CACHE_CORLIB_CLASS(String, "System.String");
+#undef CACHE_CORLIB_CLASS
+        if (!gotAll)
+        {
+            LOG(Error, "Failed to load corlib C# assembly.");
+            for (const auto& e : corlibClasses)
+                LOG(Info, "Class: {0}", String(e.Value->GetFullName()));
+            return true;
+        }
+    }
+#endif
+
     // Load FlaxEngine
     const String flaxEnginePath = Globals::BinariesFolder / TEXT("FlaxEngine.CSharp.dll");
-    if (((NativeBinaryModule*)GetBinaryModuleFlaxEngine())->Assembly->Load(flaxEnginePath))
+    auto* flaxEngineModule = (NativeBinaryModule*)GetBinaryModuleFlaxEngine();
+    if (!flaxEngineModule->Assembly->IsLoaded())
     {
-        LOG(Error, "Failed to load FlaxEngine C# assembly.");
-        return true;
+        if (flaxEngineModule->Assembly->Load(flaxEnginePath))
+        {
+            LOG(Error, "Failed to load FlaxEngine C# assembly.");
+            return true;
+        }
+        onEngineLoaded(flaxEngineModule->Assembly);
+
+        // Insert type aliases for vector types that don't exist in C++ but are just typedef (properly redirect them to actual types)
+        // TODO: add support for automatic typedef aliases setup for scripting module to properly lookup type from the alias typename
+#if USE_LARGE_WORLDS
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector2"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Double2"];
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector3"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Double3"];
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector4"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Double4"];
+#else
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector2"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Float2"];
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector3"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Float3"];
+        flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector4"] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Float4"];
+#endif
+#if USE_CSHARP
+        flaxEngineModule->ClassToTypeIndex[flaxEngineModule->Assembly->GetClass("FlaxEngine.Vector2")] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector2"];
+        flaxEngineModule->ClassToTypeIndex[flaxEngineModule->Assembly->GetClass("FlaxEngine.Vector3")] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector3"];
+        flaxEngineModule->ClassToTypeIndex[flaxEngineModule->Assembly->GetClass("FlaxEngine.Vector4")] = flaxEngineModule->TypeNameToTypeIndex["FlaxEngine.Vector4"];
+#endif
     }
 
 #if USE_EDITOR
@@ -446,9 +522,10 @@ bool Scripting::Load()
     // Flax.Build outputs the <target>.Build.json with binary modules to use for game scripting
     const Char *target, *platform, *architecture, *configuration;
     ScriptsBuilder::GetBinariesConfiguration(target, platform, architecture, configuration);
-    if (target == nullptr)
+    if (StringUtils::Length(target) == 0)
     {
         LOG(Info, "Missing EditorTarget in project. Not using game script modules.");
+        _hasGameModulesLoaded = true;
         return false;
     }
     const String targetBuildInfo = Globals::ProjectFolder / TEXT("Binaries") / target / platform / architecture / configuration / target + TEXT(".Build.json");
@@ -510,6 +587,19 @@ void Scripting::Release()
     }
     _objectsLocker.Unlock();
 
+    // Release assets sourced from game assemblies
+    const auto flaxModule = GetBinaryModuleFlaxEngine();
+    for (auto asset : Content::GetAssets())
+    {
+        if (asset->GetTypeHandle().Module == flaxModule)
+            continue;
+
+        asset->DeleteObjectNow();
+    }
+
+    auto* flaxEngineModule = (NativeBinaryModule*)GetBinaryModuleFlaxEngine();
+    onEngineUnloading(flaxEngineModule->Assembly);
+
     // Unload assemblies (from back to front)
     {
         LOG(Info, "Unloading binary modules");
@@ -517,13 +607,6 @@ void Scripting::Release()
         for (int32 i = modules.Count() - 1; i >= 0; i--)
         {
             auto module = modules[i];
-            if (module == GetBinaryModuleCorlib() || module == GetBinaryModuleFlaxEngine())
-            {
-                // Just C# assembly unload for in-build modules
-                ((ManagedBinaryModule*)module)->Assembly->Unload();
-                continue;
-            }
-
             module->Destroy(false);
         }
         _nonNativeModules.ClearDelete();
@@ -538,7 +621,7 @@ void Scripting::Release()
     ObjectsRemovalService::Flush();
 
     // Switch domain
-    auto rootDomain = MCore::Instance()->GetRootDomain();
+    auto rootDomain = MCore::GetRootDomain();
     if (rootDomain)
     {
         if (!rootDomain->SetCurrentDomain(false))
@@ -547,8 +630,8 @@ void Scripting::Release()
         }
     }
 
-#if !USE_SINGLE_DOMAIN
-    MCore::Instance()->UnloadDomain("Scripts Domain");
+#if !USE_SCRIPTING_SINGLE_DOMAIN
+    MCore::UnloadDomain("Scripts Domain");
 #endif
 }
 
@@ -598,9 +681,9 @@ void Scripting::Reload(bool canTriggerSceneReload)
     MCore::GC::WaitForPendingFinalizers();
 
     // Destroy objects from game assemblies (eg. not released objects that might crash if persist in memory after reload)
+    const auto flaxModule = GetBinaryModuleFlaxEngine();
     _objectsLocker.Lock();
     {
-        const auto flaxModule = GetBinaryModuleFlaxEngine();
         for (auto i = _objectsDictionary.Begin(); i.IsNotEnd(); ++i)
         {
             auto obj = i->Value;
@@ -614,6 +697,15 @@ void Scripting::Reload(bool canTriggerSceneReload)
         }
     }
     _objectsLocker.Unlock();
+
+    // Release assets sourced from game assemblies
+    for (auto asset : Content::GetAssets())
+    {
+        if (asset->GetTypeHandle().Module == flaxModule)
+            continue;
+
+        asset->DeleteObjectNow();
+    }
 
     // Unload all game modules
     LOG(Info, "Unloading game binary modules");
@@ -629,6 +721,9 @@ void Scripting::Reload(bool canTriggerSceneReload)
     modules.Clear();
     _nonNativeModules.ClearDelete();
     _hasGameModulesLoaded = false;
+
+    // Release and create a new assembly load context for user assemblies
+    MCore::ReloadScriptingAssemblyLoadContext();
 
     // Give GC a try to cleanup old user objects and the other mess
     MCore::GC::Collect();
@@ -646,25 +741,6 @@ void Scripting::Reload(bool canTriggerSceneReload)
 
 #endif
 
-MClass* Scripting::FindClass(MonoClass* monoClass)
-{
-    if (monoClass == nullptr)
-        return nullptr;
-    PROFILE_CPU();
-    auto& modules = BinaryModule::GetModules();
-    for (auto module : modules)
-    {
-        auto managedModule = dynamic_cast<ManagedBinaryModule*>(module);
-        if (managedModule && managedModule->Assembly->IsLoaded())
-        {
-            MClass* result = managedModule->Assembly->GetClass(monoClass);
-            if (result != nullptr)
-                return result;
-        }
-    }
-    return nullptr;
-}
-
 MClass* Scripting::FindClass(const StringAnsiView& fullname)
 {
     if (fullname.IsEmpty())
@@ -679,25 +755,6 @@ MClass* Scripting::FindClass(const StringAnsiView& fullname)
             MClass* result = managedModule->Assembly->GetClass(fullname);
             if (result != nullptr)
                 return result;
-        }
-    }
-    return nullptr;
-}
-
-MonoClass* Scripting::FindClassNative(const StringAnsiView& fullname)
-{
-    if (fullname.IsEmpty())
-        return nullptr;
-    PROFILE_CPU();
-    auto& modules = BinaryModule::GetModules();
-    for (auto module : modules)
-    {
-        auto managedModule = dynamic_cast<ManagedBinaryModule*>(module);
-        if (managedModule && managedModule->Assembly->IsLoaded())
-        {
-            MClass* result = managedModule->Assembly->GetClass(fullname);
-            if (result != nullptr)
-                return result->GetNative();
         }
     }
     return nullptr;
@@ -720,9 +777,85 @@ ScriptingTypeHandle Scripting::FindScriptingType(const StringAnsiView& fullname)
     return ScriptingTypeHandle();
 }
 
+ScriptingObject* Scripting::NewObject(const ScriptingTypeHandle& type)
+{
+    if (!type)
+    {
+        LOG(Error, "Invalid type.");
+        return nullptr;
+    }
+    const ScriptingType& scriptingType = type.GetType();
+
+    // Create unmanaged object
+    const ScriptingObjectSpawnParams params(Guid::New(), type);
+    ScriptingObject* obj = scriptingType.Script.Spawn(params);
+    if (obj == nullptr)
+        LOG(Error, "Failed to spawn object of type \'{0}\'.", scriptingType.ToString());
+    return obj;
+}
+
+ScriptingObject* Scripting::NewObject(const MClass* type)
+{
+    if (type == nullptr)
+    {
+        LOG(Error, "Invalid type.");
+        return nullptr;
+    }
+#if USE_CSHARP
+    // Get the assembly with that class
+    auto module = ManagedBinaryModule::FindModule(type);
+    if (module == nullptr)
+    {
+        LOG(Error, "Cannot find scripting assembly for type \'{0}\'.", String(type->GetFullName()));
+        return nullptr;
+    }
+
+    // Try to find the scripting type for this class
+    int32 typeIndex;
+    if (!module->ClassToTypeIndex.TryGet(type, typeIndex))
+    {
+        LOG(Error, "Cannot spawn objects of type \'{0}\'.", String(type->GetFullName()));
+        return nullptr;
+    }
+    const ScriptingType& scriptingType = module->Types[typeIndex];
+
+    // Create unmanaged object
+    const ScriptingObjectSpawnParams params(Guid::New(), ScriptingTypeHandle(module, typeIndex));
+    ScriptingObject* obj = scriptingType.Script.Spawn(params);
+    if (obj == nullptr)
+        LOG(Error, "Failed to spawn object of type \'{0}\'.", scriptingType.ToString());
+    return obj;
+#else
+    LOG(Error, "Not supported object creation from Managed class.");
+    return nullptr;
+#endif
+}
+
 FLAXENGINE_API ScriptingObject* FindObject(const Guid& id, MClass* type)
 {
     return Scripting::FindObject(id, type);
+}
+
+void ScriptingObjectReferenceBase::OnSet(ScriptingObject* object)
+{
+    auto e = _object;
+    if (e != object)
+    {
+        if (e)
+            e->Deleted.Unbind<ScriptingObjectReferenceBase, &ScriptingObjectReferenceBase::OnDeleted>(this);
+        _object = e = object;
+        if (e)
+            e->Deleted.Bind<ScriptingObjectReferenceBase, &ScriptingObjectReferenceBase::OnDeleted>(this);
+        Changed();
+    }
+}
+
+void ScriptingObjectReferenceBase::OnDeleted(ScriptingObject* obj)
+{
+    ASSERT(_object == obj);
+    _object->Deleted.Unbind<ScriptingObjectReferenceBase, &ScriptingObjectReferenceBase::OnDeleted>(this);
+    _object = nullptr;
+    Changed();
 }
 
 ScriptingObject* Scripting::FindObject(Guid id, MClass* type)
@@ -815,7 +948,21 @@ ScriptingObject* Scripting::TryFindObject(Guid id, MClass* type)
     return result;
 }
 
-ScriptingObject* Scripting::FindObject(const MonoObject* managedInstance)
+ScriptingObject* Scripting::TryFindObject(MClass* type)
+{
+    if (type == nullptr)
+        return nullptr;
+    ScopeLock lock(_objectsLocker);
+    for (auto i = _objectsDictionary.Begin(); i.IsNotEnd(); ++i)
+    {
+        const auto obj = i->Value;
+        if (obj->GetClass() == type)
+            return obj;
+    }
+    return nullptr;
+}
+
+ScriptingObject* Scripting::FindObject(const MObject* managedInstance)
 {
     if (managedInstance == nullptr)
         return nullptr;
@@ -879,30 +1026,28 @@ bool Scripting::IsTypeFromGameScripts(MClass* type)
 
 void Scripting::RegisterObject(ScriptingObject* obj)
 {
+    const Guid id = obj->GetID();
     ScopeLock lock(_objectsLocker);
 
     //ASSERT(!_objectsDictionary.ContainsValue(obj));
 #if ENABLE_ASSERTION
 #if USE_OBJECTS_DISPOSE_CRASHES_DEBUGGING
     ScriptingObjectData other;
-    if (_objectsDictionary.TryGet(obj->GetID(), other))
+    if (_objectsDictionary.TryGet(id, other))
 #else
     ScriptingObject* other;
-    if (_objectsDictionary.TryGet(obj->GetID(), other))
+    if (_objectsDictionary.TryGet(id, other))
 #endif
     {
         // Something went wrong...
-        LOG(Error, "Objects registry already contains object with ID={0} (type '{3}')! Trying to register object {1} (type '{2}').", obj->GetID(), obj->ToString(), String(obj->GetClass()->GetFullName()), String(other->GetClass()->GetFullName()));
-        _objectsDictionary.Remove(obj->GetID());
+        LOG(Error, "Objects registry already contains object with ID={0} (type '{3}')! Trying to register object {1} (type '{2}').", id, obj->ToString(), String(obj->GetClass()->GetFullName()), String(other->GetClass()->GetFullName()));
     }
-#else
-	ASSERT(!_objectsDictionary.ContainsKey(obj->_id));
 #endif
 
 #if USE_OBJECTS_DISPOSE_CRASHES_DEBUGGING
     LOG(Info, "[RegisterObject] obj = 0x{0:x}, {1}", (uint64)obj, String(ScriptingObjectData(obj).TypeName));
 #endif
-    _objectsDictionary.Add(obj->GetID(), obj);
+    _objectsDictionary[id] = obj;
 }
 
 void Scripting::UnregisterObject(ScriptingObject* obj)
@@ -937,13 +1082,14 @@ bool initFlaxEngine()
     if (StdTypesContainer::Instance()->Gather())
         return true;
 
+#if !COMPILE_WITHOUT_CSHARP
     // Init C# class library
     {
         auto scriptingClass = Scripting::GetStaticClass();
         ASSERT(scriptingClass);
         const auto initMethod = scriptingClass->GetMethod("Init");
         ASSERT(initMethod);
-        MonoObject* exception = nullptr;
+        MObject* exception = nullptr;
         initMethod->Invoke(nullptr, nullptr, &exception);
         if (exception)
         {
@@ -951,10 +1097,11 @@ bool initFlaxEngine()
             ex.Log(LogType::Fatal, TEXT("FlaxEngine.Scripting.Init"));
             return true;
         }
-
-        // TODO: move it somewhere to game instance class or similar
-        MainRenderTask::Instance = New<MainRenderTask>();
     }
+#endif
+
+    // TODO: move it somewhere to game instance class or similar
+    MainRenderTask::Instance = New<MainRenderTask>();
 
     return false;
 }
@@ -988,5 +1135,5 @@ void ScriptingService::Dispose()
 {
     Scripting::Release();
 
-    MCore::Instance()->UnloadEngine();
+    MCore::UnloadEngine();
 }

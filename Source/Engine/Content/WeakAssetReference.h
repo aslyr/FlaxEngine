@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -10,15 +10,12 @@
 API_CLASS(InBuild) class WeakAssetReferenceBase
 {
 public:
-
     typedef Delegate<> EventType;
 
 protected:
-
     Asset* _asset = nullptr;
 
 public:
-
     /// <summary>
     /// The asset unloading event (should cleanup refs to it).
     /// </summary>
@@ -38,7 +35,6 @@ public:
     ~WeakAssetReferenceBase();
 
 public:
-
     /// <summary>
     /// Gets the asset ID or Guid::Empty if not set.
     /// </summary>
@@ -50,7 +46,7 @@ public:
     /// <summary>
     /// Gets managed instance object (or null if no asset set).
     /// </summary>
-    FORCE_INLINE MonoObject* GetManagedInstance() const
+    FORCE_INLINE MObject* GetManagedInstance() const
     {
         return _asset ? _asset->GetOrCreateManagedInstance() : nullptr;
     }
@@ -61,7 +57,6 @@ public:
     String ToString() const;
 
 protected:
-
     void OnSet(Asset* asset);
     void OnUnloaded(Asset* asset);
 };
@@ -73,7 +68,6 @@ template<typename T>
 API_CLASS(InBuild) class WeakAssetReference : public WeakAssetReferenceBase
 {
 public:
-
     /// <summary>
     /// Initializes a new instance of the <see cref="WeakAssetReference"/> class.
     /// </summary>
@@ -125,7 +119,6 @@ public:
     }
 
 public:
-
     FORCE_INLINE WeakAssetReference& operator=(const WeakAssetReference& other)
     {
         OnSet(other.Get());
@@ -134,22 +127,22 @@ public:
 
     FORCE_INLINE WeakAssetReference& operator=(T* other)
     {
-        OnSet(other);
+        OnSet((Asset*)other);
         return *this;
     }
 
     FORCE_INLINE WeakAssetReference& operator=(const Guid& id)
     {
-        OnSet((T*)::LoadAsset(id, T::TypeInitializer));
+        OnSet((Asset*)::LoadAsset(id, T::TypeInitializer));
         return *this;
     }
 
-    FORCE_INLINE bool operator==(T* other)
+    FORCE_INLINE bool operator==(T* other) const
     {
         return _asset == other;
     }
 
-    FORCE_INLINE bool operator==(const WeakAssetReference& other)
+    FORCE_INLINE bool operator==(const WeakAssetReference& other) const
     {
         return _asset == other._asset;
     }
@@ -196,7 +189,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Sets the asset reference.
     /// </summary>

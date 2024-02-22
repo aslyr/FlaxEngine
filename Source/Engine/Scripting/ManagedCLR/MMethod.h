@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -18,37 +18,43 @@ class FLAXENGINE_API MMethod
     friend MEvent;
 
 protected:
-
 #if USE_MONO
     MonoMethod* _monoMethod;
+#elif USE_NETCORE
+    void* _handle;
+    int32 _paramsCount;
+    mutable void* _returnType;
+    mutable Array<void*, InlinedAllocation<8>> _parameterTypes;
+    void CacheSignature() const;
 #endif
     MClass* _parentClass;
-    MString _name;
+    StringAnsi _name;
     MVisibility _visibility;
 #if !USE_MONO_AOT
     void* _cachedThunk = nullptr;
 #endif
 
-    Array<MonoObject*> _attributes;
-
-    int32 _hasCachedAttributes : 1;
+    mutable int32 _hasCachedAttributes : 1;
+#if USE_NETCORE
+    mutable int32 _hasCachedSignature : 1;
+#endif
     int32 _isStatic : 1;
 
-public:
+    mutable Array<MObject*> _attributes;
 
+public:
 #if USE_MONO
     explicit MMethod(MonoMethod* monoMethod, MClass* parentClass);
     explicit MMethod(MonoMethod* monoMethod, const char* name, MClass* parentClass);
+#elif USE_NETCORE
+    MMethod(MClass* parentClass, StringAnsi&& name, void* handle, int32 paramsCount, MMethodAttributes attributes);
 #endif
 
 public:
-
 #if COMPILE_WITH_PROFILER
-    MString ProfilerName;
+    StringAnsi ProfilerName;
     SourceLocationData ProfilerData;
 #endif
-
-#if USE_MONO
 
     /// <summary>
     /// Invokes the method on the provided object instance. This does not respect polymorphism and will invoke the exact method of the class this object was retrieved from.Use invokeVirtual() if you need polymorphism.
@@ -59,10 +65,10 @@ public:
     /// <param name="instance">Instance of the object to invoke the method on. Can be null for static methods.</param>
     /// <param name="params">Array of parameters to pass to the method. Caller must ensure they match method
     /// parameter count and type.For value types parameters should be pointers to the
-    /// values and for reference types they should be pointers to MonoObject.</param>
+    /// values and for reference types they should be pointers to MObject.</param>
     /// <param name="exception">An optional pointer to the exception value to store exception object reference.</param>
     /// <returns>A boxed return value, or null if method has no return value.</returns>
-    MonoObject* Invoke(void* instance, void** params, MonoObject** exception) const;
+    MObject* Invoke(void* instance, void** params, MObject** exception) const;
 
     /// <summary>
     /// Invokes the method on the provided object instance. If the instance has an override of this method it  will be called.
@@ -74,32 +80,35 @@ public:
     /// <param name="params">
     /// Array of parameters to pass to the method. Caller must ensure they match method
     ///	parameter count and type. For value types parameters should be pointers to the
-    /// values and for reference types they should be pointers to MonoObject.
+    /// values and for reference types they should be pointers to MObject.
     /// </param>
     /// <param name="exception">An optional pointer to the exception value to store exception object reference.</param>
     /// <returns>A boxed return value, or null if method has no return value.</returns>
-    MonoObject* InvokeVirtual(MonoObject* instance, void** params, MonoObject** exception) const;
-
-#endif
+    MObject* InvokeVirtual(MObject* instance, void** params, MObject** exception) const;
 
 #if !USE_MONO_AOT
-
     /// <summary>
     /// Gets a thunk for this method. A thunk is a C++ like function pointer that you can use for calling the method.
     /// </summary>
     /// <remarks>
     /// This is the fastest way of calling managed code.
-    /// Get thunk from class if you want to call static method. You to call it from method of a instance wrapper to call a specific instance.
+    /// Get thunk from class if you want to call static method. You need to call it from method of a instance wrapper to call a specific instance.
+    /// Thunks return boxed value but for some smaller types (eg. bool, int, float) the return is inlined into pointer.
     /// </remarks>
     /// <returns>The method thunk pointer.</returns>
     void* GetThunk();
-
 #endif
+
+    /// <summary>
+    /// Creates a method that is inflated out of generic method.
+    /// </summary>
+    /// <returns>The inflated generic method.</returns>
+    MMethod* InflateGeneric() const;
 
     /// <summary>
     /// Gets the method name.
     /// </summary>
-    FORCE_INLINE const MString& GetName() const
+    FORCE_INLINE const StringAnsi& GetName() const
     {
         return _name;
     }
@@ -115,7 +124,7 @@ public:
     /// <summary>
     /// Returns the type of the return value. Returns null if method has no return value.
     /// </summary>
-    MType GetReturnType() const;
+    MType* GetReturnType() const;
 
     /// <summary>
     /// Returns the number of parameters the method expects.
@@ -127,7 +136,7 @@ public:
     /// </summary>
     /// <param name="paramIdx">The parameter type.</param>
     /// <returns>The parameter type.</returns>
-    MType GetParameterType(int32 paramIdx) const;
+    MType* GetParameterType(int32 paramIdx) const;
 
     /// <summary>
     /// Returns the value indicating whenever the method parameter  at the specified index is marked as output parameter.
@@ -153,7 +162,6 @@ public:
     }
 
 #if USE_MONO
-
     /// <summary>
     /// Gets the Mono method handle.
     /// </summary>
@@ -161,11 +169,9 @@ public:
     {
         return _monoMethod;
     }
-
 #endif
 
 public:
-
     /// <summary>
     /// Checks if method has an attribute of the specified type.
     /// </summary>
@@ -184,11 +190,11 @@ public:
     /// </summary>
     /// <param name="monoClass">The attribute Class to take.</param>
     /// <returns>The attribute object.</returns>
-    MonoObject* GetAttribute(MClass* monoClass) const;
+    MObject* GetAttribute(MClass* monoClass) const;
 
     /// <summary>
     /// Returns an instance of all attributes connected with given method. Returns null if the method doesn't have any attributes.
     /// </summary>
     /// <returns>The array of attribute objects.</returns>
-    const Array<MonoObject*>& GetAttributes();
+    const Array<MObject*>& GetAttributes() const;
 };

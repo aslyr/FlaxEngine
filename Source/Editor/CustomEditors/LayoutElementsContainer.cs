@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -26,6 +26,11 @@ namespace FlaxEditor.CustomEditors
         internal bool isRootGroup = true;
 
         /// <summary>
+        /// Parent container who created this one.
+        /// </summary>
+        internal LayoutElementsContainer _parent;
+
+        /// <summary>
         /// The children.
         /// </summary>
         public readonly List<LayoutElement> Children = new List<LayoutElement>();
@@ -39,6 +44,24 @@ namespace FlaxEditor.CustomEditors
         /// Gets the control represented by this element.
         /// </summary>
         public abstract ContainerControl ContainerControl { get; }
+
+        /// <summary>
+        /// Gets the Custom Editors layout presenter.
+        /// </summary>
+        internal CustomEditorPresenter Presenter
+        {
+            get
+            {
+                CustomEditorPresenter result;
+                var container = this;
+                do
+                {
+                    result = container as CustomEditorPresenter;
+                    container = container._parent;
+                } while (container != null);
+                return result;
+            }
+        }
 
         /// <summary>
         /// Adds new group element.
@@ -55,7 +78,7 @@ namespace FlaxEditor.CustomEditors
             return element;
         }
 
-        private void OnGroupPanelMouseButtonRightClicked(DropPanel groupPanel, Vector2 location)
+        private void OnGroupPanelMouseButtonRightClicked(DropPanel groupPanel, Float2 location)
         {
             var linkedEditor = (CustomEditor)groupPanel.Tag;
             var menu = new ContextMenu();
@@ -81,30 +104,40 @@ namespace FlaxEditor.CustomEditors
         public GroupElement Group(string title, bool useTransparentHeader = false)
         {
             var element = new GroupElement();
-            if (!isRootGroup)
+            var presenter = Presenter;
+            var isSubGroup = !isRootGroup;
+            if (isSubGroup)
+                element.Panel.Close();
+            if (presenter != null && (presenter.Features & FeatureFlags.CacheExpandedGroups) != 0)
             {
-                element.Panel.Close(false);
-            }
-            else if (this is CustomEditorPresenter presenter && presenter.CacheExpandedGroups)
-            {
-                if (Editor.Instance.ProjectCache.IsCollapsedGroup(title))
-                    element.Panel.Close(false);
-                element.Panel.IsClosedChanged += OnPanelIsClosedChanged;
+                // Build group identifier (made of path from group titles)
+                var expandPath = title;
+                var container = this;
+                while (container != null && !(container is CustomEditorPresenter))
+                {
+                    if (container.ContainerControl is DropPanel dropPanel)
+                        expandPath = dropPanel.HeaderText + "/" + expandPath;
+                    container = container._parent;
+                }
+
+                // Caching/restoring expanded groups (non-root groups cache expanded state so invert boolean expression)
+                if (Editor.Instance.ProjectCache.IsGroupToggled(expandPath) ^ isSubGroup)
+                    element.Panel.Close();
+                else
+                    element.Panel.Open();
+                element.Panel.IsClosedChanged += panel => Editor.Instance.ProjectCache.SetGroupToggle(expandPath, panel.IsClosed ^ isSubGroup);
             }
             element.isRootGroup = false;
+            element._parent = this;
             element.Panel.HeaderText = title;
             if (useTransparentHeader)
             {
                 element.Panel.EnableDropDownIcon = true;
+                element.Panel.EnableContainmentLines = false;
                 element.Panel.HeaderColor = element.Panel.HeaderColorMouseOver = Color.Transparent;
             }
             OnAddElement(element);
             return element;
-        }
-
-        private void OnPanelIsClosedChanged(DropPanel panel)
-        {
-            Editor.Instance.ProjectCache.SetCollapsedGroup(panel.HeaderText, panel.IsClosed);
         }
 
         /// <summary>
@@ -133,11 +166,13 @@ namespace FlaxEditor.CustomEditors
         /// Adds new button element.
         /// </summary>
         /// <param name="text">The text.</param>
+        /// <param name="tooltip">The tooltip text.</param>
         /// <returns>The created element.</returns>
-        public ButtonElement Button(string text)
+        public ButtonElement Button(string text, string tooltip = null)
         {
             var element = new ButtonElement();
-            element.Init(text);
+            element.Button.Text = text;
+            element.Button.TooltipText = tooltip;
             OnAddElement(element);
             return element;
         }
@@ -147,11 +182,14 @@ namespace FlaxEditor.CustomEditors
         /// </summary>
         /// <param name="text">The text.</param>
         /// <param name="color">The color.</param>
+        /// <param name="tooltip">The tooltip text.</param>
         /// <returns>The created element.</returns>
-        public ButtonElement Button(string text, Color color)
+        public ButtonElement Button(string text, Color color, string tooltip = null)
         {
             ButtonElement element = new ButtonElement();
-            element.Init(text, color);
+            element.Button.Text = text;
+            element.Button.TooltipText = tooltip;
+            element.Button.SetColors(color);
             OnAddElement(element);
             return element;
         }
@@ -271,6 +309,16 @@ namespace FlaxEditor.CustomEditors
         {
             var element = Label(text);
             element.Label.Font = new FontReference(Style.Current.FontLarge);
+            return element;
+        }
+
+        internal LabelElement Header(HeaderAttribute header)
+        {
+            var element = Header(header.Text);
+            if (header.FontSize != -1)
+                element.Label.Font = new FontReference(element.Label.Font.Font, header.FontSize);
+            if (header.Color != 0)
+                element.Label.TextColor = Color.FromRGBA(header.Color);
             return element;
         }
 
@@ -611,7 +659,6 @@ namespace FlaxEditor.CustomEditors
             if (style == DisplayStyle.Group)
             {
                 var group = Group(name, editor, true);
-                group.Panel.Close(false);
                 group.Panel.TooltipText = tooltip;
                 return group.Object(values, editor);
             }
@@ -641,7 +688,6 @@ namespace FlaxEditor.CustomEditors
             if (style == DisplayStyle.Group)
             {
                 var group = Group(label.Text, editor, true);
-                group.Panel.Close(false);
                 group.Panel.TooltipText = tooltip;
                 return group.Object(values, editor);
             }

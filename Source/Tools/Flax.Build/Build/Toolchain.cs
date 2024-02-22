@@ -1,11 +1,28 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
+using System.IO;
 using Flax.Build.Graph;
 using Flax.Build.NativeCpp;
 
 namespace Flax.Build
 {
+    /// <summary>
+    /// The target platform compiler types.
+    /// </summary>
+    public enum TargetCompiler
+    {
+        /// <summary>
+        /// Microsoft C++ (MSVC) C and C++ compiler and linker.
+        /// </summary>
+        MSVC,
+
+        /// <summary>
+        /// LLVM-based open source compiler.
+        /// </summary>
+        Clang,
+    }
+
     /// <summary>
     /// The base class for all build toolchains.
     /// </summary>
@@ -50,6 +67,11 @@ namespace Flax.Build
         /// Gets the compiler attribute for symbols imported from shared library (dll file).
         /// </summary>
         public abstract string DllImport { get; }
+
+        /// <summary>
+        /// Gets the compiler type.
+        /// </summary>
+        public abstract TargetCompiler Compiler { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="Toolchain"/> class.
@@ -112,5 +134,53 @@ namespace Flax.Build
         /// <param name="options">The build options with linking environment.</param>
         /// <param name="outputFilePath">The output file path (result linked file).</param>
         public abstract void LinkFiles(TaskGraph graph, BuildOptions options, string outputFilePath);
+
+        /// <summary>
+        /// C# compilation options container.
+        /// </summary>
+        public struct CSharpOptions
+        {
+            public enum ActionTypes
+            {
+                MonoCompile,
+                MonoLink,
+                GetOutputFiles,
+                GetPlatformTools,
+            };
+
+            public ActionTypes Action;
+            public List<string> InputFiles;
+            public List<string> OutputFiles;
+            public string AssembliesPath;
+            public string ClassLibraryPath;
+            public string PlatformToolsPath;
+            public bool EnableDebugSymbols;
+            public bool EnableToolDebug;
+        }
+
+        /// <summary>
+        /// Compiles the C# assembly with AOT cross-compiler.
+        /// </summary>
+        /// <param name="options">The options.</param>
+        /// <returns>True if failed, or not supported.</returns>
+        public virtual bool CompileCSharp(ref CSharpOptions options)
+        {
+            switch (options.Action)
+            {
+            case CSharpOptions.ActionTypes.GetOutputFiles:
+                foreach (var inputFile in options.InputFiles)
+                {
+                    if (Configuration.AOTMode == DotNetAOTModes.MonoAOTDynamic)
+                        options.OutputFiles.Add(inputFile + Platform.SharedLibraryFileExtension);
+                    else
+                        options.OutputFiles.Add(Path.Combine(Path.GetDirectoryName(inputFile), Platform.StaticLibraryFilePrefix + Path.GetFileName(inputFile) + Platform.StaticLibraryFileExtension));
+                }
+                return false;
+            case CSharpOptions.ActionTypes.GetPlatformTools:
+                options.PlatformToolsPath = Path.Combine(Globals.EngineRoot, "Source/Platforms", Platform.Target.ToString(), "Binaries/Tools");
+                return false;
+            }
+            return true;
+        }
     }
 }

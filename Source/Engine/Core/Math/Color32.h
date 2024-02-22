@@ -1,13 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
 #include "Engine/Core/Formatting.h"
 #include "Engine/Core/Templates.h"
 
-class String;
-struct Vector3;
-struct Vector4;
 struct Color;
 
 /// <summary>
@@ -16,7 +13,6 @@ struct Color;
 API_STRUCT(InBuild) struct FLAXENGINE_API Color32
 {
 public:
-
     union
     {
         struct
@@ -49,19 +45,15 @@ public:
     };
 
 public:
-
     static Color32 Transparent;
     static Color32 Black;
     static Color32 White;
 
 public:
-
     /// <summary>
     /// Empty constructor.
     /// </summary>
-    Color32()
-    {
-    }
+    Color32() = default;
 
     /// <summary>
     /// Constructs a new Color32 with given r, g, b, a components.
@@ -82,12 +74,10 @@ public:
     explicit Color32(const Vector4& c);
 
 public:
-
     String ToString() const;
     String ToHexString() const;
 
 public:
-
     bool operator==(const Color32& other) const
     {
         return R == other.R && G == other.G && B == other.B && A == other.A;
@@ -158,7 +148,6 @@ public:
     }
 
 public:
-
     uint32 GetAsABGR() const
     {
         return (R << 24) + (G << 16) + (B << 8) + A;
@@ -185,7 +174,6 @@ public:
     }
 
 public:
-
     uint32 GetHashCode() const;
 
     static uint32 GetHashCode(const Color32& v)
@@ -194,7 +182,6 @@ public:
     }
 
 public:
-
     /// <summary>
     /// Initializes from packed RGB value of the color and separate alpha channel value.
     /// </summary>

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -59,7 +59,7 @@ public:
 private:
 
     bool GetResult(Query& query);
-    void WriteTimestamp(CmdBufferVulkan* cmdBuffer, Query& query) const;
+    void WriteTimestamp(CmdBufferVulkan* cmdBuffer, Query& query, VkPipelineStageFlagBits stage) const;
     bool TryGetResult();
     bool UseQueries();
 

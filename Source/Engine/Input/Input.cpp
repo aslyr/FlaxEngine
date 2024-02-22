@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Input.h"
 #include "InputSettings.h"
@@ -15,6 +15,7 @@
 #include "Engine/Scripting/ScriptingType.h"
 #include "Engine/Scripting/BinaryModule.h"
 #include "Engine/Profiler/ProfilerCPU.h"
+#include "Engine/Serialization/JsonTools.h"
 
 struct AxisEvaluation
 {
@@ -28,11 +29,13 @@ struct ActionData
 {
     bool Active;
     uint64 FrameIndex;
+    InputActionState State;
 
     ActionData()
     {
         Active = false;
         FrameIndex = 0;
+        State = InputActionState::Waiting;
     }
 };
 
@@ -54,8 +57,8 @@ struct AxisData
 
 namespace InputImpl
 {
-    Dictionary<StringView, ActionData> Actions;
-    Dictionary<StringView, AxisData> Axes;
+    Dictionary<String, ActionData> Actions;
+    Dictionary<String, AxisData> Axes;
     bool GamepadsChanged = true;
     Array<AxisEvaluation> AxesValues;
     InputDevice::EventQueue InputEvents;
@@ -66,7 +69,6 @@ using namespace InputImpl;
 class InputService : public EngineService
 {
 public:
-
     InputService()
         : EngineService(TEXT("Input"), -60)
     {
@@ -83,19 +85,20 @@ Keyboard* Input::Keyboard = nullptr;
 Array<Gamepad*, FixedAllocation<MAX_GAMEPADS>> Input::Gamepads;
 Action Input::GamepadsChanged;
 Array<InputDevice*, InlinedAllocation<16>> Input::CustomDevices;
-Input::CharDelegate Input::CharInput;
-Input::KeyboardDelegate Input::KeyDown;
-Input::KeyboardDelegate Input::KeyUp;
-Input::MouseButtonDelegate Input::MouseDown;
-Input::MouseButtonDelegate Input::MouseUp;
-Input::MouseButtonDelegate Input::MouseDoubleClick;
-Input::MouseWheelDelegate Input::MouseWheel;
-Input::MouseDelegate Input::MouseMove;
+Delegate<Char> Input::CharInput;
+Delegate<KeyboardKeys> Input::KeyDown;
+Delegate<KeyboardKeys> Input::KeyUp;
+Delegate<const Float2&, MouseButton> Input::MouseDown;
+Delegate<const Float2&, MouseButton> Input::MouseUp;
+Delegate<const Float2&, MouseButton> Input::MouseDoubleClick;
+Delegate<const Float2&, float> Input::MouseWheel;
+Delegate<const Float2&> Input::MouseMove;
 Action Input::MouseLeave;
-Input::TouchDelegate Input::TouchDown;
-Input::TouchDelegate Input::TouchMove;
-Input::TouchDelegate Input::TouchUp;
-Delegate<StringView> Input::ActionTriggered;
+Delegate<const Float2&, int32> Input::TouchDown;
+Delegate<const Float2&, int32> Input::TouchMove;
+Delegate<const Float2&, int32> Input::TouchUp;
+Delegate<StringView, InputActionState> Input::ActionTriggered;
+Delegate<StringView> Input::AxisValueChanged;
 Array<ActionConfig> Input::ActionMappings;
 Array<AxisConfig> Input::AxisMappings;
 
@@ -105,13 +108,76 @@ void InputSettings::Apply()
     Input::AxisMappings = AxisMappings;
 }
 
-void Mouse::OnMouseMoved(const Vector2& newPosition)
+void InputSettings::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
+{
+    const auto actionMappings = stream.FindMember("ActionMappings");
+    if (actionMappings != stream.MemberEnd())
+    {
+        auto& actionMappingsArray = actionMappings->value;
+        if (actionMappingsArray.IsArray())
+        {
+            ActionMappings.Resize(actionMappingsArray.Size(), false);
+            for (uint32 i = 0; i < actionMappingsArray.Size(); i++)
+            {
+                auto& v = actionMappingsArray[i];
+                if (!v.IsObject())
+                    continue;
+
+                ActionConfig& config = ActionMappings[i];
+                config.Name = JsonTools::GetString(v, "Name");
+                config.Mode = JsonTools::GetEnum(v, "Mode", InputActionMode::Pressing);
+                config.Key = JsonTools::GetEnum(v, "Key", KeyboardKeys::None);
+                config.MouseButton = JsonTools::GetEnum(v, "MouseButton", MouseButton::None);
+                config.GamepadButton = JsonTools::GetEnum(v, "GamepadButton", GamepadButton::None);
+                config.Gamepad = JsonTools::GetEnum(v, "Gamepad", InputGamepadIndex::All);
+            }
+        }
+        else
+        {
+            ActionMappings.Resize(0, false);
+        }
+    }
+
+    const auto axisMappings = stream.FindMember("AxisMappings");
+    if (axisMappings != stream.MemberEnd())
+    {
+        auto& axisMappingsArray = axisMappings->value;
+        if (axisMappingsArray.IsArray())
+        {
+            AxisMappings.Resize(axisMappingsArray.Size(), false);
+            for (uint32 i = 0; i < axisMappingsArray.Size(); i++)
+            {
+                auto& v = axisMappingsArray[i];
+                if (!v.IsObject())
+                    continue;
+
+                AxisConfig& config = AxisMappings[i];
+                config.Name = JsonTools::GetString(v, "Name");
+                config.Axis = JsonTools::GetEnum(v, "Axis", InputAxisType::MouseX);
+                config.Gamepad = JsonTools::GetEnum(v, "Gamepad", InputGamepadIndex::All);
+                config.PositiveButton = JsonTools::GetEnum(v, "PositiveButton", KeyboardKeys::None);
+                config.NegativeButton = JsonTools::GetEnum(v, "NegativeButton", KeyboardKeys::None);
+                config.DeadZone = JsonTools::GetFloat(v, "DeadZone", 0.1f);
+                config.Sensitivity = JsonTools::GetFloat(v, "Sensitivity", 0.4f);
+                config.Gravity = JsonTools::GetFloat(v, "Gravity", 1.0f);
+                config.Scale = JsonTools::GetFloat(v, "Scale", 1.0f);
+                config.Snap = JsonTools::GetBool(v, "Snap", false);
+            }
+        }
+        else
+        {
+            AxisMappings.Resize(0, false);
+        }
+    }
+}
+
+void Mouse::OnMouseMoved(const Float2& newPosition)
 {
     _prevState.MousePosition = newPosition;
     _state.MousePosition = newPosition;
 }
 
-void Mouse::OnMouseDown(const Vector2& position, const MouseButton button, Window* target)
+void Mouse::OnMouseDown(const Float2& position, const MouseButton button, Window* target)
 {
     Event& e = _queue.AddOne();
     e.Type = EventType::MouseDown;
@@ -120,7 +186,16 @@ void Mouse::OnMouseDown(const Vector2& position, const MouseButton button, Windo
     e.MouseData.Position = position;
 }
 
-void Mouse::OnMouseUp(const Vector2& position, const MouseButton button, Window* target)
+bool Mouse::IsAnyButtonDown() const
+{
+    // TODO: optimize with SIMD
+    bool result = false;
+    for (auto e : Mouse::_state.MouseButtons)
+        result |= e;
+    return result;
+}
+
+void Mouse::OnMouseUp(const Float2& position, const MouseButton button, Window* target)
 {
     Event& e = _queue.AddOne();
     e.Type = EventType::MouseUp;
@@ -129,7 +204,7 @@ void Mouse::OnMouseUp(const Vector2& position, const MouseButton button, Window*
     e.MouseData.Position = position;
 }
 
-void Mouse::OnMouseDoubleClick(const Vector2& position, const MouseButton button, Window* target)
+void Mouse::OnMouseDoubleClick(const Float2& position, const MouseButton button, Window* target)
 {
     Event& e = _queue.AddOne();
     e.Type = EventType::MouseDoubleClick;
@@ -138,7 +213,7 @@ void Mouse::OnMouseDoubleClick(const Vector2& position, const MouseButton button
     e.MouseData.Position = position;
 }
 
-void Mouse::OnMouseMove(const Vector2& position, Window* target)
+void Mouse::OnMouseMove(const Float2& position, Window* target)
 {
     Event& e = _queue.AddOne();
     e.Type = EventType::MouseMove;
@@ -153,7 +228,7 @@ void Mouse::OnMouseLeave(Window* target)
     e.Target = target;
 }
 
-void Mouse::OnMouseWheel(const Vector2& position, float delta, Window* target)
+void Mouse::OnMouseWheel(const Float2& position, float delta, Window* target)
 {
     Event& e = _queue.AddOne();
     e.Type = EventType::MouseWheel;
@@ -259,6 +334,8 @@ void Keyboard::OnCharInput(Char c, Window* target)
 
 void Keyboard::OnKeyUp(KeyboardKeys key, Window* target)
 {
+    if (key >= KeyboardKeys::MAX)
+        return;
     Event& e = _queue.AddOne();
     e.Type = EventType::KeyUp;
     e.Target = target;
@@ -267,6 +344,8 @@ void Keyboard::OnKeyUp(KeyboardKeys key, Window* target)
 
 void Keyboard::OnKeyDown(KeyboardKeys key, Window* target)
 {
+    if (key >= KeyboardKeys::MAX)
+        return;
     Event& e = _queue.AddOne();
     e.Type = EventType::KeyDown;
     e.Target = target;
@@ -359,27 +438,27 @@ bool Input::GetKeyUp(const KeyboardKeys key)
     return Keyboard ? Keyboard->GetKeyUp(key) : false;
 }
 
-Vector2 Input::GetMousePosition()
+Float2 Input::GetMousePosition()
 {
-    return Mouse ? Screen::ScreenToGameViewport(Mouse->GetPosition()) : Vector2::Minimum;
+    return Mouse ? Screen::ScreenToGameViewport(Mouse->GetPosition()) : Float2::Minimum;
 }
 
-void Input::SetMousePosition(const Vector2& position)
+void Input::SetMousePosition(const Float2& position)
 {
     if (Mouse && Engine::HasGameViewportFocus())
     {
         const auto pos = Screen::GameViewportToScreen(position);
-        if (pos > Vector2::Minimum)
+        if (pos > Float2::Minimum)
             Mouse->SetMousePosition(pos);
     }
 }
 
-Vector2 Input::GetMouseScreenPosition()
+Float2 Input::GetMouseScreenPosition()
 {
-    return Mouse ? Mouse->GetPosition() : Vector2::Minimum;
+    return Mouse ? Mouse->GetPosition() : Float2::Minimum;
 }
 
-void Input::SetMouseScreenPosition(const Vector2& position)
+void Input::SetMouseScreenPosition(const Float2& position)
 {
     if (Mouse && Engine::HasFocus)
     {
@@ -387,9 +466,9 @@ void Input::SetMouseScreenPosition(const Vector2& position)
     }
 }
 
-Vector2 Input::GetMousePositionDelta()
+Float2 Input::GetMousePositionDelta()
 {
-    return Mouse ? Mouse->GetPositionDelta() : Vector2::Zero;
+    return Mouse ? Mouse->GetPositionDelta() : Float2::Zero;
 }
 
 float Input::GetMouseScrollDelta()
@@ -444,11 +523,14 @@ float Input::GetGamepadAxis(InputGamepadIndex gamepad, GamepadAxis axis)
 {
     if (gamepad == InputGamepadIndex::All)
     {
+        float result = 0.0f;
         for (auto g : Gamepads)
         {
-            if (g->GetAxis(axis))
-                return true;
+            float v = g->GetAxis(axis);
+            if (Math::Abs(v) > Math::Abs(result))
+                result = v;
         }
+        return result;
     }
     else
     {
@@ -520,6 +602,16 @@ bool Input::GetAction(const StringView& name)
 {
     const auto e = Actions.TryGet(name);
     return e ? e->Active : false;
+}
+
+InputActionState Input::GetActionState(const StringView& name)
+{
+    const auto e = Actions.TryGet(name);
+    if (e != nullptr)
+    {
+        return e->State;
+    }
+    return InputActionState::None;
 }
 
 float Input::GetAxis(const StringView& name)
@@ -625,7 +717,7 @@ void InputService::Update()
             continue;
         switch (e.Type)
         {
-            // Keyboard events
+        // Keyboard events
         case InputDevice::EventType::Char:
             window->OnCharInput(e.CharData.Char);
             break;
@@ -635,7 +727,7 @@ void InputService::Update()
         case InputDevice::EventType::KeyUp:
             window->OnKeyUp(e.KeyData.Key);
             break;
-            // Mouse events
+        // Mouse events
         case InputDevice::EventType::MouseDown:
             window->OnMouseDown(window->ScreenToClient(e.MouseData.Position), e.MouseData.Button);
             break;
@@ -654,7 +746,7 @@ void InputService::Update()
         case InputDevice::EventType::MouseLeave:
             window->OnMouseLeave();
             break;
-            // Touch events
+        // Touch events
         case InputDevice::EventType::TouchDown:
             window->OnTouchDown(window->ScreenToClient(e.TouchData.Position), e.TouchData.PointerId);
             break;
@@ -681,7 +773,7 @@ void InputService::Update()
     {
         switch (e.Type)
         {
-            // Keyboard events
+        // Keyboard events
         case InputDevice::EventType::Char:
             Input::CharInput(e.CharData.Char);
             break;
@@ -691,7 +783,7 @@ void InputService::Update()
         case InputDevice::EventType::KeyUp:
             Input::KeyUp(e.KeyData.Key);
             break;
-            // Mouse events
+        // Mouse events
         case InputDevice::EventType::MouseDown:
             Input::MouseDown(e.MouseData.Position, e.MouseData.Button);
             break;
@@ -710,7 +802,7 @@ void InputService::Update()
         case InputDevice::EventType::MouseLeave:
             Input::MouseLeave();
             break;
-            // Touch events
+        // Touch events
         case InputDevice::EventType::TouchDown:
             Input::TouchDown(e.TouchData.Position, e.TouchData.PointerId);
             break;
@@ -731,6 +823,7 @@ void InputService::Update()
         ActionData& data = Actions[name];
 
         data.Active = false;
+        data.State = InputActionState::Waiting;
 
         // Mark as updated in this frame
         data.FrameIndex = frame;
@@ -753,6 +846,19 @@ void InputService::Update()
         else
         {
             isActive = Input::GetKeyUp(config.Key) || Input::GetMouseButtonUp(config.MouseButton) || Input::GetGamepadButtonUp(config.Gamepad, config.GamepadButton);
+        }
+
+        if (Input::GetKeyDown(config.Key) || Input::GetMouseButtonDown(config.MouseButton) || Input::GetGamepadButtonDown(config.Gamepad, config.GamepadButton))
+        {
+            data.State = InputActionState::Press;
+        }
+        else if (Input::GetKey(config.Key) || Input::GetMouseButton(config.MouseButton) || Input::GetGamepadButton(config.Gamepad, config.GamepadButton))
+        {
+            data.State = InputActionState::Pressing;
+        }
+        else if (Input::GetKeyUp(config.Key) || Input::GetMouseButtonUp(config.MouseButton) || Input::GetGamepadButtonUp(config.Gamepad, config.GamepadButton))
+        {
+            data.State = InputActionState::Release;
         }
 
         data.Active |= isActive;
@@ -796,7 +902,7 @@ void InputService::Update()
         }
 
         // Get axis raw value
-        float axisRawValue;
+        float axisRawValue = 0.0f;
         switch (config.Axis)
         {
         case InputAxisType::MouseX:
@@ -826,8 +932,17 @@ void InputService::Update()
         case InputAxisType::GamepadRightTrigger:
             axisRawValue = Input::GetGamepadAxis(config.Gamepad, GamepadAxis::RightTrigger);
             break;
-        default:
-            axisRawValue = 0.0f;
+        case InputAxisType::GamepadDPadX:
+            if (Input::GetGamepadButton(config.Gamepad, GamepadButton::DPadRight))
+                axisRawValue = 1;
+            else if (Input::GetGamepadButton(config.Gamepad, GamepadButton::DPadLeft))
+                axisRawValue = -1;
+            break;
+        case InputAxisType::GamepadDPadY:
+            if (Input::GetGamepadButton(config.Gamepad, GamepadButton::DPadUp))
+                axisRawValue = 1;
+            else if (Input::GetGamepadButton(config.Gamepad, GamepadButton::DPadDown))
+                axisRawValue = -1;
             break;
         }
 
@@ -903,14 +1018,22 @@ void InputService::Update()
         Input::SetMousePosition(Screen::GetSize() * 0.5f);
     }
 
-    // Send events for the active actions (send events only in play mode)
+    // Send events for the active actions and axes (send events only in play mode)
     if (!Time::GetGamePaused())
     {
+        for (auto i = Axes.Begin(); i.IsNotEnd(); ++i)
+        {
+            if (Math::NotNearEqual(i->Value.Value, i->Value.PrevKeyValue))
+            {
+                Input::AxisValueChanged(i->Key);
+            }
+        }
+        
         for (auto i = Actions.Begin(); i.IsNotEnd(); ++i)
         {
-            if (i->Value.Active)
+            if (i->Value.State != InputActionState::Waiting)
             {
-                Input::ActionTriggered(i->Key);
+                Input::ActionTriggered(i->Key, i->Value.State);
             }
         }
     }

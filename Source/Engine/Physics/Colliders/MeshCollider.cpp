@@ -1,11 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "MeshCollider.h"
 #include "Engine/Core/Math/Matrix.h"
 #include "Engine/Core/Math/Ray.h"
-#include "Engine/Serialization/Serialization.h"
-#include "Engine/Physics/Utilities.h"
 #include "Engine/Physics/Physics.h"
+#include "Engine/Physics/PhysicsScene.h"
 #if USE_EDITOR || !BUILD_RELEASE
 #include "Engine/Debug/DebugLog.h"
 #endif
@@ -20,7 +19,7 @@ MeshCollider::MeshCollider(const SpawnParams& params)
 void MeshCollider::OnCollisionDataChanged()
 {
     // This should not be called during physics simulation, if it happened use write lock on physx scene
-    ASSERT(!Physics::IsDuringSimulation());
+    ASSERT(!GetScene() || !GetPhysicsScene()->IsDuringSimulation());
 
     if (CollisionData)
     {
@@ -69,16 +68,19 @@ void MeshCollider::DrawPhysicsDebug(RenderView& view)
 {
     if (CollisionData && CollisionData->IsLoaded())
     {
+        const BoundingSphere sphere(_sphere.Center - view.Origin, _sphere.Radius);
+        if (!view.CullingFrustum.Intersects(sphere))
+            return;
         if (view.Mode == ViewMode::PhysicsColliders && !GetIsTrigger())
         {
-            Array<Vector3>* vertexBuffer;
+            Array<Float3>* vertexBuffer;
             Array<int32>* indexBuffer;
             CollisionData->GetDebugTriangles(vertexBuffer, indexBuffer);
-            DebugDraw::DrawTriangles(*vertexBuffer, *indexBuffer, _transform.GetWorld(), _staticActor ? Color::CornflowerBlue : Color::Orchid, 0, true);
+            DEBUG_DRAW_TRIANGLES_EX2(*vertexBuffer, *indexBuffer, _transform.GetWorld(), _staticActor ? Color::CornflowerBlue : Color::Orchid, 0, true);
         }
         else
         {
-            DebugDraw::DrawLines(CollisionData->GetDebugLines(), _transform.GetWorld(), Color::GreenYellow * 0.8f, 0, true);
+            DEBUG_DRAW_LINES(CollisionData->GetDebugLines(), _transform.GetWorld(), Color::GreenYellow * 0.8f, 0, true);
         }
     }
 }
@@ -88,7 +90,7 @@ void MeshCollider::OnDebugDrawSelected()
     if (CollisionData && CollisionData->IsLoaded())
     {
         const auto& debugLines = CollisionData->GetDebugLines();
-        DEBUG_DRAW_LINES(Span<Vector3>(debugLines.Get(), debugLines.Count()), _transform.GetWorld(), Color::GreenYellow, 0, false);
+        DEBUG_DRAW_LINES(Span<Float3>(debugLines.Get(), debugLines.Count()), _transform.GetWorld(), Color::GreenYellow, 0, false);
     }
 
     // Base
@@ -97,7 +99,7 @@ void MeshCollider::OnDebugDrawSelected()
 
 #endif
 
-bool MeshCollider::IntersectsItself(const Ray& ray, float& distance, Vector3& normal)
+bool MeshCollider::IntersectsItself(const Ray& ray, Real& distance, Vector3& normal)
 {
     // Use detailed hit
     if (_shape)
@@ -114,24 +116,6 @@ bool MeshCollider::IntersectsItself(const Ray& ray, float& distance, Vector3& no
     return _box.Intersects(ray, distance, normal);
 }
 
-void MeshCollider::Serialize(SerializeStream& stream, const void* otherObj)
-{
-    // Base
-    Collider::Serialize(stream, otherObj);
-
-    SERIALIZE_GET_OTHER_OBJ(MeshCollider);
-
-    SERIALIZE(CollisionData);
-}
-
-void MeshCollider::Deserialize(DeserializeStream& stream, ISerializeModifier* modifier)
-{
-    // Base
-    Collider::Deserialize(stream, modifier);
-
-    DESERIALIZE(CollisionData);
-}
-
 void MeshCollider::UpdateBounds()
 {
     // Cache bounds
@@ -144,38 +128,21 @@ void MeshCollider::UpdateBounds()
     BoundingSphere::FromBox(_box, _sphere);
 }
 
-void MeshCollider::GetGeometry(PxGeometryHolder& geometry)
+void MeshCollider::GetGeometry(CollisionShape& collision)
 {
     // Prepare scale
-    Vector3 scale = _cachedScale;
-    scale.Absolute();
+    Float3 scale = _cachedScale;
     const float minSize = 0.001f;
-    scale = Vector3::Max(scale, minSize);
+    scale = Float3::Max(scale.GetAbsolute(), minSize);
 
     // Setup shape (based on type)
     CollisionDataType type = CollisionDataType::None;
     if (CollisionData && CollisionData->IsLoaded())
         type = CollisionData->GetOptions().Type;
     if (type == CollisionDataType::ConvexMesh)
-    {
-        // Convex mesh
-        PxConvexMeshGeometry convexMesh;
-        convexMesh.scale.scale = C2P(scale);
-        convexMesh.convexMesh = CollisionData->GetConvex();
-        geometry.storeAny(convexMesh);
-    }
+        collision.SetConvexMesh(CollisionData->GetConvex(), scale.Raw);
     else if (type == CollisionDataType::TriangleMesh)
-    {
-        // Triangle mesh
-        PxTriangleMeshGeometry triangleMesh;
-        triangleMesh.scale.scale = C2P(scale);
-        triangleMesh.triangleMesh = CollisionData->GetTriangle();
-        geometry.storeAny(triangleMesh);
-    }
+        collision.SetTriangleMesh(CollisionData->GetTriangle(), scale.Raw);
     else
-    {
-        // Dummy geometry
-        const PxSphereGeometry sphere(minSize);
-        geometry.storeAny(sphere);
-    }
+        collision.SetSphere(minSize);
 }

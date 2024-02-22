@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content.Thumbnails;
@@ -47,9 +47,23 @@ namespace FlaxEditor.Content
 
             menu.AddButton("Create collision data", () =>
             {
-                var model = FlaxEngine.Content.LoadAsync<Model>(((ModelItem)item).ID);
                 var collisionDataProxy = (CollisionDataProxy)Editor.Instance.ContentDatabase.GetProxy<CollisionData>();
-                collisionDataProxy.CreateCollisionDataFromModel(model);
+                var selection = Editor.Instance.Windows.ContentWin.View.Selection;
+                if (selection.Count > 1)
+                {
+                    // Batch action
+                    var items = selection.ToArray(); // Clone to prevent issue when iterating over and content window changes the selection
+                    foreach (var contentItem in items)
+                    {
+                        if (contentItem is ModelItem modelItem)
+                            collisionDataProxy.CreateCollisionDataFromModel(FlaxEngine.Content.LoadAsync<Model>(modelItem.ID), null, false);
+                    }
+                }
+                else
+                {
+                    var model = FlaxEngine.Content.LoadAsync<Model>(((ModelItem)item).ID);
+                    collisionDataProxy.CreateCollisionDataFromModel(model);
+                }
             });
         }
 
@@ -60,17 +74,9 @@ namespace FlaxEditor.Content
             {
                 _preview = new ModelPreview(false)
                 {
-                    RenderOnlyWithWindow = false,
-                    UseAutomaticTaskManagement = false,
-                    AnchorPreset = AnchorPresets.StretchAll,
-                    Offsets = Margin.Zero,
+                    ScaleToFit = false,
                 };
-                _preview.Task.Enabled = false;
-
-                var eyeAdaptation = _preview.PostFxVolume.EyeAdaptation;
-                eyeAdaptation.Mode = EyeAdaptationMode.None;
-                eyeAdaptation.OverrideFlags |= EyeAdaptationSettingsOverride.Mode;
-                _preview.PostFxVolume.EyeAdaptation = eyeAdaptation;
+                InitAssetPreview(_preview);
             }
 
             // TODO: disable streaming for asset during thumbnail rendering (and restore it after)
@@ -79,12 +85,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override bool CanDrawThumbnail(ThumbnailRequest request)
         {
-            if (!_preview.HasLoadedAssets)
-                return false;
-
-            // Check if asset is streamed enough
-            var asset = (Model)request.Asset;
-            return asset.LoadedLODs >= Mathf.Max(1, (int)(asset.LODs.Length * ThumbnailsModule.MinimumRequiredResourcesQuality));
+            return _preview.HasLoadedAssets && ThumbnailsModule.HasMinimumQuality((Model)request.Asset);
         }
 
         /// <inheritdoc />
@@ -93,6 +94,7 @@ namespace FlaxEditor.Content
             _preview.Model = (Model)request.Asset;
             _preview.Parent = guiRoot;
             _preview.SyncBackbufferSize();
+            _preview.ViewportCamera.SetArcBallView(_preview.Model.GetBox());
 
             _preview.Task.OnDraw();
         }

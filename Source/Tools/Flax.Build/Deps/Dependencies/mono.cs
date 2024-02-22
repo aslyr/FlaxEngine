@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -31,7 +31,6 @@ namespace Flax.Deps.Dependencies
                         TargetPlatform.Windows,
                         TargetPlatform.UWP,
                         TargetPlatform.XboxOne,
-                        TargetPlatform.PS4,
                         TargetPlatform.XboxScarlett,
                         TargetPlatform.Switch,
                     };
@@ -40,6 +39,11 @@ namespace Flax.Deps.Dependencies
                     {
                         TargetPlatform.Linux,
                         TargetPlatform.Android,
+                    };
+                case TargetPlatform.Mac:
+                    return new[]
+                    {
+                        TargetPlatform.Mac,
                     };
                 default: return new TargetPlatform[0];
                 }
@@ -86,6 +90,7 @@ namespace Flax.Deps.Dependencies
             "mono_string_",
             "mono_thread_",
             "mono_type_",
+            "mono_value_",
         };
 
         private static readonly string[] MonoExportsSkipPrefixes =
@@ -447,7 +452,7 @@ namespace Flax.Deps.Dependencies
             }
 
             // Update source file with exported symbols
-            var mCorePath = Path.Combine(Globals.EngineRoot, "Source", "Engine", "Scripting", "ManagedCLR", "MCore.Mono.cpp");
+            var mCorePath = Path.Combine(Globals.EngineRoot, "Source", "Engine", "Scripting", "Runtime", "Mono.cpp");
             var contents = File.ReadAllText(mCorePath);
             var startPos = contents.IndexOf("#pragma comment(linker,");
             var endPos = contents.LastIndexOf("#pragma comment(linker,");
@@ -455,6 +460,13 @@ namespace Flax.Deps.Dependencies
             contents = contents.Remove(startPos, endPos - startPos + 3);
             contents = contents.Insert(startPos, exports.ToString());
             Utilities.WriteFileIfChanged(mCorePath, contents);
+        }
+
+        private void DeployDylib(string srcPath, string dstFolder)
+        {
+            var dstPath = Path.Combine(dstFolder, Path.GetFileName(srcPath));
+            Utilities.FileCopy(srcPath, dstPath);
+            MacPlatform.FixInstallNameId(dstPath);
         }
 
         /// <inheritdoc />
@@ -473,10 +485,6 @@ namespace Flax.Deps.Dependencies
             if (string.IsNullOrEmpty(localRepoPath))
                 CloneGitRepo(root, "https://github.com/FlaxEngine/mono.git", null, "--recursive");
 
-            // Pick a proper branch
-            GitCheckout(root, "flax-master-5-20");
-            GitResetLocalChanges(root);
-
             // Get the default preprocessor defines for Mono on Windows-based platforms
             {
                 var monoProps = new XmlDocument();
@@ -487,6 +495,18 @@ namespace Flax.Deps.Dependencies
 
             foreach (var platform in options.Platforms)
             {
+                // Pick a proper branch
+                var monoBranch = "flax-master-5-20";
+                switch (platform)
+                {
+                case TargetPlatform.Switch:
+                case TargetPlatform.Mac:
+                    monoBranch = "flax-master-6-4";
+                    break;
+                }
+                GitCheckout(root, monoBranch);
+                GitResetLocalChanges(root);
+
                 switch (platform)
                 {
                 case TargetPlatform.Windows:
@@ -559,11 +579,15 @@ namespace Flax.Deps.Dependencies
                     var editoBinOutput = Path.Combine(options.PlatformsFolder, "Editor", "Linux", "Mono", "bin");
                     Utilities.FileCopy(Path.Combine(buildDir, "bin", "mono-sgen"), Path.Combine(editoBinOutput, "mono"));
                     Utilities.Run("strip", "mono", null, editoBinOutput, Utilities.RunOptions.None);
+                    Utilities.DirectoryCopy(Path.Combine(buildDir, "etc"), Path.Combine(options.PlatformsFolder, platform.ToString(), "Binaries", "Mono", "etc"), true, true);
+                    Utilities.DirectoryCopy(Path.Combine(buildDir, "etc"), Path.Combine(options.PlatformsFolder, "Editor", platform.ToString(), "Binaries", "Mono", "etc"), true, true);
                     var srcMonoLibs = Path.Combine(buildDir, "lib", "mono");
                     var dstMonoLibs = Path.Combine(options.PlatformsFolder, platform.ToString(), "Binaries", "Mono", "lib", "mono");
                     var dstMonoEditorLibs = Path.Combine(options.PlatformsFolder, "Editor", platform.ToString(), "Mono", "lib", "mono");
                     Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5"), Path.Combine(dstMonoLibs, "4.5"), false, true, "*.dll");
                     Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5"), Path.Combine(dstMonoEditorLibs, "4.5"), false, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "gac"), Path.Combine(dstMonoLibs, "gac"), true, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "gac"), Path.Combine(dstMonoEditorLibs, "gac"), true, true, "*.dll");
                     Utilities.FileCopy(Path.Combine(srcMonoLibs, "4.5", "csc.exe"), Path.Combine(dstMonoEditorLibs, "4.5", "csc.exe"), true);
                     Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5", "Facades"), Path.Combine(dstMonoEditorLibs, "4.5", "Facades"), false, true, "*.dll");
                     Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5-api"), Path.Combine(dstMonoEditorLibs, "4.5-api"), false, true, "*.dll");
@@ -571,11 +595,6 @@ namespace Flax.Deps.Dependencies
                     Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "xbuild-frameworks", ".NETFramework", "v4.5"), Path.Combine(dstMonoEditorLibs, "xbuild-frameworks", ".NETFramework", "v4.5"), true, true);
                     Utilities.FilesDelete(dstMonoLibs, "*.pdb", true);
                     Utilities.FilesDelete(dstMonoEditorLibs, "*.pdb", true);
-                    break;
-                }
-                case TargetPlatform.PS4:
-                {
-                    // TODO: implement automatic extraction of the package from mono-ps4-binaries
                     break;
                 }
                 case TargetPlatform.XboxOne:
@@ -711,6 +730,73 @@ namespace Flax.Deps.Dependencies
                     var type = Type.GetType("Flax.Build.Platforms.Switch.mono");
                     var method = type.GetMethod("Build");
                     method.Invoke(null, new object[] { root, options });
+                    break;
+                }
+                case TargetPlatform.Mac:
+                {
+                    var compilerFlags = string.Format("-mmacosx-version-min={0}", Configuration.MacOSXMinVer);
+                    var envVars = new Dictionary<string, string>
+                    {
+                        { "CFLAGS", compilerFlags },
+                        { "CXXFLAGS", compilerFlags },
+                        { "CPPFLAGS", compilerFlags },
+                    };
+                    var monoOptions = new[]
+                    {
+                        "--with-xen-opt=no",
+                        "--without-ikvm-native",
+                        "--disable-boehm",
+                        "--disable-nls",
+                        "--disable-iconv",
+                        //"--disable-mcs-build",
+                        "--with-mcs-docs=no",
+                        "--with-tls=pthread",
+                        //"--enable-static",
+                        "--enable-maintainer-mode",
+                    };
+                    var buildDir = Path.Combine(root, "build-mac");
+
+                    // Build mono
+                    SetupDirectory(buildDir, true);
+                    var archName = "x86_64-apple-darwin19";
+                    Utilities.Run(Path.Combine(root, "autogen.sh"), string.Format("--host={0} --prefix={1} {2}", archName, buildDir, string.Join(" ", monoOptions)), null, root, Utilities.RunOptions.None, envVars);
+                    Utilities.Run("make", null, null, root, Utilities.RunOptions.None, envVars);
+                    Utilities.Run("make", "install", null, root, Utilities.RunOptions.None, envVars);
+
+                    // Deploy binaries
+                    var depsFolder = GetThirdPartyFolder(options, platform, TargetArchitecture.x64);
+                    Directory.CreateDirectory(depsFolder);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libmonosgen-2.0.1.dylib"), depsFolder);
+                    var gameLibOutput = Path.Combine(options.PlatformsFolder, "Mac", "Binaries", "Mono", "lib");
+                    Directory.CreateDirectory(gameLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libMonoPosixHelper.dylib"), gameLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libmono-btls-shared.dylib"), gameLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libmono-native.dylib"), gameLibOutput);
+                    var editorLibOutput = Path.Combine(options.PlatformsFolder, "Editor", "Mac", "Mono", "lib");
+                    Directory.CreateDirectory(editorLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libMonoPosixHelper.dylib"), editorLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libmono-btls-shared.dylib"), editorLibOutput);
+                    DeployDylib(Path.Combine(buildDir, "lib", "libmono-native.dylib"), editorLibOutput);
+                    var editoBinOutput = Path.Combine(options.PlatformsFolder, "Editor", "Mac", "Mono", "bin");
+                    Directory.CreateDirectory(editoBinOutput);
+                    Utilities.FileCopy(Path.Combine(buildDir, "bin", "mono-sgen"), Path.Combine(editoBinOutput, "mono"));
+                    Utilities.Run("strip", "mono", null, editoBinOutput, Utilities.RunOptions.None);
+                    Utilities.DirectoryCopy(Path.Combine(buildDir, "etc"), Path.Combine(options.PlatformsFolder, platform.ToString(), "Binaries", "Mono", "etc"), true, true);
+                    Utilities.DirectoryCopy(Path.Combine(buildDir, "etc"), Path.Combine(options.PlatformsFolder, "Editor", platform.ToString(), "Binaries", "Mono", "etc"), true, true);
+                    var srcMonoLibs = Path.Combine(buildDir, "lib", "mono");
+                    var dstMonoLibs = Path.Combine(options.PlatformsFolder, platform.ToString(), "Binaries", "Mono", "lib", "mono");
+                    var dstMonoEditorLibs = Path.Combine(options.PlatformsFolder, "Editor", platform.ToString(), "Mono", "lib", "mono");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5"), Path.Combine(dstMonoLibs, "4.5"), false, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5"), Path.Combine(dstMonoEditorLibs, "4.5"), false, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "gac"), Path.Combine(dstMonoLibs, "gac"), true, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "gac"), Path.Combine(dstMonoEditorLibs, "gac"), true, true, "*.dll");
+                    Utilities.FileCopy(Path.Combine(srcMonoLibs, "4.5", "csc.exe"), Path.Combine(dstMonoEditorLibs, "4.5", "csc.exe"), true);
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5", "Facades"), Path.Combine(dstMonoEditorLibs, "4.5", "Facades"), false, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "4.5-api"), Path.Combine(dstMonoEditorLibs, "4.5-api"), false, true, "*.dll");
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "xbuild", "14.0"), Path.Combine(dstMonoEditorLibs, "xbuild", "14.0"), true, true);
+                    Utilities.DirectoryCopy(Path.Combine(srcMonoLibs, "xbuild-frameworks", ".NETFramework", "v4.5"), Path.Combine(dstMonoEditorLibs, "xbuild-frameworks", ".NETFramework", "v4.5"), true, true);
+                    Utilities.FilesDelete(dstMonoLibs, "*.pdb", true);
+                    Utilities.FilesDelete(dstMonoEditorLibs, "*.pdb", true);
                     break;
                 }
                 }

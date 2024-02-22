@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Texture.h"
 #include "Engine/Content/Content.h"
@@ -7,7 +7,7 @@
 #include "Engine/Platform/FileSystem.h"
 #include "Engine/Graphics/RenderTools.h"
 #include "Engine/Graphics/Textures/TextureData.h"
-#include "Engine/Scripting/MainThreadManagedInvokeAction.h"
+#include "Engine/Scripting/Internal/MainThreadManagedInvokeAction.h"
 #include "Engine/Tools/TextureTool/TextureTool.h"
 
 REGISTER_BINARY_ASSET_WITH_UPGRADER(Texture, "FlaxEngine.Texture", TextureAssetUpgrader, true);
@@ -176,33 +176,7 @@ bool Texture::LoadFile(const StringView& path, bool generateMips)
     }
 
     auto initData = New<InitData>();
-
-    initData->Format = textureData.Format;
-    initData->Width = textureData.Width;
-    initData->Height = textureData.Height;
-    initData->ArraySize = 1;
-    if (generateMips)
-        initData->Mips.Resize(MipLevelsCount(textureData.Width, textureData.Height));
-    else
-        initData->Mips.Resize(textureData.GetMipLevels());
-
-    for (int32 mipIndex = 0; mipIndex < textureData.GetMipLevels(); mipIndex++)
-    {
-        auto& mip = initData->Mips[mipIndex];
-        auto& data = *textureData.GetData(0, mipIndex);
-
-        mip.Data.Copy(data.Data);
-        mip.RowPitch = data.RowPitch;
-        mip.SlicePitch = data.DepthPitch;
-    }
-
-    if (generateMips)
-    {
-        for (int32 mipIndex = textureData.GetMipLevels(); mipIndex < initData->Mips.Count(); mipIndex++)
-        {
-            initData->GenerateMip(mipIndex, true);
-        }
-    }
+    initData->FromTextureData(textureData, generateMips);
 
     return Init(initData);
 }

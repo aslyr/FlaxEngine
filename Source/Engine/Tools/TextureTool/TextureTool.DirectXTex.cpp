@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_TEXTURE_TOOL && COMPILE_WITH_DIRECTXTEX
 
@@ -9,7 +9,7 @@
 #include "Engine/Platform/CriticalSection.h"
 #include "Engine/Platform/ConditionVariable.h"
 #include "Engine/Graphics/RenderTools.h"
-#include "Engine/Graphics/Textures/TextureUtils.h"
+#include "Engine/Graphics/Async/GPUTask.h"
 #include "Engine/Graphics/Textures/TextureData.h"
 #include "Engine/Graphics/PixelFormatExtensions.h"
 #if USE_EDITOR
@@ -317,7 +317,7 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
     textureData.Width = (int32)meta.width;
     textureData.Height = (int32)meta.height;
     textureData.Depth = (int32)meta.depth;
-    textureData.Format = ToPixelFormat(meta.format);
+    textureData.Format = ::ToPixelFormat(meta.format);
     textureData.Items.Resize(1);
     textureData.Items.Resize((int32)meta.arraySize);
     for (int32 arrayIndex = 0; arrayIndex < (int32)meta.arraySize; arrayIndex++)
@@ -382,21 +382,21 @@ HRESULT CustomGenerateMipMap(DirectX::ScratchImage& mipChain, size_t item, size_
                 float pdx = sx - p0x;
                 size_t p1x = Math::Min(p0x + 1, srcImg->width - 1);
 
-                Vector4 pA = *(Vector4*)(srcData + srcImg->rowPitch * p0y + sizeof(Vector4) * p0x);
-                Vector4 pB = *(Vector4*)(srcData + srcImg->rowPitch * p0y + sizeof(Vector4) * p1x);
-                Vector4 pC = *(Vector4*)(srcData + srcImg->rowPitch * p1y + sizeof(Vector4) * p0x);
-                Vector4 pD = *(Vector4*)(srcData + srcImg->rowPitch * p1y + sizeof(Vector4) * p1x);
+                Float4 pA = *(Float4*)(srcData + srcImg->rowPitch * p0y + sizeof(Float4) * p0x);
+                Float4 pB = *(Float4*)(srcData + srcImg->rowPitch * p0y + sizeof(Float4) * p1x);
+                Float4 pC = *(Float4*)(srcData + srcImg->rowPitch * p1y + sizeof(Float4) * p0x);
+                Float4 pD = *(Float4*)(srcData + srcImg->rowPitch * p1y + sizeof(Float4) * p1x);
 
-                Vector4 pAB;
-                Vector4::Lerp(pA, pB, pdx, pAB);
+                Float4 pAB;
+                Float4::Lerp(pA, pB, pdx, pAB);
 
-                Vector4 pCD;
-                Vector4::Lerp(pC, pD, pdx, pCD);
+                Float4 pCD;
+                Float4::Lerp(pC, pD, pdx, pCD);
 
-                Vector4 p;
-                Vector4::Lerp(pAB, pCD, pdy, p);
+                Float4 p;
+                Float4::Lerp(pAB, pCD, pdy, p);
 
-                *(Vector4*)(dstData + dstImg->rowPitch * y + sizeof(Vector4) * x) = p;
+                *(Float4*)(dstData + dstImg->rowPitch * y + sizeof(Float4) * x) = p;
             }
         }
 
@@ -582,7 +582,7 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
 
         // Resize source texture
         LOG(Info, "Resizing texture from {0}x{1} to {2}x{3}.", sourceWidth, sourceHeight, width, height);
-        result = DirectX::Resize(*currentImage->GetImages(), width, height, DirectX::TEX_FILTER_LINEAR, tmpImg);
+        result = DirectX::Resize(*currentImage->GetImages(), width, height, DirectX::TEX_FILTER_LINEAR | DirectX::TEX_FILTER_SEPARATE_ALPHA, tmpImg);
         if (FAILED(result))
         {
             errorMsg = String::Format(TEXT("Cannot resize texture, error: {0:x}"), static_cast<uint32>(result));
@@ -597,7 +597,7 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
     float alphaThreshold = 0.3f;
     bool isPowerOfTwo = Math::IsPowerOfTwo(width) && Math::IsPowerOfTwo(height);
     DXGI_FORMAT sourceDxgiFormat = currentImage->GetMetadata().format;
-    PixelFormat targetFormat = TextureUtils::ToPixelFormat(options.Type, width, height, options.Compress);
+    PixelFormat targetFormat = TextureTool::ToPixelFormat(options.Type, width, height, options.Compress);
     if (options.sRGB)
         targetFormat = PixelFormatExtensions::TosRGB(targetFormat);
     DXGI_FORMAT targetDxgiFormat = ToDxgiFormat(targetFormat);
@@ -623,11 +623,27 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
         sliceData.Mips.Resize(mipLevels);
     }
 
+    bool keepAsIs = false;
+    if (!options.FlipY && 
+        !options.InvertGreenChannel && 
+        options.Compress && 
+        type == ImageType::DDS && 
+        mipLevels == sourceMipLevels && 
+        DirectX::IsCompressed(sourceDxgiFormat) && 
+        !DirectX::IsSRGB(sourceDxgiFormat) && 
+        width >= 4 && 
+        height >= 4)
+    {
+        // Keep image in the current compressed format (artist choice) so we don't have to run the slow mipmap generation
+        keepAsIs = true;
+        targetDxgiFormat = sourceDxgiFormat;
+        targetFormat = ::ToPixelFormat(currentImage->GetMetadata().format);
+    }
+
     // Decompress if texture is compressed (next steps need decompressed input data, for eg. mip maps generation or format changing)
-    if (DirectX::IsCompressed(sourceDxgiFormat))
+    if (!keepAsIs && DirectX::IsCompressed(sourceDxgiFormat))
     {
         auto& tmpImg = GET_TMP_IMG();
-
         sourceDxgiFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
         result = Decompress(currentImage->GetImages(), currentImage->GetImageCount(), currentImage->GetMetadata(), sourceDxgiFormat, tmpImg);
         if (FAILED(result))
@@ -635,29 +651,26 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
             errorMsg = String::Format(TEXT("Cannot decompress texture, error: {0:x}"), static_cast<uint32>(result));
             return true;
         }
-
         SET_CURRENT_IMG(tmpImg);
     }
 
     // Fix sRGB problem
-    if (DirectX::IsSRGB(sourceDxgiFormat))
+    if (!keepAsIs && DirectX::IsSRGB(sourceDxgiFormat))
     {
-        sourceDxgiFormat = ToDxgiFormat(PixelFormatExtensions::ToNonsRGB(ToPixelFormat(sourceDxgiFormat)));
+        sourceDxgiFormat = ToDxgiFormat(PixelFormatExtensions::ToNonsRGB(::ToPixelFormat(sourceDxgiFormat)));
         ((DirectX::TexMetadata&)currentImage->GetMetadata()).format = sourceDxgiFormat;
         for (size_t i = 0; i < currentImage->GetImageCount(); i++)
             ((DirectX::Image*)currentImage->GetImages())[i].format = sourceDxgiFormat;
     }
 
     // Remove alpha if source texture has it but output should not, valid for compressed output only (DirectX seams to use alpha to pre-multiply colors because BC1 format has no place for alpha)
-    if (DirectX::HasAlpha(sourceDxgiFormat) && options.Type == TextureFormatType::ColorRGB && options.Compress)
+    if (!keepAsIs && DirectX::HasAlpha(sourceDxgiFormat) && options.Type == TextureFormatType::ColorRGB && options.Compress)
     {
         auto& tmpImg = GET_TMP_IMG();
-
-        TransformImage(currentImage->GetImages(), currentImage->GetImageCount(), currentImage->GetMetadata(),
+        result = TransformImage(currentImage->GetImages(), currentImage->GetImageCount(), currentImage->GetMetadata(),
                        [](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
                        {
                            UNREFERENCED_PARAMETER(y);
-
                            for (size_t j = 0; j < width; j++)
                            {
                                outPixels[j] = DirectX::XMVectorSelect(DirectX::g_XMOne, inPixels[j], DirectX::g_XMSelect1110);
@@ -668,16 +681,13 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
             errorMsg = String::Format(TEXT("Cannot transform texture to remove unwanted alpha channel, error: {0:x}"), static_cast<uint32>(result));
             return true;
         }
-
-        // Use converted image
         SET_CURRENT_IMG(tmpImg);
     }
 
     // Check flip/rotate source image
-    if (options.FlipY)
+    if (!keepAsIs && options.FlipY)
     {
         auto& tmpImg = GET_TMP_IMG();
-
         DWORD flags = DirectX::TEX_FR_FLIP_VERTICAL;
         result = FlipRotate(currentImage->GetImages(), currentImage->GetImageCount(), currentImage->GetMetadata(), flags, tmpImg);
         if (FAILED(result))
@@ -685,13 +695,39 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
             errorMsg = String::Format(TEXT("Cannot rotate/flip texture, error: {0:x}"), static_cast<uint32>(result));
             return true;
         }
-
-        // Use converted image
         SET_CURRENT_IMG(tmpImg);
     }
 
+    // Check if it invert green channel
+    if (!keepAsIs && options.InvertGreenChannel)
+    {
+        auto& timage = GET_TMP_IMG();
+        result = TransformImage(currentImage->GetImages(), currentImage->GetImageCount(), currentImage->GetMetadata(),
+            [&](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t w, size_t y)
+            {
+                static const DirectX::XMVECTORU32 s_selecty = { { { DirectX::XM_SELECT_0, DirectX::XM_SELECT_1, DirectX::XM_SELECT_0, DirectX::XM_SELECT_0 } } };
+
+                UNREFERENCED_PARAMETER(y);
+
+                for (size_t j = 0; j < w; ++j)
+                {
+                    const DirectX::XMVECTOR value = inPixels[j];
+
+                    const DirectX::XMVECTOR inverty = DirectX::XMVectorSubtract(DirectX::g_XMOne, value);
+
+                    outPixels[j] = DirectX::XMVectorSelect(value, inverty, s_selecty);
+                }
+            }, timage);
+        if (FAILED(result))
+        {
+            errorMsg = String::Format(TEXT("Cannot invert green channel in texture, error: {0:x}"), static_cast<uint32>(result));
+            return true;
+        }
+        SET_CURRENT_IMG(timage);
+    }
+
     // Generate mip maps chain
-    if (useMipLevels && options.GenerateMipMaps)
+    if (!keepAsIs && useMipLevels && options.GenerateMipMaps)
     {
         auto& tmpImg = GET_TMP_IMG();
 
@@ -709,12 +745,11 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
             errorMsg = String::Format(TEXT("Cannot generate texture mip maps chain, error: {1:x}"), *path, static_cast<uint32>(result));
             return true;
         }
-
         SET_CURRENT_IMG(tmpImg);
     }
 
     // Preserve mipmap alpha coverage (if requested)
-    if (DirectX::HasAlpha(currentImage->GetMetadata().format) && options.PreserveAlphaCoverage && useMipLevels)
+    if (!keepAsIs && DirectX::HasAlpha(currentImage->GetMetadata().format) && options.PreserveAlphaCoverage && useMipLevels)
     {
         auto& tmpImg = GET_TMP_IMG();
 
@@ -746,7 +781,7 @@ bool TextureTool::ImportTextureDirectXTex(ImageType type, const StringView& path
     ASSERT((int32)currentImage->GetMetadata().mipLevels >= mipLevels);
 
     // Compress mip maps or convert image
-    if (targetDxgiFormat != sourceDxgiFormat)
+    if (!keepAsIs && targetDxgiFormat != sourceDxgiFormat)
     {
         auto& tmpImg = GET_TMP_IMG();
 
@@ -884,7 +919,7 @@ bool TextureTool::ConvertDirectXTex(TextureData& dst, const TextureData& src, co
             return true;
         }
     }
-        // Check if convert data
+    // Check if convert data
     else if (inImage->GetMetadata().format != dstFormatDxgi)
     {
         result = DirectX::Convert(inImage->GetImages(), inImage->GetImageCount(), inImage->GetMetadata(), dstFormatDxgi, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, dstImage);

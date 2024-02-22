@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "TerrainManager.h"
 #include "Terrain.h"
@@ -12,12 +12,13 @@
 #include "Engine/Engine/EngineService.h"
 #include "Engine/Content/Assets/MaterialBase.h"
 #include "Engine/Content/AssetReference.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Renderer/DrawCall.h"
 
 // Must match structure defined in Terrain.shader
 struct TerrainVertex
 {
-    Vector2 TexCoord;
+    Float2 TexCoord;
     Color32 Morph;
 };
 
@@ -97,10 +98,12 @@ bool TerrainManager::GetChunkGeometry(DrawCall& drawCall, int32 chunkSize, int32
     // Prepare
     const int32 vertexCount = (chunkSize + 1) >> lodIndex;
     chunkSize = vertexCount - 1;
+    const bool indexUse16bits = chunkSize * chunkSize * vertexCount < MAX_uint16;
+    const int32 indexSize = indexUse16bits ? sizeof(uint16) : sizeof(uint32);
     const int32 indexCount = chunkSize * chunkSize * 2 * 3;
     const int32 vertexCount2 = vertexCount * vertexCount;
     const int32 vbSize = sizeof(TerrainVertex) * vertexCount2;
-    const int32 ibSize = sizeof(uint16) * indexCount;
+    const int32 ibSize = indexSize * indexCount;
     TempData.Clear();
     TempData.EnsureCapacity(Math::Max(vbSize, ibSize));
 
@@ -116,7 +119,7 @@ bool TerrainManager::GetChunkGeometry(DrawCall& drawCall, int32 chunkSize, int32
             vertex->TexCoord.Y = z * vertexTexelSnapTexCoord;
 
             // Smooth LODs morphing based on Barycentric coordinates to morph to the lower LOD near chunk edges
-            Vector4 coord(vertex->TexCoord.Y, vertex->TexCoord.X, 1.0f - vertex->TexCoord.X, 1.0f - vertex->TexCoord.Y);
+            Float4 coord(vertex->TexCoord.Y, vertex->TexCoord.X, 1.0f - vertex->TexCoord.X, 1.0f - vertex->TexCoord.Y);
 
             // Apply some contrast
             const float AdjustPower = 0.3f;
@@ -139,26 +142,51 @@ bool TerrainManager::GetChunkGeometry(DrawCall& drawCall, int32 chunkSize, int32
 
     // Create index buffer
     auto ib = GPUDevice::Instance->CreateBuffer(TEXT("TerrainChunk.IB"));
-    auto index = (uint16*)TempData.Get();
-    for (int32 z = 0; z < chunkSize; z++)
+    if (indexUse16bits)
     {
-        for (int32 x = 0; x < chunkSize; x++)
+        auto index = (uint16*)TempData.Get();
+        for (int32 z = 0; z < chunkSize; z++)
         {
-            const uint16 i00 = (x + 0) + (z + 0) * vertexCount;
-            const uint16 i10 = (x + 1) + (z + 0) * vertexCount;
-            const uint16 i11 = (x + 1) + (z + 1) * vertexCount;
-            const uint16 i01 = (x + 0) + (z + 1) * vertexCount;
+            for (int32 x = 0; x < chunkSize; x++)
+            {
+                const uint16 i00 = (x + 0) + (z + 0) * vertexCount;
+                const uint16 i10 = (x + 1) + (z + 0) * vertexCount;
+                const uint16 i11 = (x + 1) + (z + 1) * vertexCount;
+                const uint16 i01 = (x + 0) + (z + 1) * vertexCount;
 
-            *index++ = i00;
-            *index++ = i11;
-            *index++ = i10;
+                *index++ = i00;
+                *index++ = i11;
+                *index++ = i10;
 
-            *index++ = i00;
-            *index++ = i01;
-            *index++ = i11;
+                *index++ = i00;
+                *index++ = i01;
+                *index++ = i11;
+            }
         }
     }
-    desc = GPUBufferDescription::Index(sizeof(uint16), indexCount, TempData.Get());
+    else
+    {
+        auto index = (uint32*)TempData.Get();
+        for (int32 z = 0; z < chunkSize; z++)
+        {
+            for (int32 x = 0; x < chunkSize; x++)
+            {
+                const uint32 i00 = (x + 0) + (z + 0) * vertexCount;
+                const uint32 i10 = (x + 1) + (z + 0) * vertexCount;
+                const uint32 i11 = (x + 1) + (z + 1) * vertexCount;
+                const uint32 i01 = (x + 0) + (z + 1) * vertexCount;
+
+                *index++ = i00;
+                *index++ = i11;
+                *index++ = i10;
+
+                *index++ = i00;
+                *index++ = i01;
+                *index++ = i11;
+            }
+        }
+    }
+    desc = GPUBufferDescription::Index(indexSize, indexCount, TempData.Get());
     if (ib->Init(desc))
     {
         vb->ReleaseGPU();

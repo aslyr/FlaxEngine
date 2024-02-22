@@ -1,8 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ForwardMaterialShader.h"
 #include "MaterialShaderFeatures.h"
 #include "MaterialParams.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/GPULimits.h"
 #include "Engine/Graphics/RenderView.h"
@@ -16,28 +17,14 @@
 #include "Engine/Renderer/Lightmaps.h"
 #endif
 
-#define MAX_LOCAL_LIGHTS 4
-
 PACK_STRUCT(struct ForwardMaterialShaderData {
-    Matrix ViewProjectionMatrix;
     Matrix WorldMatrix;
-    Matrix ViewMatrix;
-    Matrix PrevViewProjectionMatrix;
     Matrix PrevWorldMatrix;
-    Vector3 ViewPos;
-    float ViewFar;
-    Vector3 ViewDir;
-    float TimeParam;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
-    Vector3 WorldInvScale;
-    float WorldDeterminantSign;
-    Vector2 Dummy0;
+    Float2 Dummy0;
     float LODDitherFactor;
     float PerInstanceRandom;
-    Vector4 TemporalAAJitter;
-    Vector3 GeometrySize;
-    float Dummy1;
+    Float3 GeometrySize;
+    float WorldDeterminantSign;
     });
 
 DrawPass ForwardMaterialShader::GetDrawModes() const
@@ -64,13 +51,15 @@ void ForwardMaterialShader::Bind(BindParameters& params)
     int32 srv = 2;
 
     // Setup features
+    if ((_info.FeaturesFlags & MaterialFeaturesFlags::GlobalIllumination) != MaterialFeaturesFlags::None)
+        GlobalIlluminationFeature::Bind(params, cb, srv);
     ForwardShadingFeature::Bind(params, cb, srv);
 
     // Setup parameters
     MaterialParameter::BindMeta bindMeta;
     bindMeta.Context = context;
     bindMeta.Constants = cb;
-    bindMeta.Input = nullptr; // forward pass materials cannot sample scene color for now
+    bindMeta.Input = params.Input;
     bindMeta.Buffers = params.RenderContext.Buffers;
     bindMeta.CanSampleDepth = GPUDevice::Instance->Limits.HasReadOnlyDepth;
     bindMeta.CanSampleGBuffer = true;
@@ -87,24 +76,8 @@ void ForwardMaterialShader::Bind(BindParameters& params)
 
     // Setup material constants
     {
-        Matrix::Transpose(view.Frustum.GetMatrix(), materialData->ViewProjectionMatrix);
         Matrix::Transpose(drawCall.World, materialData->WorldMatrix);
-        Matrix::Transpose(view.View, materialData->ViewMatrix);
         Matrix::Transpose(drawCall.Surface.PrevWorld, materialData->PrevWorldMatrix);
-        Matrix::Transpose(view.PrevViewProjection, materialData->PrevViewProjectionMatrix);
-        materialData->ViewPos = view.Position;
-        materialData->ViewFar = view.Far;
-        materialData->ViewDir = view.Direction;
-        materialData->TimeParam = params.TimeParam;
-        materialData->ViewInfo = view.ViewInfo;
-        materialData->ScreenSize = view.ScreenSize;
-        const float scaleX = Vector3(drawCall.World.M11, drawCall.World.M12, drawCall.World.M13).Length();
-        const float scaleY = Vector3(drawCall.World.M21, drawCall.World.M22, drawCall.World.M23).Length();
-        const float scaleZ = Vector3(drawCall.World.M31, drawCall.World.M32, drawCall.World.M33).Length();
-        materialData->WorldInvScale = Vector3(
-            scaleX > 0.00001f ? 1.0f / scaleX : 0.0f,
-            scaleY > 0.00001f ? 1.0f / scaleY : 0.0f,
-            scaleZ > 0.00001f ? 1.0f / scaleZ : 0.0f);
         materialData->WorldDeterminantSign = drawCall.WorldDeterminantSign;
         materialData->LODDitherFactor = drawCall.Surface.LODDitherFactor;
         materialData->PerInstanceRandom = drawCall.PerInstanceRandom;
@@ -119,7 +92,7 @@ void ForwardMaterialShader::Bind(BindParameters& params)
     }
 
     // Select pipeline state based on current pass and render mode
-    const bool wireframe = (_info.FeaturesFlags & MaterialFeaturesFlags::Wireframe) != 0 || view.Mode == ViewMode::Wireframe;
+    const bool wireframe = (_info.FeaturesFlags & MaterialFeaturesFlags::Wireframe) != MaterialFeaturesFlags::None || view.Mode == ViewMode::Wireframe;
     CullMode cullMode = view.Pass == DrawPass::Depth ? CullMode::TwoSided : _info.CullMode;
 #if USE_EDITOR
     if (IsRunningRadiancePass)
@@ -154,11 +127,11 @@ void ForwardMaterialShader::Unload()
 
 bool ForwardMaterialShader::Load()
 {
-    _drawModes = DrawPass::Depth | DrawPass::Forward;
+    _drawModes = DrawPass::Depth | DrawPass::Forward | DrawPass::QuadOverdraw;
 
     auto psDesc = GPUPipelineState::Description::Default;
-    psDesc.DepthTestEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthTest) == 0;
-    psDesc.DepthWriteEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthWrite) == 0;
+    psDesc.DepthEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthTest) == MaterialFeaturesFlags::None;
+    psDesc.DepthWriteEnable = (_info.FeaturesFlags & MaterialFeaturesFlags::DisableDepthWrite) == MaterialFeaturesFlags::None;
 
     // Check if use tessellation (both material and runtime supports it)
     const bool useTess = _info.TessellationMode != TessellationMethod::None && GPUDevice::Instance->Limits.HasTessellation;
@@ -167,6 +140,20 @@ bool ForwardMaterialShader::Load()
         psDesc.HS = _shader->GetHS("HS");
         psDesc.DS = _shader->GetDS("DS");
     }
+
+#if USE_EDITOR
+    if (_shader->HasShader("PS_QuadOverdraw"))
+    {
+        // Quad Overdraw
+        psDesc.VS = _shader->GetVS("VS");
+        psDesc.PS = _shader->GetPS("PS_QuadOverdraw");
+        _cache.QuadOverdraw.Init(psDesc);
+        psDesc.VS = _shader->GetVS("VS", 1);
+        _cacheInstanced.Depth.Init(psDesc);
+        psDesc.VS = _shader->GetVS("VS_Skinned");
+        _cache.QuadOverdrawSkinned.Init(psDesc);
+    }
+#endif
 
     // Check if use transparent distortion pass
     if (_shader->HasShader("PS_Distortion"))
@@ -187,6 +174,8 @@ bool ForwardMaterialShader::Load()
 
     // Forward Pass
     psDesc.VS = _shader->GetVS("VS");
+    if (psDesc.VS == nullptr)
+        return true;
     psDesc.PS = _shader->GetPS("PS_Forward");
     psDesc.DepthWriteEnable = false;
     psDesc.BlendMode = BlendingMode::AlphaBlend;
@@ -213,7 +202,7 @@ bool ForwardMaterialShader::Load()
     psDesc.CullMode = CullMode::TwoSided;
     psDesc.DepthClipEnable = false;
     psDesc.DepthWriteEnable = true;
-    psDesc.DepthTestEnable = true;
+    psDesc.DepthEnable = true;
     psDesc.DepthFunc = ComparisonFunc::Less;
     psDesc.HS = nullptr;
     psDesc.DS = nullptr;

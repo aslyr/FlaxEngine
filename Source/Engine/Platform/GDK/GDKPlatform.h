@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -23,8 +23,8 @@ public:
     /// </summary>
     static void* Instance;
 
-    static Delegate<> OnSuspend;
-    static Delegate<> OnResume;
+    static Delegate<> Suspended;
+    static Delegate<> Resumed;
 
 public:
 
@@ -44,10 +44,15 @@ public:
 
     static bool IsRunningOnDevKit();
 
+    static void SignInSilently();
+    static void SignInWithUI();
+    static User* FindUser(const struct XUserLocalId& id);
+
 public:
 
     // [Win32Platform]
     static bool Init();
+    static void LogInfo();
     static void BeforeRun();
     static void Tick();
     static void BeforeExit();
@@ -60,13 +65,10 @@ public:
     static int32 GetDpi();
     static String GetUserLocaleName();
     static String GetComputerName();
-    static String GetUserName();
     static bool GetHasFocus();
     static bool CanOpenUrl(const StringView& url);
     static void OpenUrl(const StringView& url);
-    static Rectangle GetMonitorBounds(const Vector2& screenPos);
-    static Vector2 GetDesktopSize();
-    static Rectangle GetVirtualDesktopBounds();
+    static Float2 GetDesktopSize();
     static void GetEnvironmentVariables(Dictionary<String, String, HeapAllocation>& result);
     static bool GetEnvironmentVariable(const String& name, String& value);
     static bool SetEnvironmentVariable(const String& name, const String& value);

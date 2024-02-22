@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content.Create;
@@ -126,7 +126,8 @@ namespace FlaxEditor.Content
     /// Generic Json assets proxy (supports all json assets that don't have dedicated proxy).
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.JsonAssetBaseProxy" />
-    public sealed class GenericJsonAssetProxy : JsonAssetProxy
+    [ContentContextMenu("New/Json Asset")]
+    public class GenericJsonAssetProxy : JsonAssetProxy
     {
         /// <inheritdoc />
         public override string TypeName => typeof(JsonAsset).FullName;
@@ -160,10 +161,10 @@ namespace FlaxEditor.Content
     /// Content proxy for a json assets of the given type that can be spawned in the editor.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.JsonAssetProxy" />
-    public sealed class SpawnableJsonAssetProxy<T> : JsonAssetProxy where T : new()
+    public class SpawnableJsonAssetProxy<T> : JsonAssetProxy where T : new()
     {
         /// <inheritdoc />
-        public override string Name { get; } = CustomEditors.CustomEditorsUtil.GetPropertyNameUI(typeof(T).Name);
+        public override string Name { get; } = Utilities.Utils.GetPropertyNameUI(typeof(T).Name);
 
         /// <inheritdoc />
         public override bool CanCreate(ContentFolder targetLocation)

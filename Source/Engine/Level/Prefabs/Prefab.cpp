@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Prefab.h"
 #include "Engine/Serialization/JsonTools.h"
+#include "Engine/Content/Content.h"
 #include "Engine/Content/Factories/JsonAssetFactory.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Level/Prefabs/PrefabManager.h"
@@ -11,7 +12,7 @@
 #include "Engine/Scripting/Scripting.h"
 #endif
 
-REGISTER_JSON_ASSET(Prefab, "FlaxEngine.Prefab", false);
+REGISTER_JSON_ASSET(Prefab, "FlaxEngine.Prefab", true);
 
 Prefab::Prefab(const SpawnParams& params, const AssetInfo* info)
     : JsonAssetBase(params, info)
@@ -19,6 +20,36 @@ Prefab::Prefab(const SpawnParams& params, const AssetInfo* info)
     , _defaultInstance(nullptr)
     , ObjectsCount(0)
 {
+}
+
+Guid Prefab::GetRootObjectId() const
+{
+    ASSERT(IsLoaded());
+    ScopeLock lock(Locker);
+
+    // Root is always the first but handle case when prefab root was reordered in the base prefab while the nested prefab has still the old state
+    // TODO: resave and force sync prefabs during game cooking so this step could be skipped in game
+    int32 objectIndex = 0;
+    if (NestedPrefabs.HasItems())
+    {
+        const auto& data = *Data;
+        const Guid basePrefabId = JsonTools::GetGuid(data[objectIndex], "PrefabID");
+        if (const auto basePrefab = Content::Load<Prefab>(basePrefabId))
+        {
+            const Guid basePrefabRootId = basePrefab->GetRootObjectId();
+            for (int32 i = 0; i < ObjectsCount; i++)
+            {
+                const Guid prefabObjectId = JsonTools::GetGuid(data[i], "PrefabObjectID");
+                if (prefabObjectId == basePrefabRootId)
+                {
+                    objectIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    return ObjectsIds[objectIndex];
 }
 
 Actor* Prefab::GetDefaultInstance()
@@ -56,17 +87,12 @@ SceneObject* Prefab::GetDefaultInstance(const Guid& objectId)
     const auto result = GetDefaultInstance();
     if (!result)
         return nullptr;
-
     if (objectId.IsValid())
     {
-        const void* object;
+        SceneObject* object;
         if (ObjectsCache.TryGet(objectId, object))
-        {
-            // Actor or Script
-            return (SceneObject*)object;
-        }
+            return object;
     }
-
     return result;
 }
 
@@ -105,7 +131,6 @@ Asset::LoadResult Prefab::loadAsset()
 
     // Allocate memory for objects
     ObjectsIds.EnsureCapacity(objectsCount * 2);
-    NestedPrefabs.EnsureCapacity(objectsCount);
     ObjectsDataCache.EnsureCapacity(objectsCount * 3);
 
     // Find serialized object ids (actors and scripts), they are used later for IDs mapping on prefab spawning via PrefabManager
@@ -122,7 +147,6 @@ Asset::LoadResult Prefab::loadAsset()
         }
 
         ObjectsIds.Add(objectId);
-        ASSERT(!ObjectsDataCache.ContainsKey(objectId));
         ObjectsDataCache.Add(objectId, &objData);
         ObjectsCount++;
 

@@ -1,8 +1,10 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "DecalMaterialShader.h"
 #include "MaterialParams.h"
+#include "Engine/Core/Log.h"
 #include "Engine/Core/Math/OrientedBoundingBox.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUDevice.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Graphics/RenderBuffers.h"
@@ -12,17 +14,9 @@
 #include "Engine/Renderer/DrawCall.h"
 
 PACK_STRUCT(struct DecalMaterialShaderData {
-    Matrix ViewProjectionMatrix;
     Matrix WorldMatrix;
-    Matrix ViewMatrix;
     Matrix InvWorld;
     Matrix SVPositionToWorld;
-    Vector3 ViewPos;
-    float ViewFar;
-    Vector3 ViewDir;
-    float TimeParam;
-    Vector4 ViewInfo;
-    Vector4 ScreenSize;
     });
 
 DrawPass DecalMaterialShader::GetDrawModes() const
@@ -48,7 +42,7 @@ void DecalMaterialShader::Bind(BindParameters& params)
     bindMeta.Context = context;
     bindMeta.Constants = cb;
     bindMeta.Input = nullptr;
-    bindMeta.Buffers = nullptr;
+    bindMeta.Buffers = params.RenderContext.Buffers;
     bindMeta.CanSampleDepth = true;
     bindMeta.CanSampleGBuffer = false;
     MaterialParams::Bind(params.ParamsLink, bindMeta);
@@ -58,15 +52,7 @@ void DecalMaterialShader::Bind(BindParameters& params)
 
     // Setup material constants
     {
-        Matrix::Transpose(view.Frustum.GetMatrix(), materialData->ViewProjectionMatrix);
         Matrix::Transpose(drawCall.World, materialData->WorldMatrix);
-        Matrix::Transpose(view.View, materialData->ViewMatrix);
-        materialData->ViewPos = view.Position;
-        materialData->ViewFar = view.Far;
-        materialData->ViewDir = view.Direction;
-        materialData->TimeParam = params.TimeParam;
-        materialData->ViewInfo = view.ViewInfo;
-        materialData->ScreenSize = view.ScreenSize;
 
         // Matrix for transformation from world space to decal object space
         Matrix invWorld;
@@ -106,6 +92,8 @@ bool DecalMaterialShader::Load()
 {
     GPUPipelineState::Description psDesc0 = GPUPipelineState::Description::DefaultNoDepth;
     psDesc0.VS = _shader->GetVS("VS_Decal");
+    if (psDesc0.VS == nullptr)
+        return true;
     psDesc0.PS = _shader->GetPS("PS_Decal");
     psDesc0.CullMode = CullMode::Normal;
 

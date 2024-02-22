@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -33,7 +33,6 @@ struct NavMeshDataHeader
 class NavMeshData
 {
 public:
-
     /// <summary>
     /// The size of the navmesh tile (in world units).
     /// </summary>
@@ -45,7 +44,6 @@ public:
     Array<NavMeshTileData> Tiles;
 
 public:
-
     /// <summary>
     /// Saves the navmesh tiles to the specified stream.
     /// </summary>

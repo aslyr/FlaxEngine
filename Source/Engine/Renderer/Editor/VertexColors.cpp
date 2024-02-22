@@ -1,10 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #if USE_EDITOR
 
 #include "VertexColors.h"
 #include "Engine/Content/Content.h"
 #include "Engine/Graphics/GPUDevice.h"
+#include "Engine/Graphics/GPUContext.h"
 #include "Engine/Graphics/GPUPipelineState.h"
 #include "Engine/Graphics/Shaders/GPUShader.h"
 #include "Engine/Graphics/Shaders/GPUConstantBuffer.h"
@@ -39,6 +40,11 @@ void VertexColorsMaterialShader::OnShaderReloading(Asset* obj)
 const MaterialInfo& VertexColorsMaterialShader::GetInfo() const
 {
     return _info;
+}
+
+GPUShader* VertexColorsMaterialShader::GetShader() const
+{
+    return _shader->GetShader();
 }
 
 bool VertexColorsMaterialShader::IsReady() const

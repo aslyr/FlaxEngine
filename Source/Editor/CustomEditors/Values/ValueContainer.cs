@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Linq;
 using FlaxEditor.Scripting;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.CustomEditors
 {
@@ -187,7 +188,7 @@ namespace FlaxEditor.CustomEditors
                     {
                         for (int i = 0; i < Count; i++)
                         {
-                            if (this[i] == referenceSceneObject)
+                            if ((SceneObject)this[i] == referenceSceneObject)
                                 continue;
 
                             if (this[i] == null || (this[i] is SceneObject valueSceneObject && valueSceneObject && valueSceneObject.PrefabObjectID != referenceSceneObject.PrefabObjectID))
@@ -198,7 +199,7 @@ namespace FlaxEditor.CustomEditors
                     {
                         for (int i = 0; i < Count; i++)
                         {
-                            if (!Equals(this[i], _referenceValue))
+                            if (!ValueEquals(this[i], _referenceValue))
                                 return true;
                         }
                     }
@@ -228,12 +229,21 @@ namespace FlaxEditor.CustomEditors
                 {
                     for (int i = 0; i < Count; i++)
                     {
-                        if (!Equals(this[i], _defaultValue))
+                        if (!ValueEquals(this[i], _defaultValue))
                             return true;
                     }
                 }
                 return false;
             }
+        }
+
+        private static bool ValueEquals(object objA, object objB)
+        {
+            // Special case for String (null string is kind of equal to empty string from the user perspective)
+            if (objA == null && objB is string objBStr && objBStr.Length == 0)
+                return true;
+
+            return Newtonsoft.Json.Utilities.MiscellaneousUtils.ValueEquals(objA, objB);
         }
 
         /// <summary>
@@ -263,6 +273,23 @@ namespace FlaxEditor.CustomEditors
                 {
                     _defaultValue = defaultValueAttribute.Value;
                     _hasDefaultValue = true;
+
+                    if (_defaultValue != null && _defaultValue.GetType() != Type.Type)
+                    {
+                        // Workaround for DefaultValueAttribute that doesn't support certain value types storage
+                        if (Type.Type == typeof(sbyte))
+                            _defaultValue = Convert.ToSByte(_defaultValue);
+                        else if (Type.Type == typeof(short))
+                            _defaultValue = Convert.ToInt16(_defaultValue);
+                        else if (Type.Type == typeof(ushort))
+                            _defaultValue = Convert.ToUInt16(_defaultValue);
+                        else if (Type.Type == typeof(uint))
+                            _defaultValue = Convert.ToUInt32(_defaultValue);
+                        else if (Type.Type == typeof(ulong))
+                            _defaultValue = Convert.ToUInt64(_defaultValue);
+                        else if (Type.Type == typeof(long))
+                            _defaultValue = Convert.ToInt64(_defaultValue);
+                    }
                 }
             }
             if (instanceValues._hasReferenceValue)

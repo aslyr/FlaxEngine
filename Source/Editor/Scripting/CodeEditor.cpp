@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "CodeEditor.h"
 #include "CodeEditors/SystemDefaultCodeEditor.h"
@@ -180,7 +180,22 @@ void CodeEditingManager::OpenSolution(CodeEditorTypes editorType)
     const auto editor = GetCodeEditor(editorType);
     if (editor)
     {
-        OpenSolution(editor);
+        // Ensure that no async task is running
+        if (IsAsyncOpenRunning())
+        {
+            // TODO: enqueue action and handle many actions in the queue
+            LOG(Warning, "Cannot use code editor during async open action.");
+            return;
+        }
+
+        if (editor->UseAsyncForOpen())
+        {
+            AsyncOpenTask::OpenSolution(editor);
+        }
+        else
+        {
+            editor->OpenSolution();
+        }
     }
     else
     {
@@ -198,26 +213,6 @@ void CodeEditingManager::OnFileAdded(CodeEditorTypes editorType, const String& p
     else
     {
         LOG(Warning, "Missing code editor type {0}", (int32)editorType);
-    }
-}
-
-void CodeEditingManager::OpenSolution(CodeEditor* editor)
-{
-    // Ensure that no async task is running
-    if (IsAsyncOpenRunning())
-    {
-        // TODO: enqueue action and handle many actions in the queue
-        LOG(Warning, "Cannot use code editor during async open action.");
-        return;
-    }
-
-    if (editor->UseAsyncForOpen())
-    {
-        AsyncOpenTask::OpenSolution(editor);
-    }
-    else
-    {
-        editor->OpenSolution();
     }
 }
 

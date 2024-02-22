@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 namespace FlaxEngine.GUI
 {
@@ -37,7 +37,7 @@ namespace FlaxEngine.GUI
         }
 
         /// <inheritdoc />
-        public Vector2 Size => Texture?.Size ?? Vector2.Zero;
+        public Float2 Size => Texture != null ? Texture.Size : Float2.Zero;
 
         /// <inheritdoc />
         public void Draw(Rectangle rect, Color color)

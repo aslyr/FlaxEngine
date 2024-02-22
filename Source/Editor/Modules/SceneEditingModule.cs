@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -216,33 +216,77 @@ namespace FlaxEditor.Modules
             }
         }
 
-        private void OnDirty(List<SceneGraphNode> objects)
+        private static bool SelectActorsUsingAsset(Guid assetId, ref Guid id, Dictionary<Guid, bool> scannedAssets)
         {
-            var options = Editor.Options.Options;
-            var isPlayMode = Editor.StateMachine.IsPlayMode;
+            // Check for asset match or try to use cache
+            if (assetId == id)
+                return true;
+            if (scannedAssets.TryGetValue(id, out var result))
+                return result;
+            if (id == Guid.Empty || !FlaxEngine.Content.GetAssetInfo(id, out var assetInfo))
+                return false;
+            scannedAssets.Add(id, false);
 
-            // Auto CSG mesh rebuild
-            if (!isPlayMode && options.General.AutoRebuildCSG)
-            {
-                foreach (var obj in objects)
-                {
-                    if (obj is ActorNode node && node.Actor is BoxBrush)
-                        node.Actor.Scene.BuildCSG(options.General.AutoRebuildCSGTimeoutMs);
-                }
-            }
+            // Skip scene assets
+            if (assetInfo.TypeName == "FlaxEngine.SceneAsset")
+                return false;
 
-            // Auto NavMesh rebuild
-            if (!isPlayMode && options.General.AutoRebuildNavMesh)
+            // Recursive check if this asset contains direct or indirect reference to the given asset
+            var asset = FlaxEngine.Content.Load<Asset>(assetInfo.ID, 1000);
+            if (asset)
             {
-                foreach (var obj in objects)
+                var references = asset.GetReferences();
+                for (var i = 0; i < references.Length; i++)
                 {
-                    if (obj is ActorNode node && node.Actor && node.Actor.Scene && node.AffectsNavigationWithChildren)
+                    if (SelectActorsUsingAsset(assetId, ref references[i], scannedAssets))
                     {
-                        var bounds = node.Actor.BoxWithChildren;
-                        Navigation.BuildNavMesh(node.Actor.Scene, bounds, options.General.AutoRebuildNavMeshTimeoutMs);
+                        scannedAssets[id] = true;
+                        return true;
                     }
                 }
             }
+
+            return false;
+        }
+
+        private static void SelectActorsUsingAsset(Guid assetId, SceneGraphNode node, List<SceneGraphNode> selection, Dictionary<Guid, bool> scannedAssets)
+        {
+            if (node is ActorNode actorNode && actorNode.Actor)
+            {
+                // To detect if this actor uses the given asset simply serialize it to json and check used asset ids
+                // TODO: check scripts too
+                var json = actorNode.Actor.ToJson();
+                JsonAssetBase.GetReferences(json, out var ids);
+                for (var i = 0; i < ids.Length; i++)
+                {
+                    if (SelectActorsUsingAsset(assetId, ref ids[i], scannedAssets))
+                    {
+                        selection.Add(actorNode);
+                        break;
+                    }
+                }
+            }
+
+            // Recursive check for children
+            for (int i = 0; i < node.ChildNodes.Count; i++)
+                SelectActorsUsingAsset(assetId, node.ChildNodes[i], selection, scannedAssets);
+        }
+
+        /// <summary>
+        /// Selects the actors using the given asset.
+        /// </summary>
+        /// <param name="assetId">The asset ID.</param>
+        /// <param name="additive">if set to <c>true</c> will use additive mode, otherwise will clear previous selection.</param>
+        public void SelectActorsUsingAsset(Guid assetId, bool additive = false)
+        {
+            // TODO: make it async action with progress
+            Profiler.BeginEvent("SelectActorsUsingAsset");
+            var selection = new List<SceneGraphNode>();
+            var scannedAssets = new Dictionary<Guid, bool>();
+            SelectActorsUsingAsset(assetId, Editor.Scene.Root, selection, scannedAssets);
+            Profiler.EndEvent();
+
+            Select(selection, additive);
         }
 
         /// <summary>
@@ -335,7 +379,7 @@ namespace FlaxEditor.Modules
             actor.StaticFlags = old.StaticFlags;
             actor.HideFlags = old.HideFlags;
             actor.Layer = old.Layer;
-            actor.Tag = old.Tag;
+            actor.Tags = old.Tags;
             actor.Name = old.Name;
             actor.IsActive = old.IsActive;
 
@@ -357,6 +401,7 @@ namespace FlaxEditor.Modules
             var actorNode = Editor.Instance.Scene.GetActorNode(actor);
             if (actorNode == null)
                 throw new InvalidOperationException("Failed to create scene node for the spawned actor.");
+            actorNode.PostConvert(oldNode);
 
             actorNode.PostSpawn();
             Editor.Scene.MarkSceneEdited(actor.Scene);
@@ -404,10 +449,14 @@ namespace FlaxEditor.Modules
 
             SelectionDeleteEnd?.Invoke();
 
-            OnDirty(objects);
-
             if (isSceneTreeFocus)
+            {
                 Editor.Windows.SceneWin.Focus();
+            }
+
+            // fix scene window layout
+            Editor.Windows.SceneWin.PerformLayout();
+            Editor.Windows.SceneWin.PerformLayout();
         }
 
         /// <summary>
@@ -454,7 +503,7 @@ namespace FlaxEditor.Modules
             // Set paste target if only one actor is selected and no target provided
             if (pasteTargetActor == null && SelectionCount == 1 && Selection[0] is ActorNode actorNode)
             {
-                pasteTargetActor = actorNode.Actor;
+                pasteTargetActor = actorNode.Actor.Scene == actorNode.Actor ? actorNode.Actor : actorNode.Actor.Parent;
             }
 
             // Create paste action
@@ -471,6 +520,9 @@ namespace FlaxEditor.Modules
                 Undo.AddAction(new MultiUndoAction(pasteAction, selectAction));
                 OnSelectionChanged();
             }
+
+            // Scroll to new selected node while pasting
+            Editor.Windows.SceneWin.ScrollToSelectedNode();
         }
 
         /// <summary>
@@ -480,6 +532,41 @@ namespace FlaxEditor.Modules
         {
             Copy();
             Delete();
+        }
+
+        /// <summary>
+        /// Create parent for selected actors.
+        /// </summary>
+        public void CreateParentForSelectedActors()
+        {
+            Actor actor = new EmptyActor();
+            Editor.SceneEditing.Spawn(actor, null, false);
+            List<SceneGraphNode> selection = Editor.SceneEditing.Selection;
+            var actors = selection.Where(x => x is ActorNode).Select(x => ((ActorNode)x).Actor);
+            using (new UndoMultiBlock(Undo, actors, "Reparent actors"))
+            {
+                for (int i = 0; i < selection.Count; i++)
+                {
+                    if (selection[i] is ActorNode node)
+                    {
+                        if (node.ParentNode != node.ParentScene) // If parent node is not a scene
+                        {
+                            if (selection.Contains(node.ParentNode))
+                            {
+                                continue; // If parent and child nodes selected together, don't touch child nodes
+                            }
+
+                            // Put created node as child of the Parent Node of node
+                            int parentOrder = node.Actor.OrderInParent;
+                            actor.Parent = node.Actor.Parent;
+                            actor.OrderInParent = parentOrder;
+                        }
+                        node.Actor.Parent = actor;
+                    }
+                }
+            }
+            Editor.SceneEditing.Select(actor);
+            Editor.Scene.GetActorNode(actor).TreeNode.StartRenaming(Editor.Windows.SceneWin, Editor.Windows.SceneWin.SceneTreePanel);
         }
 
         /// <summary>
@@ -568,6 +655,9 @@ namespace FlaxEditor.Modules
                 Undo.AddAction(new MultiUndoAction(undoActions));
                 OnSelectionChanged();
             }
+
+            // Scroll to new selected node while duplicating
+            Editor.Windows.SceneWin.ScrollToSelectedNode();
         }
 
         /// <summary>

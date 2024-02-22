@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System.Linq;
 using System.Xml;
@@ -50,10 +50,8 @@ namespace FlaxEditor.Windows.Assets
                     {
                         var sprite = Asset.GetSprite(i);
                         var area = sprite.Area;
-
-                        Vector2 position = area.Location * rect.Size + rect.Location;
-                        Vector2 size = area.Size * rect.Size;
-
+                        var position = area.Location * rect.Size + rect.Location;
+                        var size = area.Size * rect.Size;
                         Render2D.DrawRectangle(new Rectangle(position, size), style.BackgroundSelected);
                     }
                 }
@@ -85,15 +83,15 @@ namespace FlaxEditor.Windows.Assets
                     set => Sprite.Name = value;
                 }
 
-                [EditorOrder(1), Limit(-4096, 4096)]
-                public Vector2 Location
+                [EditorOrder(1)]
+                public Float2 Location
                 {
                     get => Sprite.Location;
                     set => Sprite.Location = value;
                 }
 
-                [EditorOrder(3), Limit(0, 4096)]
-                public Vector2 Size
+                [EditorOrder(3), Limit(0)]
+                public Float2 Size
                 {
                     get => Sprite.Size;
                     set => Sprite.Size = value;
@@ -105,7 +103,7 @@ namespace FlaxEditor.Windows.Assets
             public SpriteEntry[] Sprites;
 
             [EditorOrder(1000), EditorDisplay("Import Settings", EditorDisplayAttribute.InlineStyle)]
-            public TextureImportSettings ImportSettings = new TextureImportSettings();
+            public FlaxEngine.Tools.TextureTool.Options ImportSettings = new();
 
             public sealed class ProxyEditor : GenericEditor
             {
@@ -139,7 +137,7 @@ namespace FlaxEditor.Windows.Assets
                     }
                 }
 
-                private void OnGroupPanelMouseButtonRightClicked(DropPanel groupPanel, Vector2 location)
+                private void OnGroupPanelMouseButtonRightClicked(DropPanel groupPanel, Float2 location)
                 {
                     var menu = new ContextMenu();
 
@@ -185,11 +183,7 @@ namespace FlaxEditor.Windows.Assets
                 UpdateSprites();
 
                 // Try to restore target asset texture import options (useful for fast reimport)
-                if (TextureImportEntry.Internal_GetTextureImportOptions(win.Item.Path, out TextureImportSettings.InternalOptions options))
-                {
-                    // Restore settings
-                    ImportSettings.FromInternal(ref options);
-                }
+                Editor.TryRestoreImportOptions(ref ImportSettings, win.Item.Path);
 
                 // Prepare restore data
                 PeekState();
@@ -271,8 +265,8 @@ namespace FlaxEditor.Windows.Assets
             {
                 var sprite = new Sprite
                 {
-                    Name = StringUtils.IncrementNameNumber("New Sprite", name => Asset.Sprites.All(s => s.Name != name)),
-                    Area = new Rectangle(Vector2.Zero, Vector2.One),
+                    Name = Utilities.Utils.IncrementNameNumber("New Sprite", name => Asset.Sprites.All(s => s.Name != name)),
+                    Area = new Rectangle(Float2.Zero, Float2.One),
                 };
                 Asset.AddSprite(sprite);
                 MarkAsEdited();
@@ -368,14 +362,13 @@ namespace FlaxEditor.Windows.Assets
         /// <inheritdoc />
         public override void OnLayoutSerialize(XmlWriter writer)
         {
-            writer.WriteAttributeString("Split", _split.SplitterValue.ToString());
+            LayoutSerializeSplitter(writer, "Split", _split);
         }
 
         /// <inheritdoc />
         public override void OnLayoutDeserialize(XmlElement node)
         {
-            if (float.TryParse(node.GetAttribute("Split"), out float value1))
-                _split.SplitterValue = value1;
+            LayoutDeserializeSplitter(node, "Split", _split);
         }
 
         /// <inheritdoc />

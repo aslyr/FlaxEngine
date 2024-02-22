@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using FlaxEditor.Windows;
 using FlaxEditor.Windows.Assets;
 using FlaxEngine;
 using FlaxEngine.Json;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.Content
 {
@@ -15,6 +16,7 @@ namespace FlaxEditor.Content
     /// A <see cref="VisualScript"/> asset proxy object.
     /// </summary>
     /// <seealso cref="FlaxEditor.Content.BinaryAssetProxy" />
+    [ContentContextMenu("New/Visual Script")]
     public class VisualScriptProxy : BinaryAssetProxy, IScriptTypesContainer
     {
         internal VisualScriptProxy()
@@ -77,6 +79,18 @@ namespace FlaxEditor.Content
             }
 
             return ScriptType.Null;
+        }
+
+        /// <inheritdoc />
+        public void GetTypes(List<ScriptType> result, Func<ScriptType, bool> checkFunc)
+        {
+            var visualScripts = VisualScriptItem.VisualScripts;
+            for (var i = 0; i < visualScripts.Count; i++)
+            {
+                var t = visualScripts[i].ScriptType;
+                if (checkFunc(t))
+                    result.Add(t);
+            }
         }
 
         /// <inheritdoc />

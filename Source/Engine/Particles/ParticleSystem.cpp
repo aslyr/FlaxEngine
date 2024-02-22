@@ -1,7 +1,8 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "ParticleSystem.h"
 #include "ParticleEffect.h"
+#include "Engine/Core/Types/CommonValue.h"
 #include "Engine/Level/Level.h"
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
 #include "Engine/Serialization/MemoryReadStream.h"
@@ -39,6 +40,9 @@ void ParticleSystem::Init(ParticleEmitter* emitter, float duration, float fps)
         track.AsEmitter.Index = 0;
         track.AsEmitter.StartFrame = 0;
         track.AsEmitter.DurationFrames = DurationFrames;
+#if !BUILD_RELEASE
+        _debugName = StringUtils::GetFileNameWithoutExtension(emitter->GetPath());
+#endif
     }
 }
 
@@ -71,14 +75,14 @@ BytesContainer ParticleSystem::LoadTimeline()
             stream.WriteInt32(track.ParentIndex);
             stream.WriteInt32(track.ChildrenCount);
             stream.WriteString(track.Name, -13);
-            stream.Write(&track.Color);
+            stream.Write(track.Color);
 
             Guid id;
             switch (track.Type)
             {
             case Track::Types::Emitter:
                 id = Emitters[track.AsEmitter.Index].GetID();
-                stream.Write(&id);
+                stream.Write(id);
                 stream.WriteInt32(track.AsEmitter.Index);
                 stream.WriteInt32(track.AsEmitter.StartFrame);
                 stream.WriteInt32(track.AsEmitter.DurationFrames);
@@ -97,7 +101,7 @@ BytesContainer ParticleSystem::LoadTimeline()
             for (auto i = EmittersParametersOverrides.Begin(); i.IsNotEnd(); ++i)
             {
                 stream.WriteInt32(i->Key.First);
-                stream.Write(&i->Key.Second);
+                stream.Write(i->Key.Second);
                 stream.WriteVariant(i->Value);
             }
         }
@@ -155,6 +159,9 @@ ParticleEffect* ParticleSystem::Spawn(Actor* parent, const Transform& transform,
     auto effect = New<ParticleEffect>();
     effect->SetTransform(transform);
     effect->ParticleSystem = this;
+#if !BUILD_RELEASE
+    effect->SetName(_debugName); // Give usable name in development builds
+#endif
 
     Level::SpawnActor(effect, parent);
 
@@ -206,6 +213,12 @@ Asset::LoadResult ParticleSystem::load()
 
     int32 version;
     stream.ReadInt32(&version);
+#if USE_EDITOR
+    // Skip unused parameters
+#define SKIP_UNUSED_PARAM_OVERRIDE() if (key.First < 0 || key.First >= Emitters.Count() || Emitters[key.First] == nullptr || Emitters[key.First]->Graph.GetParameter(key.Second) == nullptr) continue
+#else
+#define SKIP_UNUSED_PARAM_OVERRIDE()
+#endif
     switch (version)
     {
     case 1:
@@ -240,14 +253,14 @@ Asset::LoadResult ParticleSystem::load()
             switch (track.Type)
             {
             case Track::Types::Emitter:
-                stream.Read(&id);
+                stream.Read(id);
                 stream.ReadInt32(&track.AsEmitter.Index);
                 stream.ReadInt32(&track.AsEmitter.StartFrame);
                 stream.ReadInt32(&track.AsEmitter.DurationFrames);
                 Emitters[track.AsEmitter.Index] = id;
                 break;
             case Track::Types::Folder:
-                stream.Read(&track.Color);
+                stream.Read(track.Color);
                 break;
             default:
                 return LoadResult::InvalidData;
@@ -273,15 +286,9 @@ Asset::LoadResult ParticleSystem::load()
             for (int32 i = 0; i < overridesCount; i++)
             {
                 stream.ReadInt32(&key.First);
-                stream.Read(&key.Second);
+                stream.Read(key.Second);
                 stream.ReadCommonValue(&value);
-
-#if USE_EDITOR
-                // Skip unused parameters
-                if (key.First < 0 || key.First >= Emitters.Count() || Emitters[key.First]->Graph.GetParameter(key.Second) == nullptr)
-                    continue;
-#endif
-
+                SKIP_UNUSED_PARAM_OVERRIDE();
                 EmittersParametersOverrides.Add(key, Variant(value));
             }
         }
@@ -316,12 +323,12 @@ Asset::LoadResult ParticleSystem::load()
             stream.ReadInt32(&track.ChildrenCount);
             stream.ReadString(&track.Name, -13);
             track.Disabled = (int32)track.Flag & (int32)Track::Flags::Mute || (track.ParentIndex != -1 && Tracks[track.ParentIndex].Disabled);
-            stream.Read(&track.Color);
+            stream.Read(track.Color);
 
             switch (track.Type)
             {
             case Track::Types::Emitter:
-                stream.Read(&id);
+                stream.Read(id);
                 stream.ReadInt32(&track.AsEmitter.Index);
                 stream.ReadInt32(&track.AsEmitter.StartFrame);
                 stream.ReadInt32(&track.AsEmitter.DurationFrames);
@@ -353,16 +360,10 @@ Asset::LoadResult ParticleSystem::load()
             for (int32 i = 0; i < overridesCount; i++)
             {
                 stream.ReadInt32(&key.First);
-                stream.Read(&key.Second);
+                stream.Read(key.Second);
                 stream.ReadCommonValue(&value);
-
-#if USE_EDITOR
-                // Skip unused parameters
-                if (key.First < 0 || key.First >= Emitters.Count() || Emitters[key.First]->Graph.GetParameter(key.Second) == nullptr)
-                    continue;
-#endif
-
-                EmittersParametersOverrides.Add(key, Variant(value));
+                SKIP_UNUSED_PARAM_OVERRIDE();
+                EmittersParametersOverrides[key] = Variant(value);
             }
         }
 
@@ -395,12 +396,12 @@ Asset::LoadResult ParticleSystem::load()
             stream.ReadInt32(&track.ChildrenCount);
             stream.ReadString(&track.Name, -13);
             track.Disabled = (int32)track.Flag & (int32)Track::Flags::Mute || (track.ParentIndex != -1 && Tracks[track.ParentIndex].Disabled);
-            stream.Read(&track.Color);
+            stream.Read(track.Color);
 
             switch (track.Type)
             {
             case Track::Types::Emitter:
-                stream.Read(&id);
+                stream.Read(id);
                 stream.ReadInt32(&track.AsEmitter.Index);
                 stream.ReadInt32(&track.AsEmitter.StartFrame);
                 stream.ReadInt32(&track.AsEmitter.DurationFrames);
@@ -432,16 +433,10 @@ Asset::LoadResult ParticleSystem::load()
             for (int32 i = 0; i < overridesCount; i++)
             {
                 stream.ReadInt32(&key.First);
-                stream.Read(&key.Second);
+                stream.Read(key.Second);
                 stream.ReadVariant(&value);
-
-#if USE_EDITOR
-                // Skip unused parameters
-                if (key.First < 0 || key.First >= Emitters.Count() || Emitters[key.First]->Graph.GetParameter(key.Second) == nullptr)
-                    continue;
-#endif
-
-                EmittersParametersOverrides.Add(key, value);
+                SKIP_UNUSED_PARAM_OVERRIDE();
+                EmittersParametersOverrides[key] = value;
             }
         }
 
@@ -451,7 +446,11 @@ Asset::LoadResult ParticleSystem::load()
         LOG(Warning, "Unknown timeline version {0}.", version);
         return LoadResult::InvalidData;
     }
+#undef SKIP_UNUSED_PARAM_OVERRIDE
 
+#if !BUILD_RELEASE
+    _debugName = StringUtils::GetFileNameWithoutExtension(GetPath());
+#endif
     return LoadResult::Ok;
 }
 
@@ -461,8 +460,11 @@ void ParticleSystem::unload(bool isReloading)
     FramesPerSecond = 0.0f;
     DurationFrames = 0;
     Emitters.Resize(0);
-    EmittersParametersOverrides.Cleanup();
+    EmittersParametersOverrides.SetCapacity(0);
     Tracks.Resize(0);
+#if !BUILD_RELEASE
+    _debugName.Clear();
+#endif
 }
 
 AssetChunksFlag ParticleSystem::getChunksToPreload() const

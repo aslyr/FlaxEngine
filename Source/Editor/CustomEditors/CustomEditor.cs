@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -7,8 +7,8 @@ using FlaxEditor.CustomEditors.GUI;
 using FlaxEditor.Scripting;
 using FlaxEngine;
 using FlaxEngine.GUI;
-using Newtonsoft.Json;
-using JsonSerializer = FlaxEngine.Json.JsonSerializer;
+using FlaxEngine.Json;
+using FlaxEngine.Utilities;
 
 namespace FlaxEditor.CustomEditors
 {
@@ -40,6 +40,11 @@ namespace FlaxEditor.CustomEditors
     [HideInEditor]
     public abstract class CustomEditor
     {
+        /// <summary>
+        /// True if Editor is during value setting (eg. by user or from copy/paste).
+        /// </summary>
+        public static bool IsSettingValue = false;
+
         private LayoutElementsContainer _layout;
         private CustomEditorPresenter _presenter;
         private CustomEditor _parent;
@@ -142,7 +147,7 @@ namespace FlaxEditor.CustomEditors
                 return;
 
             // Special case for root objects to run normal layout build
-            if (_presenter.Selection == Values)
+            if (_presenter != null && _presenter.Selection == Values)
             {
                 _presenter.BuildLayout();
                 return;
@@ -151,9 +156,15 @@ namespace FlaxEditor.CustomEditors
             var values = _values;
             var presenter = _presenter;
             var layout = _layout;
+            if (layout.Editors.Count > 1)
+            {
+                // There are more editors using the same layout so rebuild parent editor to prevent removing others editors
+                _parent?.RebuildLayout();
+                return;
+            }
             var control = layout.ContainerControl;
             var parent = _parent;
-            var parentScrollV = (_presenter.Panel.Parent as Panel)?.VScrollBar?.Value ?? -1;
+            var parentScrollV = (_presenter?.Panel.Parent as Panel)?.VScrollBar?.Value ?? -1;
 
             control.IsLayoutLocked = true;
             control.DisposeChildren();
@@ -241,8 +252,30 @@ namespace FlaxEditor.CustomEditors
             }
         }
 
-        internal void RefreshRootChild()
+        internal virtual void RefreshRootChild()
         {
+            // Check if need to update value
+            if (_hasValueDirty)
+            {
+                IsSettingValue = true;
+                try
+                {
+                    // Cleanup (won't retry update in case of exception)
+                    object val = _valueToSet;
+                    _hasValueDirty = false;
+                    _valueToSet = null;
+
+                    // Assign value
+                    for (int i = 0; i < _values.Count; i++)
+                        _values[i] = val;
+                }
+                finally
+                {
+                    OnUnDirty();
+                    IsSettingValue = false;
+                }
+            }
+
             Refresh();
 
             for (int i = 0; i < _children.Count; i++)
@@ -266,23 +299,30 @@ namespace FlaxEditor.CustomEditors
             // Check if need to update value
             if (_hasValueDirty)
             {
-                // Cleanup (won't retry update in case of exception)
-                object val = _valueToSet;
-                _hasValueDirty = false;
-                _valueToSet = null;
-
-                // Assign value
-                SynchronizeValue(val);
-
-                // Propagate values up (eg. when member of structure gets modified, also structure should be updated as a part of the other object)
-                var obj = _parent;
-                while (obj._parent != null && !(obj._parent is SyncPointEditor))
+                IsSettingValue = true;
+                try
                 {
-                    obj.Values.Set(obj._parent.Values, obj.Values);
-                    obj = obj._parent;
-                }
+                    // Cleanup (won't retry update in case of exception)
+                    object val = _valueToSet;
+                    _hasValueDirty = false;
+                    _valueToSet = null;
 
-                OnUnDirty();
+                    // Assign value
+                    SynchronizeValue(val);
+
+                    // Propagate values up (eg. when member of structure gets modified, also structure should be updated as a part of the other object)
+                    var obj = _parent;
+                    while (obj._parent != null && !(obj._parent is SyncPointEditor))
+                    {
+                        obj.Values.Set(obj._parent.Values, obj.Values);
+                        obj = obj._parent;
+                    }
+                }
+                finally
+                {
+                    OnUnDirty();
+                    IsSettingValue = false;
+                }
             }
             else
             {
@@ -331,17 +371,12 @@ namespace FlaxEditor.CustomEditors
         {
             if (LinkedLabel != null)
             {
-                // Prefab value diff
-                if (Values.HasReferenceValue)
-                {
-                    var style = FlaxEngine.GUI.Style.Current;
-                    LinkedLabel.HighlightStripColor = CanRevertReferenceValue ? style.BackgroundSelected * 0.8f : Color.Transparent;
-                }
-                // Default value diff
-                else if (Values.HasDefaultValue)
-                {
-                    LinkedLabel.HighlightStripColor = CanRevertDefaultValue ? Color.Yellow * 0.8f : Color.Transparent;
-                }
+                var color = Color.Transparent;
+                if (Values.HasReferenceValue && CanRevertReferenceValue)
+                    color = FlaxEngine.GUI.Style.Current.BackgroundSelected;
+                else if (Values.HasDefaultValue && CanRevertDefaultValue)
+                    color = Color.Yellow * 0.8f;
+                LinkedLabel.HighlightStripColor = color;
             }
         }
 
@@ -350,22 +385,22 @@ namespace FlaxEditor.CustomEditors
             LinkedLabel = label;
         }
 
-        private void RevertDiffToDefault(CustomEditor editor)
-        {
-            if (editor.ChildrenEditors.Count == 0)
-            {
-                // Skip if no change detected
-                if (!editor.Values.IsDefaultValueModified)
-                    return;
+        /// <summary>
+        /// If true, the value reverting to default/reference will be handled via iteration over children editors, instead of for a whole object at once.
+        /// </summary>
+        public virtual bool RevertValueWithChildren => ChildrenEditors.Count != 0;
 
-                editor.SetValueToDefault();
+        private void RevertDiffToDefault()
+        {
+            if (RevertValueWithChildren)
+            {
+                foreach (var child in ChildrenEditors)
+                    child.RevertDiffToDefault();
             }
             else
             {
-                for (int i = 0; i < editor.ChildrenEditors.Count; i++)
-                {
-                    RevertDiffToDefault(editor.ChildrenEditors[i]);
-                }
+                if (Values.IsDefaultValueModified)
+                    SetValueToDefault();
             }
         }
 
@@ -378,11 +413,6 @@ namespace FlaxEditor.CustomEditors
             {
                 if (!Values.IsDefaultValueModified)
                     return false;
-
-                // Skip array items (show diff only on a bottom level properties and fields)
-                if (ParentEditor is Editors.ArrayEditor)
-                    return false;
-
                 return true;
             }
         }
@@ -394,7 +424,7 @@ namespace FlaxEditor.CustomEditors
         {
             if (!Values.HasDefaultValue)
                 return;
-            RevertDiffToDefault(this);
+            RevertDiffToDefault();
         }
 
         /// <summary>
@@ -432,22 +462,17 @@ namespace FlaxEditor.CustomEditors
             }
         }
 
-        private void RevertDiffToReference(CustomEditor editor)
+        private void RevertDiffToReference()
         {
-            if (editor.ChildrenEditors.Count == 0)
+            if (RevertValueWithChildren)
             {
-                // Skip if no change detected
-                if (!editor.Values.IsReferenceValueModified)
-                    return;
-
-                editor.SetValueToReference();
+                foreach (var child in ChildrenEditors)
+                    child.RevertDiffToReference();
             }
             else
             {
-                for (int i = 0; i < editor.ChildrenEditors.Count; i++)
-                {
-                    RevertDiffToReference(editor.ChildrenEditors[i]);
-                }
+                if (Values.IsReferenceValueModified)
+                    SetValueToReference();
             }
         }
 
@@ -460,11 +485,6 @@ namespace FlaxEditor.CustomEditors
             {
                 if (!Values.IsReferenceValueModified)
                     return false;
-
-                // Skip array items (show diff only on a bottom level properties and fields)
-                if (ParentEditor is Editors.ArrayEditor)
-                    return false;
-
                 return true;
             }
         }
@@ -476,7 +496,7 @@ namespace FlaxEditor.CustomEditors
         {
             if (!Values.HasReferenceValue)
                 return;
-            RevertDiffToReference(this);
+            RevertDiffToReference();
         }
 
         /// <summary>
@@ -520,15 +540,14 @@ namespace FlaxEditor.CustomEditors
         /// </summary>
         public void Copy()
         {
-            Editor.Log("Copy custom editor value");
-
             try
             {
                 string text;
+                var value = Values[0];
                 if (ParentEditor is Dedicated.ScriptsEditor)
                 {
                     // Script
-                    text = JsonSerializer.Serialize(Values[0]);
+                    text = JsonSerializer.Serialize(value);
 
                     // Remove properties that should be ignored when copy/pasting data
                     if (text == null)
@@ -555,15 +574,15 @@ namespace FlaxEditor.CustomEditors
                             text = text.Remove(idx, endIdx - idx);
                     }
                 }
-                else if (new ScriptType(typeof(FlaxEngine.Object)).IsAssignableFrom(Values.Type))
+                else if (ScriptType.FlaxObject.IsAssignableFrom(Values.Type))
                 {
                     // Object reference
-                    text = JsonSerializer.GetStringID(Values[0] as FlaxEngine.Object);
+                    text = JsonSerializer.GetStringID(value as FlaxEngine.Object);
                 }
                 else
                 {
                     // Default
-                    text = JsonSerializer.Serialize(Values[0]);
+                    text = JsonSerializer.Serialize(value, TypeUtils.GetType(Values.Type));
                 }
                 Clipboard.Text = text;
             }
@@ -598,14 +617,12 @@ namespace FlaxEditor.CustomEditors
                         JsonSerializer.Deserialize(obj, text);
                     }
                 }
-#pragma warning disable 618
-                else if (Newtonsoft.Json.Schema.JsonSchema.Parse(text) == null)
-#pragma warning restore 618
+                else if (!text.StartsWith("{") || !text.EndsWith("}"))
                 {
                     return false;
                 }
             }
-            else if (new ScriptType(typeof(FlaxEngine.Object)).IsAssignableFrom(Values.Type))
+            else if (ScriptType.FlaxObject.IsAssignableFrom(Values.Type))
             {
                 // Object reference
                 if (text.Length != 32)
@@ -623,7 +640,14 @@ namespace FlaxEditor.CustomEditors
             else
             {
                 // Default
-                obj = JsonConvert.DeserializeObject(text, TypeUtils.GetType(Values.Type), JsonSerializer.Settings);
+                try
+                {
+                    obj = Newtonsoft.Json.JsonConvert.DeserializeObject(text, TypeUtils.GetType(Values.Type), JsonSerializer.Settings);
+                }
+                catch
+                {
+                    obj = null;
+                }
             }
 
             if (obj == null || Values.Type.IsInstanceOfType(obj))
@@ -658,8 +682,6 @@ namespace FlaxEditor.CustomEditors
         /// </summary>
         public void Paste()
         {
-            Editor.Log("Paste custom editor value");
-
             try
             {
                 if (GetClipboardObject(out var obj, true))
@@ -725,7 +747,7 @@ namespace FlaxEditor.CustomEditors
         /// </summary>
         public void SetValueToDefault()
         {
-            SetValue(Values.DefaultValue);
+            SetValueCloned(Values.DefaultValue);
         }
 
         /// <summary>
@@ -762,7 +784,19 @@ namespace FlaxEditor.CustomEditors
                 return;
             }
 
-            SetValue(Values.ReferenceValue);
+            SetValueCloned(Values.ReferenceValue);
+        }
+
+        private void SetValueCloned(object value)
+        {
+            // For objects (eg. arrays) we need to clone them to prevent editing default/reference value within editor
+            if (value != null && !value.GetType().IsValueType)
+            {
+                var json = JsonSerializer.Serialize(value);
+                value = JsonSerializer.Deserialize(json, value.GetType());
+            }
+
+            SetValue(value);
         }
 
         /// <summary>
@@ -774,7 +808,6 @@ namespace FlaxEditor.CustomEditors
         {
             if (_isSetBlocked)
                 return;
-
             if (OnDirty(this, value, token))
             {
                 _hasValueDirty = true;
@@ -792,6 +825,8 @@ namespace FlaxEditor.CustomEditors
         /// <returns>True if allow to handle this event, otherwise false.</returns>
         protected virtual bool OnDirty(CustomEditor editor, object value, object token = null)
         {
+            if (ParentEditor == null)
+                return false;
             return ParentEditor.OnDirty(editor, value, token);
         }
 

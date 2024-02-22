@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using FlaxEditor.GUI.Input;
 using FlaxEngine;
@@ -67,6 +67,7 @@ namespace FlaxEditor.Viewport.Previews
             if (useWidgets)
             {
                 var playbackDuration = ViewWidgetButtonMenu.AddButton("Duration");
+                playbackDuration.CloseMenuOnClick = false;
                 var playbackDurationValue = new FloatValueBox(_playbackDuration, 90, 2, 70.0f, 0.1f, 1000000.0f, 0.1f)
                 {
                     Parent = playbackDuration

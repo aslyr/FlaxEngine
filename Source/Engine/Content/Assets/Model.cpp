@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "Model.h"
 #include "Engine/Core/Log.h"
@@ -7,13 +7,22 @@
 #include "Engine/Content/WeakAssetReference.h"
 #include "Engine/Content/Upgraders/ModelAssetUpgrader.h"
 #include "Engine/Content/Factories/BinaryAssetFactory.h"
+#include "Engine/Debug/DebugDraw.h"
 #include "Engine/Graphics/RenderTools.h"
 #include "Engine/Graphics/RenderTask.h"
 #include "Engine/Graphics/Models/ModelInstanceEntry.h"
 #include "Engine/Streaming/StreamingGroup.h"
 #include "Engine/Debug/Exceptions/ArgumentOutOfRangeException.h"
+#include "Engine/Graphics/GPUDevice.h"
+#include "Engine/Graphics/Async/GPUTask.h"
+#include "Engine/Graphics/Async/Tasks/GPUUploadTextureMipTask.h"
+#include "Engine/Graphics/Textures/GPUTexture.h"
+#include "Engine/Graphics/Textures/TextureData.h"
+#include "Engine/Profiler/ProfilerCPU.h"
 #include "Engine/Renderer/DrawCall.h"
 #include "Engine/Threading/Threading.h"
+#include "Engine/Tools/ModelTool/ModelTool.h"
+#include "Engine/Tools/ModelTool/MeshAccelerationStructure.h"
 #if GPU_ENABLE_ASYNC_RESOURCES_CREATION
 #include "Engine/Threading/ThreadPoolTask.h"
 #define STREAM_TASK_BASE ThreadPoolTask
@@ -22,11 +31,10 @@
 #define STREAM_TASK_BASE MainThreadTask
 #endif
 
-#define CHECK_INVALID_BUFFER(buffer) \
-    if (buffer->IsValidFor(this) == false) \
+#define CHECK_INVALID_BUFFER(model, buffer) \
+    if (buffer->IsValidFor(model) == false) \
 	{ \
-		LOG(Warning, "Invalid Model Instance Buffer size {0} for Model {1}. It should be {2}. Manual update to proper size.", buffer->Count(), ToString(), MaterialSlots.Count()); \
-		buffer->Setup(this); \
+		buffer->Setup(model); \
 	}
 
 REGISTER_BINARY_ASSET_ABSTRACT(ModelBase, "FlaxEngine.ModelBase");
@@ -37,18 +45,11 @@ REGISTER_BINARY_ASSET_ABSTRACT(ModelBase, "FlaxEngine.ModelBase");
 class StreamModelLODTask : public STREAM_TASK_BASE
 {
 private:
-
     WeakAssetReference<Model> _asset;
     int32 _lodIndex;
     FlaxStorage::LockData _dataLock;
 
 public:
-
-    /// <summary>
-    /// Init
-    /// </summary>
-    /// <param name="model">Parent model</param>
-    /// <param name="lodIndex">LOD to stream index</param>
     StreamModelLODTask(Model* model, int32 lodIndex)
         : _asset(model)
         , _lodIndex(lodIndex)
@@ -57,23 +58,16 @@ public:
     }
 
 public:
-
-    // [ThreadPoolTask]
     bool HasReference(Object* resource) const override
     {
         return _asset == resource;
     }
 
-protected:
-
-    // [ThreadPoolTask]
     bool Run() override
     {
         AssetReference<Model> model = _asset.Get();
         if (model == nullptr)
-        {
             return true;
-        }
 
         // Get data
         BytesContainer data;
@@ -96,6 +90,7 @@ protected:
 
         // Update residency level
         model->_loadedLODs++;
+        model->ResidencyChanged();
 
         return false;
     }
@@ -116,23 +111,69 @@ protected:
     }
 };
 
+class StreamModelSDFTask : public GPUUploadTextureMipTask
+{
+private:
+    WeakAssetReference<Model> _asset;
+    FlaxStorage::LockData _dataLock;
+
+public:
+    StreamModelSDFTask(Model* model, GPUTexture* texture, const Span<byte>& data, int32 mipIndex, int32 rowPitch, int32 slicePitch)
+        : GPUUploadTextureMipTask(texture, mipIndex, data, rowPitch, slicePitch, false)
+        , _asset(model)
+        , _dataLock(model->Storage->Lock())
+    {
+    }
+
+    bool HasReference(Object* resource) const override
+    {
+        return _asset == resource;
+    }
+
+    Result run(GPUTasksContext* context) override
+    {
+        AssetReference<Model> model = _asset.Get();
+        if (model == nullptr)
+            return Result::MissingResources;
+        return GPUUploadTextureMipTask::run(context);
+    }
+
+    void OnEnd() override
+    {
+        _dataLock.Release();
+
+        // Base
+        GPUUploadTextureMipTask::OnEnd();
+    }
+};
+
 REGISTER_BINARY_ASSET_WITH_UPGRADER(Model, "FlaxEngine.Model", ModelAssetUpgrader, true);
+
+static byte EnableModelSDF = 0;
 
 Model::Model(const SpawnParams& params, const AssetInfo* info)
     : ModelBase(params, info, StreamingGroups::Instance()->Models())
 {
+    if (EnableModelSDF == 0 && GPUDevice::Instance)
+    {
+        const bool enable = GPUDevice::Instance->GetFeatureLevel() >= FeatureLevel::SM5;
+        EnableModelSDF = enable ? 1 : 2;
+    }
 }
 
 Model::~Model()
 {
-    // Ensure to be fully disposed
-    ASSERT(IsInitialized() == false);
     ASSERT(_streamingTask == nullptr);
 }
 
-bool Model::Intersects(const Ray& ray, const Matrix& world, float& distance, Vector3& normal, Mesh** mesh, int32 lodIndex)
+bool Model::Intersects(const Ray& ray, const Matrix& world, Real& distance, Vector3& normal, Mesh** mesh, int32 lodIndex)
 {
     return LODs[lodIndex].Intersects(ray, world, distance, normal, mesh);
+}
+
+bool Model::Intersects(const Ray& ray, const Transform& transform, Real& distance, Vector3& normal, Mesh** mesh, int32 lodIndex)
+{
+    return LODs[lodIndex].Intersects(ray, transform, distance, normal, mesh);
 }
 
 BoundingBox Model::GetBox(const Matrix& world, int32 lodIndex) const
@@ -145,7 +186,7 @@ BoundingBox Model::GetBox(int32 lodIndex) const
     return LODs[lodIndex].GetBox();
 }
 
-void Model::Draw(const RenderContext& renderContext, MaterialBase* material, const Matrix& world, StaticFlags flags, bool receiveDecals) const
+void Model::Draw(const RenderContext& renderContext, MaterialBase* material, const Matrix& world, StaticFlags flags, bool receiveDecals, int16 sortOrder) const
 {
     if (!CanBeRendered())
         return;
@@ -154,24 +195,25 @@ void Model::Draw(const RenderContext& renderContext, MaterialBase* material, con
     const BoundingBox box = GetBox(world);
     BoundingSphere sphere;
     BoundingSphere::FromBox(box, sphere);
-    int32 lodIndex = RenderTools::ComputeModelLOD(this, sphere.Center, sphere.Radius, renderContext);
+    int32 lodIndex = RenderTools::ComputeModelLOD(this, sphere.Center - renderContext.View.Origin, (float)sphere.Radius, renderContext);
     if (lodIndex == -1)
         return;
     lodIndex += renderContext.View.ModelLODBias;
     lodIndex = ClampLODIndex(lodIndex);
 
     // Draw
-    LODs[lodIndex].Draw(renderContext, material, world, flags, receiveDecals);
+    LODs[lodIndex].Draw(renderContext, material, world, flags, receiveDecals, DrawPass::Default, 0, sortOrder);
 }
 
-void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
+template<typename ContextType>
+FORCE_INLINE void ModelDraw(Model* model, const RenderContext& renderContext, const ContextType& context, const Mesh::DrawInfo& info)
 {
     ASSERT(info.Buffer);
-    if (!CanBeRendered())
+    if (!model->CanBeRendered())
         return;
     const auto frame = Engine::FrameCount;
     const auto modelFrame = info.DrawState->PrevFrame + 1;
-    CHECK_INVALID_BUFFER(info.Buffer);
+    CHECK_INVALID_BUFFER(model, info.Buffer);
 
     // Select a proper LOD index (model may be culled)
     int32 lodIndex;
@@ -181,11 +223,11 @@ void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
     }
     else
     {
-        lodIndex = RenderTools::ComputeModelLOD(this, info.Bounds.Center, info.Bounds.Radius, renderContext);
+        lodIndex = RenderTools::ComputeModelLOD(model, info.Bounds.Center, (float)info.Bounds.Radius, renderContext);
         if (lodIndex == -1)
         {
             // Handling model fade-out transition
-            if (modelFrame == frame && info.DrawState->PrevLOD != -1)
+            if (modelFrame == frame && info.DrawState->PrevLOD != -1 && !renderContext.View.IsSingleFrame)
             {
                 // Check if start transition
                 if (info.DrawState->LODTransition == 255)
@@ -202,9 +244,9 @@ void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
                 }
                 else
                 {
-                    const auto prevLOD = ClampLODIndex(info.DrawState->PrevLOD);
+                    const auto prevLOD = model->ClampLODIndex(info.DrawState->PrevLOD);
                     const float normalizedProgress = static_cast<float>(info.DrawState->LODTransition) * (1.0f / 255.0f);
-                    LODs[prevLOD].Draw(renderContext, info, normalizedProgress);
+                    model->LODs.Get()[prevLOD].Draw(renderContext, info, normalizedProgress);
                 }
             }
 
@@ -212,10 +254,13 @@ void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
         }
     }
     lodIndex += info.LODBias + renderContext.View.ModelLODBias;
-    lodIndex = ClampLODIndex(lodIndex);
+    lodIndex = model->ClampLODIndex(lodIndex);
 
+    if (renderContext.View.IsSingleFrame)
+    {
+    }
     // Check if it's the new frame and could update the drawing state (note: model instance could be rendered many times per frame to different viewports)
-    if (modelFrame == frame)
+    else if (modelFrame == frame)
     {
         // Check if start transition
         if (info.DrawState->PrevLOD != lodIndex && info.DrawState->LODTransition == 255)
@@ -231,7 +276,7 @@ void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
             info.DrawState->PrevLOD = lodIndex;
         }
     }
-        // Check if there was a gap between frames in drawing this model instance
+    // Check if there was a gap between frames in drawing this model instance
     else if (modelFrame < frame || info.DrawState->PrevLOD == -1)
     {
         // Reset state
@@ -240,22 +285,32 @@ void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
     }
 
     // Draw
-    if (info.DrawState->PrevLOD == lodIndex)
+    if (info.DrawState->PrevLOD == lodIndex || renderContext.View.IsSingleFrame)
     {
-        LODs[lodIndex].Draw(renderContext, info, 0.0f);
+        model->LODs.Get()[lodIndex].Draw(context, info, 0.0f);
     }
     else if (info.DrawState->PrevLOD == -1)
     {
         const float normalizedProgress = static_cast<float>(info.DrawState->LODTransition) * (1.0f / 255.0f);
-        LODs[lodIndex].Draw(renderContext, info, 1.0f - normalizedProgress);
+        model->LODs.Get()[lodIndex].Draw(context, info, 1.0f - normalizedProgress);
     }
     else
     {
-        const auto prevLOD = ClampLODIndex(info.DrawState->PrevLOD);
+        const auto prevLOD = model->ClampLODIndex(info.DrawState->PrevLOD);
         const float normalizedProgress = static_cast<float>(info.DrawState->LODTransition) * (1.0f / 255.0f);
-        LODs[prevLOD].Draw(renderContext, info, normalizedProgress);
-        LODs[lodIndex].Draw(renderContext, info, normalizedProgress - 1.0f);
+        model->LODs.Get()[prevLOD].Draw(context, info, normalizedProgress);
+        model->LODs.Get()[lodIndex].Draw(context, info, normalizedProgress - 1.0f);
     }
+}
+
+void Model::Draw(const RenderContext& renderContext, const Mesh::DrawInfo& info)
+{
+    ModelDraw(this, renderContext, renderContext, info);
+}
+
+void Model::Draw(const RenderContextBatch& renderContextBatch, const Mesh::DrawInfo& info)
+{
+    ModelDraw(this, renderContextBatch.GetMainContext(), renderContextBatch, info);
 }
 
 bool Model::SetupLODs(const Span<int32>& meshesCountPerLod)
@@ -316,7 +371,7 @@ bool Model::Save(bool withMeshDataFromGpu, const StringView& path)
             auto& slot = MaterialSlots[materialSlotIndex];
 
             const auto id = slot.Material.GetID();
-            stream->Write(&id);
+            stream->Write(id);
             stream->WriteByte(static_cast<byte>(slot.ShadowsMode));
             stream->WriteString(slot.Name, 11);
         }
@@ -347,11 +402,11 @@ bool Model::Save(bool withMeshDataFromGpu, const StringView& path)
 
                 // Box
                 const auto box = mesh.GetBox();
-                stream->Write(&box);
+                stream->WriteBoundingBox(box);
 
                 // Sphere
                 const auto sphere = mesh.GetSphere();
-                stream->Write(&sphere);
+                stream->WriteBoundingSphere(sphere);
 
                 // Has Lightmap UVs
                 stream->WriteBool(mesh.HasLightmapUVs());
@@ -523,16 +578,49 @@ bool Model::Save(bool withMeshDataFromGpu, const StringView& path)
                 lodChunk->Data.Copy(meshesStream.GetHandle(), meshesStream.GetPosition());
             }
         }
+
+        // Download SDF data
+        if (SDF.Texture)
+        {
+            auto sdfChunk = GET_CHUNK(15);
+            if (sdfChunk == nullptr)
+                return true;
+            MemoryWriteStream sdfStream;
+            sdfStream.WriteInt32(1); // Version
+            ModelSDFHeader data(SDF, SDF.Texture->GetDescription());
+            sdfStream.WriteBytes(&data, sizeof(data));
+            TextureData sdfTextureData;
+            if (SDF.Texture->DownloadData(sdfTextureData))
+                return true;
+            for (int32 mipLevel = 0; mipLevel < sdfTextureData.Items[0].Mips.Count(); mipLevel++)
+            {
+                auto& mip = sdfTextureData.Items[0].Mips[mipLevel];
+                ModelSDFMip mipData(mipLevel, mip);
+                sdfStream.WriteBytes(&mipData, sizeof(mipData));
+                sdfStream.WriteBytes(mip.Data.Get(), mip.Data.Length());
+            }
+            sdfChunk->Data.Copy(sdfStream.GetHandle(), sdfStream.GetPosition());
+        }
     }
     else
     {
-        ASSERT(!IsVirtual());
-
         // Load all chunks with a mesh data
         for (int32 lodIndex = 0; lodIndex < LODs.Count(); lodIndex++)
         {
             if (LoadChunk(MODEL_LOD_TO_CHUNK_INDEX(lodIndex)))
                 return true;
+        }
+
+        if (SDF.Texture)
+        {
+            // SDF data from file (only if has no cached texture data)
+            if (LoadChunk(15))
+                return true;
+        }
+        else
+        {
+            // No SDF texture
+            ReleaseChunk(15);
         }
     }
 
@@ -562,6 +650,51 @@ bool Model::Save(bool withMeshDataFromGpu, const StringView& path)
 
 #endif
 
+bool Model::GenerateSDF(float resolutionScale, int32 lodIndex, bool cacheData, float backfacesThreshold)
+{
+    if (EnableModelSDF == 2)
+        return true; // Not supported
+    ScopeLock lock(Locker);
+    if (!HasAnyLODInitialized())
+        return true;
+    if (IsInMainThread() && IsVirtual())
+    {
+        // TODO: could be supported if algorithm could run on a GPU and called during rendering
+        LOG(Warning, "Cannot generate SDF for virtual models on a main thread.");
+        return true;
+    }
+    lodIndex = Math::Clamp(lodIndex, HighestResidentLODIndex(), LODs.Count() - 1);
+
+    // Generate SDF
+#if USE_EDITOR
+    cacheData &= Storage != nullptr; // Cache only if has storage linked
+    MemoryWriteStream sdfStream;
+    MemoryWriteStream* outputStream = cacheData ? &sdfStream : nullptr;
+#else
+    class MemoryWriteStream* outputStream = nullptr;
+#endif
+    if (ModelTool::GenerateModelSDF(this, nullptr, resolutionScale, lodIndex, &SDF, outputStream, GetPath(), backfacesThreshold))
+        return true;
+
+#if USE_EDITOR
+    // Set asset data
+    if (cacheData)
+        GetOrCreateChunk(15)->Data.Copy(sdfStream.GetHandle(), sdfStream.GetPosition());
+#endif
+
+    return false;
+}
+
+void Model::SetSDF(const SDFData& sdf)
+{
+    ScopeLock lock(Locker);
+    if (SDF.Texture == sdf.Texture)
+        return;
+    SAFE_DELETE_GPU_RESOURCE(SDF.Texture);
+    SDF = sdf;
+    ReleaseChunk(15);
+}
+
 bool Model::Init(const Span<int32>& meshesCountPerLod)
 {
     if (meshesCountPerLod.IsInvalid() || meshesCountPerLod.Length() > MODEL_MAX_LODS)
@@ -576,20 +709,19 @@ bool Model::Init(const Span<int32>& meshesCountPerLod)
     // Setup
     MaterialSlots.Resize(1);
     MinScreenSize = 0.0f;
+    SAFE_DELETE_GPU_RESOURCE(SDF.Texture);
 
     // Setup LODs
     for (int32 lodIndex = 0; lodIndex < LODs.Count(); lodIndex++)
-    {
         LODs[lodIndex].Dispose();
-    }
     LODs.Resize(meshesCountPerLod.Length());
-    _loadedLODs = meshesCountPerLod.Length();
 
     // Setup meshes
     for (int32 lodIndex = 0; lodIndex < meshesCountPerLod.Length(); lodIndex++)
     {
         auto& lod = LODs[lodIndex];
         lod._model = this;
+        lod._lodIndex = lodIndex;
         lod.ScreenSize = 1.0f;
         const int32 meshesCount = meshesCountPerLod[lodIndex];
         if (meshesCount <= 0 || meshesCount > MODEL_MAX_MESHES)
@@ -601,6 +733,10 @@ bool Model::Init(const Span<int32>& meshesCountPerLod)
             lod.Meshes[meshIndex].Init(this, lodIndex, meshIndex, 0, BoundingBox::Zero, BoundingSphere::Empty, true);
         }
     }
+
+    // Update resource residency
+    _loadedLODs = meshesCountPerLod.Length();
+    ResidencyChanged();
 
     return false;
 }
@@ -642,6 +778,12 @@ void Model::InitAsVirtual()
 
     // Base
     BinaryAsset::InitAsVirtual();
+}
+
+void Model::CancelStreaming()
+{
+    Asset::CancelStreaming();
+    CancelStreamingTasks();
 }
 
 #if USE_EDITOR
@@ -718,9 +860,19 @@ Task* Model::CreateStreamingTask(int32 residency)
         for (int32 i = HighestResidentLODIndex(); i < LODs.Count() - residency; i++)
             LODs[i].Unload();
         _loadedLODs = residency;
+        ResidencyChanged();
     }
 
     return result;
+}
+
+void Model::CancelStreamingTasks()
+{
+    if (_streamingTask)
+    {
+        _streamingTask->Cancel();
+        ASSERT_LOW_LAYER(_streamingTask == nullptr);
+    }
 }
 
 Asset::LoadResult Model::load()
@@ -749,7 +901,7 @@ Asset::LoadResult Model::load()
 
         // Material
         Guid materialId;
-        stream->Read(&materialId);
+        stream->Read(materialId);
         slot.Material = materialId;
 
         // Shadows Mode
@@ -771,6 +923,7 @@ Asset::LoadResult Model::load()
     {
         auto& lod = LODs[lodIndex];
         lod._model = this;
+        lod._lodIndex = lodIndex;
 
         // Screen Size
         stream->ReadFloat(&lod.ScreenSize);
@@ -799,11 +952,11 @@ Asset::LoadResult Model::load()
 
             // Box
             BoundingBox box;
-            stream->Read(&box);
+            stream->ReadBoundingBox(&box);
 
             // Sphere
             BoundingSphere sphere;
-            stream->Read(&sphere);
+            stream->ReadBoundingSphere(&sphere);
 
             // Has Lightmap UVs
             bool hasLightmapUVs = stream->ReadBool();
@@ -812,7 +965,54 @@ Asset::LoadResult Model::load()
         }
     }
 
-#if BUILD_DEBUG || BUILD_DEVELOPMENT
+    // Load SDF
+    auto chunk15 = GetChunk(15);
+    if (chunk15 && chunk15->IsLoaded() && EnableModelSDF == 1)
+    {
+        MemoryReadStream sdfStream(chunk15->Get(), chunk15->Size());
+        int32 version;
+        sdfStream.ReadInt32(&version);
+        switch (version)
+        {
+        case 1:
+        {
+            ModelSDFHeader data;
+            sdfStream.ReadBytes(&data, sizeof(data));
+            if (!SDF.Texture)
+            {
+                String name;
+#if !BUILD_RELEASE
+                name = GetPath() + TEXT(".SDF");
+#endif
+                SDF.Texture = GPUDevice::Instance->CreateTexture(name);
+            }
+            if (SDF.Texture->Init(GPUTextureDescription::New3D(data.Width, data.Height, data.Depth, data.Format, GPUTextureFlags::ShaderResource, data.MipLevels)))
+                return LoadResult::Failed;
+            SDF.LocalToUVWMul = data.LocalToUVWMul;
+            SDF.LocalToUVWAdd = data.LocalToUVWAdd;
+            SDF.WorldUnitsPerVoxel = data.WorldUnitsPerVoxel;
+            SDF.MaxDistance = data.MaxDistance;
+            SDF.LocalBoundsMin = data.LocalBoundsMin;
+            SDF.LocalBoundsMax = data.LocalBoundsMax;
+            SDF.ResolutionScale = data.ResolutionScale;
+            SDF.LOD = data.LOD;
+            for (int32 mipLevel = 0; mipLevel < data.MipLevels; mipLevel++)
+            {
+                ModelSDFMip mipData;
+                sdfStream.ReadBytes(&mipData, sizeof(mipData));
+                void* mipBytes = sdfStream.Move(mipData.SlicePitch);
+                auto task = ::New<StreamModelSDFTask>(this, SDF.Texture, Span<byte>((byte*)mipBytes, mipData.SlicePitch), mipData.MipIndex, mipData.RowPitch, mipData.SlicePitch);
+                task->Start();
+            }
+            break;
+        }
+        default:
+            LOG(Warning, "Unknown SDF data version {0} in {1}", version, ToString());
+            break;
+        }
+    }
+
+#if !BUILD_RELEASE
     // Validate LODs
     for (int32 lodIndex = 1; lodIndex < LODs.Count(); lodIndex++)
     {
@@ -842,6 +1042,7 @@ void Model::unload(bool isReloading)
     }
 
     // Cleanup
+    SAFE_DELETE_GPU_RESOURCE(SDF.Texture);
     MaterialSlots.Resize(0);
     for (int32 i = 0; i < LODs.Count(); i++)
         LODs[i].Dispose();
@@ -864,7 +1065,7 @@ bool Model::init(AssetInitData& initData)
 AssetChunksFlag Model::getChunksToPreload() const
 {
     // Note: we don't preload any LODs here because it's done by the Streaming Manager
-    return GET_CHUNK_FLAG(0);
+    return GET_CHUNK_FLAG(0) | GET_CHUNK_FLAG(15);
 }
 
 void ModelBase::SetupMaterialSlots(int32 slotsCount)

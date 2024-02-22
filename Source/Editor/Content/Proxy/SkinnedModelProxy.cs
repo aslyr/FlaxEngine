@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.Content.Thumbnails;
@@ -44,19 +44,8 @@ namespace FlaxEditor.Content
         {
             if (_preview == null)
             {
-                _preview = new AnimatedModelPreview(false)
-                {
-                    RenderOnlyWithWindow = false,
-                    UseAutomaticTaskManagement = false,
-                    AnchorPreset = AnchorPresets.StretchAll,
-                    Offsets = Margin.Zero,
-                };
-                _preview.Task.Enabled = false;
-
-                var eyeAdaptation = _preview.PostFxVolume.EyeAdaptation;
-                eyeAdaptation.Mode = EyeAdaptationMode.None;
-                eyeAdaptation.OverrideFlags |= EyeAdaptationSettingsOverride.Mode;
-                _preview.PostFxVolume.EyeAdaptation = eyeAdaptation;
+                _preview = new AnimatedModelPreview(false);
+                InitAssetPreview(_preview);
             }
 
             // TODO: disable streaming for asset during thumbnail rendering (and restore it after)
@@ -65,12 +54,7 @@ namespace FlaxEditor.Content
         /// <inheritdoc />
         public override bool CanDrawThumbnail(ThumbnailRequest request)
         {
-            if (!_preview.HasLoadedAssets)
-                return false;
-
-            // Check if asset is streamed enough
-            var asset = (SkinnedModel)request.Asset;
-            return asset.LoadedLODs >= Mathf.Max(1, (int)(asset.LODs.Length * ThumbnailsModule.MinimumRequiredResourcesQuality));
+            return _preview.HasLoadedAssets && ThumbnailsModule.HasMinimumQuality((SkinnedModel)request.Asset);
         }
 
         /// <inheritdoc />

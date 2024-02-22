@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,6 +8,7 @@ using FlaxEditor.Scripting;
 using FlaxEditor.Surface;
 using FlaxEditor.Viewport.Previews;
 using FlaxEngine;
+using FlaxEngine.Windows.Search;
 
 // ReSharper disable UnusedMember.Local
 // ReSharper disable UnusedMember.Global
@@ -21,7 +22,7 @@ namespace FlaxEditor.Windows.Assets
     /// <seealso cref="Material" />
     /// <seealso cref="MaterialSurface" />
     /// <seealso cref="MaterialPreview" />
-    public sealed class MaterialWindow : VisjectSurfaceWindow<Material, MaterialSurface, MaterialPreview>
+    public sealed class MaterialWindow : VisjectSurfaceWindow<Material, MaterialSurface, MaterialPreview>, ISearchWindow
     {
         private readonly ScriptType[] _newParameterTypes =
         {
@@ -33,12 +34,13 @@ namespace FlaxEditor.Windows.Assets
             new ScriptType(typeof(ChannelMask)),
             new ScriptType(typeof(bool)),
             new ScriptType(typeof(int)),
+            new ScriptType(typeof(Float2)),
+            new ScriptType(typeof(Float3)),
+            new ScriptType(typeof(Float4)),
             new ScriptType(typeof(Vector2)),
             new ScriptType(typeof(Vector3)),
             new ScriptType(typeof(Vector4)),
             new ScriptType(typeof(Color)),
-            new ScriptType(typeof(Quaternion)),
-            new ScriptType(typeof(Transform)),
             new ScriptType(typeof(Matrix)),
         };
 
@@ -74,14 +76,24 @@ namespace FlaxEditor.Windows.Assets
 
             // Transparency
 
-            [EditorOrder(200), DefaultValue(true), EditorDisplay("Transparency"), Tooltip("Enables reflections when rendering material.")]
+            [EditorOrder(200), DefaultValue(MaterialTransparentLightingMode.Surface), EditorDisplay("Transparency"), Tooltip("Transparent material lighting mode.")]
+            public MaterialTransparentLightingMode TransparentLightingMode;
+
+            [EditorOrder(205), DefaultValue(true), EditorDisplay("Transparency"), Tooltip("Enables reflections when rendering material.")]
             public bool EnableReflections;
+
+            [VisibleIf(nameof(EnableReflections))]
+            [EditorOrder(210), DefaultValue(false), EditorDisplay("Transparency"), Tooltip("Enables Screen Space Reflections when rendering material.")]
+            public bool EnableScreenSpaceReflections;
 
             [EditorOrder(210), DefaultValue(true), EditorDisplay("Transparency"), Tooltip("Enables fog effects when rendering material.")]
             public bool EnableFog;
 
             [EditorOrder(220), DefaultValue(true), EditorDisplay("Transparency"), Tooltip("Enables distortion effect when rendering.")]
             public bool EnableDistortion;
+
+            [EditorOrder(224), DefaultValue(false), EditorDisplay("Transparency"), Tooltip("Enables sampling Global Illumination in material (eg. light probes or volumetric lightmap).")]
+            public bool EnableGlobalIllumination;
 
             [EditorOrder(225), DefaultValue(false), EditorDisplay("Transparency"), Tooltip("Enables refraction offset based on the difference between the per-pixel normal and the per-vertex normal. Useful for large water-like surfaces.")]
             public bool PixelNormalOffsetRefraction;
@@ -142,8 +154,10 @@ namespace FlaxEditor.Windows.Assets
                 DepthTest = (info.FeaturesFlags & MaterialFeaturesFlags.DisableDepthTest) == 0;
                 DepthWrite = (info.FeaturesFlags & MaterialFeaturesFlags.DisableDepthWrite) == 0;
                 EnableReflections = (info.FeaturesFlags & MaterialFeaturesFlags.DisableReflections) == 0;
+                EnableScreenSpaceReflections = (info.FeaturesFlags & MaterialFeaturesFlags.ScreenSpaceReflections) != 0;
                 EnableFog = (info.FeaturesFlags & MaterialFeaturesFlags.DisableFog) == 0;
                 EnableDistortion = (info.FeaturesFlags & MaterialFeaturesFlags.DisableDistortion) == 0;
+                EnableGlobalIllumination = (info.FeaturesFlags & MaterialFeaturesFlags.GlobalIllumination) != 0;
                 PixelNormalOffsetRefraction = (info.FeaturesFlags & MaterialFeaturesFlags.PixelNormalOffsetRefraction) != 0;
                 InputWorldSpaceNormal = (info.FeaturesFlags & MaterialFeaturesFlags.InputWorldSpaceNormal) != 0;
                 DitheredLODTransition = (info.FeaturesFlags & MaterialFeaturesFlags.DitheredLODTransition) != 0;
@@ -152,6 +166,7 @@ namespace FlaxEditor.Windows.Assets
                 MaxTessellationFactor = info.MaxTessellationFactor;
                 MaskThreshold = info.MaskThreshold;
                 DecalBlendingMode = info.DecalBlendingMode;
+                TransparentLightingMode = info.TransparentLightingMode;
                 PostFxLocation = info.PostFxLocation;
                 BlendMode = info.BlendMode;
                 ShadingModel = info.ShadingModel;
@@ -177,10 +192,14 @@ namespace FlaxEditor.Windows.Assets
                     info.FeaturesFlags |= MaterialFeaturesFlags.DisableDepthWrite;
                 if (!EnableReflections)
                     info.FeaturesFlags |= MaterialFeaturesFlags.DisableReflections;
+                if (EnableScreenSpaceReflections)
+                    info.FeaturesFlags |= MaterialFeaturesFlags.ScreenSpaceReflections;
                 if (!EnableFog)
                     info.FeaturesFlags |= MaterialFeaturesFlags.DisableFog;
                 if (!EnableDistortion)
                     info.FeaturesFlags |= MaterialFeaturesFlags.DisableDistortion;
+                if (EnableGlobalIllumination)
+                    info.FeaturesFlags |= MaterialFeaturesFlags.GlobalIllumination;
                 if (PixelNormalOffsetRefraction)
                     info.FeaturesFlags |= MaterialFeaturesFlags.PixelNormalOffsetRefraction;
                 if (InputWorldSpaceNormal)
@@ -192,6 +211,7 @@ namespace FlaxEditor.Windows.Assets
                 info.MaxTessellationFactor = MaxTessellationFactor;
                 info.MaskThreshold = MaskThreshold;
                 info.DecalBlendingMode = DecalBlendingMode;
+                info.TransparentLightingMode = TransparentLightingMode;
                 info.PostFxLocation = PostFxLocation;
                 info.BlendMode = BlendMode;
                 info.ShadingModel = ShadingModel;
@@ -255,14 +275,13 @@ namespace FlaxEditor.Windows.Assets
         /// <summary>
         /// Gets or sets the main material node.
         /// </summary>
-        public Surface.Archetypes.Material.SurfaceNodeMaterial MainNode
+        internal Surface.Archetypes.Material.SurfaceNodeMaterial MainNode
         {
             get
             {
                 var mainNode = _surface.FindNode(1, 1) as Surface.Archetypes.Material.SurfaceNodeMaterial;
                 if (mainNode == null)
                 {
-                    // Error
                     Editor.LogError("Failed to find main material node.");
                 }
                 return mainNode;
@@ -327,7 +346,7 @@ namespace FlaxEditor.Windows.Assets
                 if (_asset.SaveSurface(value, info))
                 {
                     _surface.MarkAsEdited();
-                    Editor.LogError("Failed to save material surface data");
+                    Editor.LogError("Failed to save surface data");
                 }
                 _asset.Reload();
                 _asset.WaitForLoaded();
@@ -378,5 +397,8 @@ namespace FlaxEditor.Windows.Assets
 
             return base.SaveToOriginal();
         }
+
+        /// <inheritdoc />
+        public SearchAssetTypes AssetType => SearchAssetTypes.Material;
     }
 }

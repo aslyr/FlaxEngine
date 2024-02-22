@@ -1,13 +1,9 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #include "VisjectMeta.h"
 #include "Engine/Core/Types/DateTime.h"
 #include "Engine/Serialization/ReadStream.h"
 #include "Engine/Serialization/WriteStream.h"
-
-VisjectMeta::VisjectMeta()
-{
-}
 
 bool VisjectMeta::Load(ReadStream* stream, bool loadData)
 {
@@ -23,7 +19,7 @@ bool VisjectMeta::Load(ReadStream* stream, bool loadData)
 
         stream->ReadInt32(&e.TypeID);
         DateTime creationTime;
-        stream->Read(&creationTime);
+        stream->Read(creationTime);
 
         uint32 dataSize;
         stream->ReadUint32(&dataSize);

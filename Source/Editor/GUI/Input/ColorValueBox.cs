@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using FlaxEditor.GUI.Dialogs;
@@ -14,6 +14,8 @@ namespace FlaxEditor.GUI.Input
     [HideInEditor]
     public class ColorValueBox : Control
     {
+        private bool _isMouseDown;
+
         /// <summary>
         /// Delegate function used for the color picker events handling.
         /// </summary>
@@ -58,6 +60,11 @@ namespace FlaxEditor.GUI.Input
         protected Color _value;
 
         /// <summary>
+        /// Enables live preview of the selected value from the picker. Otherwise will update the value only when user confirms it on dialog closing.
+        /// </summary>
+        public bool UseDynamicEditing = true;
+
+        /// <summary>
         /// Occurs when value gets changed.
         /// </summary>
         public event Action ValueChanged;
@@ -78,8 +85,6 @@ namespace FlaxEditor.GUI.Input
                 if (_value != value)
                 {
                     _value = value;
-
-                    // Fire event
                     OnValueChanged();
                 }
             }
@@ -128,16 +133,35 @@ namespace FlaxEditor.GUI.Input
             var r = new Rectangle(2, 2, Width - 4, Height - 4);
 
             Render2D.FillRectangle(r, _value);
-            Render2D.DrawRectangle(r, IsMouseOver ? style.BackgroundSelected : Color.Black);
+            Render2D.DrawRectangle(r, IsMouseOver || IsNavFocused ? style.BackgroundSelected : Color.Black);
         }
 
         /// <inheritdoc />
-        public override bool OnMouseUp(Vector2 location, MouseButton button)
+        public override bool OnMouseDown(Float2 location, MouseButton button)
         {
-            // Show color picker dialog
-            _currentDialog = ShowPickColorDialog?.Invoke(this, _value, OnColorChanged, OnPickerClosed);
+            _isMouseDown = true;
+            return base.OnMouseDown(location, button);
+        }
 
+        /// <inheritdoc />
+        public override bool OnMouseUp(Float2 location, MouseButton button)
+        {
+            if (_isMouseDown)
+            {
+                _isMouseDown = false;
+                Focus();
+                OnSubmit();
+            }
             return true;
+        }
+
+        /// <inheritdoc />
+        public override void OnSubmit()
+        {
+            base.OnSubmit();
+
+            // Show color picker dialog
+            _currentDialog = ShowPickColorDialog?.Invoke(this, _value, OnColorChanged, OnPickerClosed, UseDynamicEditing);
         }
 
         private void OnColorChanged(Color color, bool sliding)

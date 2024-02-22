@@ -1,13 +1,144 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Flax.Build
 {
+    public class FlaxVersionConverter : JsonConverter<Version>
+    {
+        /// <summary>
+        /// Writes the JSON representation of the object.
+        /// </summary>
+        /// <param name="writer">The <see cref="Utf8JsonWriter"/> to write to.</param>
+        /// <param name="value">The value.</param>
+        /// <param name="options">The calling serializer.</param>
+        public override void Write(Utf8JsonWriter writer, Version value, JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value.ToString());
+        }
+
+        /// <summary>
+        /// Reads the JSON representation of the object.
+        /// </summary>
+        /// <param name="reader">The <see cref="Utf8JsonReader"/> to read from.</param>
+        /// <param name="typeToConvert">Type of the object.</param>
+        /// <param name="options">The serializer options.</param>
+        /// <returns>The object value.</returns>
+        public override Version? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+                return null;
+
+            if (reader.TokenType == JsonTokenType.StartObject)
+            {
+                try
+                {
+                    reader.Read();
+                    var values = new Dictionary<string, int>();
+                    while (reader.TokenType == JsonTokenType.PropertyName)
+                    {
+                        var key = reader.GetString();
+                        reader.Read();
+                        var val = reader.GetInt32();
+                        reader.Read();
+                        values.Add(key, val);
+                    }
+
+                    values.TryGetValue("Major", out var major);
+                    values.TryGetValue("Minor", out var minor);
+                    if (!values.TryGetValue("Build", out var build))
+                        build = -1;
+                    if (!values.TryGetValue("Revision", out var revision))
+                        revision = -1;
+
+                    if (build <= 0)
+                        return new Version(major, minor);
+                    if (revision <= 0)
+                        return new Version(major, minor, build);
+                    return new Version(major, minor, build, revision);
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception(string.Format("Error parsing version string: {0}", reader.GetString()), ex);
+                }
+            }
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                try
+                {
+                    return new Version((string)reader.GetString()!);
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception(string.Format("Error parsing version string: {0}", reader.GetString()), ex);
+                }
+            }
+            throw new Exception(string.Format("Unexpected token or value when parsing version. Token: {0}, Value: {1}", reader.TokenType, reader.GetString()));
+        }
+
+        /// <summary>
+        /// Determines whether this instance can convert the specified object type.
+        /// </summary>
+        /// <param name="objectType">Type of the object.</param>
+        /// <returns><c>true</c> if this instance can convert the specified object type; otherwise, <c>false</c>.</returns>
+        public override bool CanConvert(Type objectType)
+        {
+            return objectType == typeof(Version);
+        }
+    }
+
+    public class ConfigurationDictionaryConverter : System.Text.Json.Serialization.JsonConverter<Dictionary<string, string>>
+    {
+        public override Dictionary<string, string>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            var dictionary = new Dictionary<string, string>();
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndObject)
+                    return dictionary;
+                if (reader.TokenType != JsonTokenType.PropertyName)
+                    throw new Exception();
+
+                string key = reader.GetString();
+                reader.Read();
+
+                string value;
+                if (reader.TokenType == JsonTokenType.True)
+                    value = "true";
+                else if (reader.TokenType == JsonTokenType.False)
+                    value = "false";
+                else
+                    value = reader.GetString();
+                dictionary.Add(key, value);
+            }
+            throw new Exception();
+        }
+
+        public override void Write(Utf8JsonWriter writer, Dictionary<string, string> dictionary, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            foreach ((string key, string value) in dictionary)
+            {
+                var propertyName = key.ToString();
+                writer.WritePropertyName(options.PropertyNamingPolicy?.ConvertName(propertyName) ?? propertyName);
+                writer.WriteStringValue(value);
+            }
+            writer.WriteEndObject();
+        }
+    }
+
+    [JsonSourceGenerationOptions(IncludeFields = true)]
+    [JsonSerializable(typeof(ProjectInfo))]
+    internal partial class ProjectInfoSourceGenerationContext : JsonSerializerContext
+    {
+    }
+
     /// <summary>
     /// Contains information about Flax project.
     /// </summary>
@@ -28,7 +159,7 @@ namespace Flax.Build
             /// <summary>
             /// The referenced project.
             /// </summary>
-            [NonSerialized]
+            [JsonIgnore]
             public ProjectInfo Project;
 
             /// <inheritdoc />
@@ -46,13 +177,13 @@ namespace Flax.Build
         /// <summary>
         /// The project file path.
         /// </summary>
-        [NonSerialized]
+        [JsonIgnore]
         public string ProjectPath;
 
         /// <summary>
         /// The project root folder path.
         /// </summary>
-        [NonSerialized]
+        [JsonIgnore]
         public string ProjectFolderPath;
 
         /// <summary>
@@ -94,6 +225,12 @@ namespace Flax.Build
         /// The user-friendly nickname of the engine installation to use when opening the project. Can be used to open game project with a custom engine distributed for team members. This value must be the same in engine and game projects to be paired.
         /// </summary>
         public string EngineNickname;
+
+        /// <summary>
+        /// The custom build configuration entries loaded from project file.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonConverter(typeof(ConfigurationDictionaryConverter))]
+        public Dictionary<string, string> Configuration;
 
         /// <summary>
         /// True if project is using C#-only and no native toolsets is required to build and use scripts.
@@ -149,7 +286,7 @@ namespace Flax.Build
         /// </summary>
         public void Save()
         {
-            var contents = JsonConvert.SerializeObject(this);
+            var contents = JsonSerializer.Serialize<ProjectInfo>(this, new JsonSerializerOptions() { Converters = { new FlaxVersionConverter() }, TypeInfoResolver = ProjectInfoSourceGenerationContext.Default });
             File.WriteAllText(ProjectPath, contents);
         }
 
@@ -175,7 +312,8 @@ namespace Flax.Build
                 // Load
                 Log.Verbose("Loading project file from \"" + path + "\"...");
                 var contents = File.ReadAllText(path);
-                var project = JsonConvert.DeserializeObject<ProjectInfo>(contents);
+                var project = JsonSerializer.Deserialize<ProjectInfo>(contents.AsSpan(),
+                                                                      new JsonSerializerOptions() { Converters = { new FlaxVersionConverter() }, IncludeFields = true, TypeInfoResolver = ProjectInfoSourceGenerationContext.Default });
                 project.ProjectPath = path;
                 project.ProjectFolderPath = Path.GetDirectoryName(path);
 

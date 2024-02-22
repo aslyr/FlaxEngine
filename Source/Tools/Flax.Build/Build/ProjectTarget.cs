@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.IO;
@@ -62,15 +62,28 @@ namespace Flax.Build
 
             // Add include paths for this project sources and engine third-party sources
             var depsRoot = options.DepsFolder;
-            options.CompileEnv.IncludePaths.Add(Path.Combine(Globals.EngineRoot, @"Source\ThirdParty\mono-2.0")); // TODO: let mono module expose it
             options.CompileEnv.IncludePaths.Add(Path.Combine(Globals.EngineRoot, @"Source\ThirdParty"));
-            options.CompileEnv.IncludePaths.Add(Path.Combine(Project.ProjectFolderPath, "Source"));
             options.LinkEnv.LibraryPaths.Add(depsRoot);
 
-            // Add include paths for referenced projects sources
-            foreach (var reference in Project.References)
+            // Ensure to propagate global configuration defines to the whole codebase
+            if (!EngineConfiguration.WithCSharp(options))
             {
-                options.CompileEnv.IncludePaths.Add(Path.Combine(reference.Project.ProjectFolderPath, "Source"));
+                options.CompileEnv.PreprocessorDefinitions.Add("COMPILE_WITHOUT_CSHARP");
+            }
+            else if (!EngineConfiguration.WithDotNet(options))
+            {
+                options.CompileEnv.PreprocessorDefinitions.Add("COMPILE_WITH_MONO");
+            }
+            if (EngineConfiguration.WithLargeWorlds(options))
+            {
+                options.CompileEnv.PreprocessorDefinitions.Add("USE_LARGE_WORLDS");
+                options.ScriptingAPI.Defines.Add("USE_LARGE_WORLDS");
+            }
+
+            // Add include paths for this and all referenced projects sources
+            foreach (var project in Project.GetAllProjects())
+            {
+                options.CompileEnv.IncludePaths.Add(Path.Combine(project.ProjectFolderPath, "Source"));
             }
         }
     }

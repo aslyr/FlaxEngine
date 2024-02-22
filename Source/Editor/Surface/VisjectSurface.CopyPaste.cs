@@ -1,11 +1,11 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
-using FlaxEditor.Scripting;
 using FlaxEditor.Surface.Elements;
 using FlaxEditor.Surface.Undo;
 using FlaxEngine;
+using FlaxEngine.Utilities;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -63,6 +63,25 @@ namespace FlaxEditor.Surface
             {
                 Clipboard.Text = string.Empty;
                 return;
+            }
+
+            // Collect sealed nodes to be copied as well
+            foreach (var control in selection.ToArray())
+            {
+                if (control is SurfaceNode node)
+                {
+                    var sealedNodes = node.SealedNodes;
+                    if (sealedNodes != null)
+                    {
+                        foreach (var sealedNode in sealedNodes)
+                        {
+                            if (sealedNode != null && !selection.Contains(sealedNode))
+                            {
+                                selection.Add(sealedNode);
+                            }
+                        }
+                    }
+                }
             }
 
             var dataModel = new DataModel();
@@ -234,7 +253,7 @@ namespace FlaxEditor.Surface
                 }
 
                 // Find controls upper left location
-                Vector2 upperLeft = new Vector2(model.Nodes[0].X, model.Nodes[0].Y);
+                var upperLeft = new Float2(model.Nodes[0].X, model.Nodes[0].Y);
                 for (int i = 1; i < model.Nodes.Length; i++)
                 {
                     upperLeft.X = Mathf.Min(upperLeft.X, model.Nodes[i].X);
@@ -253,7 +272,7 @@ namespace FlaxEditor.Surface
                         throw new InvalidOperationException("Unknown node type.");
 
                     // Validate given node type
-                    if (!CanUseNodeType(nodeArchetype))
+                    if (!CanUseNodeType(groupArchetype, nodeArchetype))
                         continue;
 
                     // Create
@@ -275,66 +294,74 @@ namespace FlaxEditor.Surface
                                 var src = nodeData.Values[l].Value;
                                 var dst = node.Values[l];
 
-                                if (nodeData.Values[l].EnumTypeName != null)
+                                try
                                 {
-                                    var enumType = TypeUtils.GetManagedType(nodeData.Values[l].EnumTypeName);
-                                    if (enumType != null)
+                                    if (nodeData.Values[l].EnumTypeName != null)
                                     {
-                                        src = Enum.ToObject(enumType, src);
+                                        var enumType = TypeUtils.GetManagedType(nodeData.Values[l].EnumTypeName);
+                                        if (enumType != null)
+                                        {
+                                            src = Enum.ToObject(enumType, src);
+                                        }
+                                    }
+                                    else if (src is JToken token)
+                                    {
+                                        if (dst is Vector2)
+                                        {
+                                            src = new Vector2(token["X"].Value<float>(),
+                                                              token["Y"].Value<float>());
+                                        }
+                                        else if (dst is Vector3)
+                                        {
+                                            src = new Vector3(token["X"].Value<float>(),
+                                                              token["Y"].Value<float>(),
+                                                              token["Z"].Value<float>());
+                                        }
+                                        else if (dst is Vector4)
+                                        {
+                                            src = new Vector4(token["X"].Value<float>(),
+                                                              token["Y"].Value<float>(),
+                                                              token["Z"].Value<float>(),
+                                                              token["W"].Value<float>());
+                                        }
+                                        else if (dst is Color)
+                                        {
+                                            src = new Color(token["R"].Value<float>(),
+                                                            token["G"].Value<float>(),
+                                                            token["B"].Value<float>(),
+                                                            token["A"].Value<float>());
+                                        }
+                                        else
+                                        {
+                                            Editor.LogWarning("Unknown pasted node value token: " + token);
+                                            src = dst;
+                                        }
+                                    }
+                                    else if (src is double asDouble)
+                                    {
+                                        src = (float)asDouble;
+                                    }
+                                    else if (dst is Guid)
+                                    {
+                                        src = Guid.Parse((string)src);
+                                    }
+                                    else if (dst is int)
+                                    {
+                                        src = Convert.ToInt32(src);
+                                    }
+                                    else if (dst is float)
+                                    {
+                                        src = Convert.ToSingle(src);
+                                    }
+                                    else if (dst is byte[] && src is string s)
+                                    {
+                                        src = Convert.FromBase64String(s);
                                     }
                                 }
-                                else if (src is JToken token)
+                                catch (Exception ex)
                                 {
-                                    if (dst is Vector2)
-                                    {
-                                        src = new Vector2(token["X"].Value<float>(),
-                                                          token["Y"].Value<float>());
-                                    }
-                                    else if (dst is Vector3)
-                                    {
-                                        src = new Vector3(token["X"].Value<float>(),
-                                                          token["Y"].Value<float>(),
-                                                          token["Z"].Value<float>());
-                                    }
-                                    else if (dst is Vector4)
-                                    {
-                                        src = new Vector4(token["X"].Value<float>(),
-                                                          token["Y"].Value<float>(),
-                                                          token["Z"].Value<float>(),
-                                                          token["W"].Value<float>());
-                                    }
-                                    else if (dst is Color)
-                                    {
-                                        src = new Color(token["R"].Value<float>(),
-                                                        token["G"].Value<float>(),
-                                                        token["B"].Value<float>(),
-                                                        token["A"].Value<float>());
-                                    }
-                                    else
-                                    {
-                                        Editor.LogWarning("Unknown pasted node value token: " + token);
-                                        src = dst;
-                                    }
-                                }
-                                else if (src is double asDouble)
-                                {
-                                    src = (float)asDouble;
-                                }
-                                else if (dst is Guid)
-                                {
-                                    src = Guid.Parse((string)src);
-                                }
-                                else if (dst is int)
-                                {
-                                    src = Convert.ToInt32(src);
-                                }
-                                else if (dst is float)
-                                {
-                                    src = Convert.ToSingle(src);
-                                }
-                                else if (dst is byte[] && src is string s)
-                                {
-                                    src = Convert.FromBase64String(s);
+                                    Editor.LogWarning(string.Format("Failed to convert node data from {0} to {1}", src?.GetType().FullName ?? "null", dst?.GetType().FullName ?? "null"));
+                                    Editor.LogWarning(ex);
                                 }
 
                                 node.Values[l] = src;
@@ -346,7 +373,7 @@ namespace FlaxEditor.Surface
                         }
                     }
 
-                    Context.OnControlLoaded(node);
+                    Context.OnControlLoaded(node, SurfaceNodeActions.Paste);
                 }
 
                 // Setup connections
@@ -379,14 +406,22 @@ namespace FlaxEditor.Surface
                 {
                     var node = e.Value;
                     var nodeData = nodesData[e.Key];
-                    var pos = new Vector2(nodeData.X, nodeData.Y) - upperLeft;
+                    var pos = new Float2(nodeData.X, nodeData.Y) - upperLeft;
                     node.Location = ViewPosition + pos + _mousePos / ViewScale;
                 }
 
                 // Post load
                 foreach (var node in nodes)
                 {
-                    node.Value.OnSurfaceLoaded();
+                    node.Value.OnSurfaceLoaded(SurfaceNodeActions.Paste);
+                }
+                foreach (var node in nodes)
+                {
+                    node.Value.OnSpawned(SurfaceNodeActions.Paste);
+                }
+                foreach (var node in nodes)
+                {
+                    node.Value.OnPasted(idsMapping);
                 }
 
                 // Add undo action

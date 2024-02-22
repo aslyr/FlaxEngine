@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -6,12 +6,6 @@
 #include "Engine/Graphics/GPUPipelineStatePermutations.h"
 #include "Engine/Content/Assets/Model.h"
 #include "Engine/Content/Assets/Shader.h"
-
-// Reflections buffer format used for rendering env probes and screen space reflections
-#define REFLECTIONS_PASS_OUTPUT_FORMAT PixelFormat::R11G11B10_Float
-#define ENV_PROBES_RESOLUTION 128
-//#define ENV_PROBES_FORMAT PixelFormat::R11G11B10_Float
-#define ENV_PROBES_FORMAT PixelFormat::R8G8B8A8_UNorm
 
 #define GENERATE_GF_CACHE 0
 #define PRE_INTEGRATED_GF_ASSET_NAME TEXT("Engine/Textures/PreIntegratedGF")

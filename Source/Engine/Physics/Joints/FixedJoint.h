@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2021 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -8,11 +8,17 @@
 /// Physics joint that maintains a fixed distance and orientation between its two attached bodies.
 /// </summary>
 /// <seealso cref="Joint" />
-API_CLASS() class FLAXENGINE_API FixedJoint : public Joint
+API_CLASS(Attributes="ActorContextMenu(\"New/Physics/Joints/Fixed Joint\"), ActorToolbox(\"Physics\")")
+class FLAXENGINE_API FixedJoint : public Joint
 {
-DECLARE_SCENE_OBJECT(FixedJoint);
-protected:
-
+    DECLARE_SCENE_OBJECT(FixedJoint);
+public:
     // [Joint]
-    PxJoint* CreateJoint(JointData& data) override;
+#if USE_EDITOR
+    void OnDebugDrawSelected() override;
+#endif
+
+protected:
+    // [Joint]
+    void* CreateJoint(const PhysicsJointDesc& desc) override;
 };
