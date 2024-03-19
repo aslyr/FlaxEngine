@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "Actor.h"
 #include "ActorsCache.h"
@@ -1763,14 +1763,6 @@ bool Actor::FromBytes(const Span<byte>& data, Array<Actor*>& output, ISerializeM
             SceneObjectsFactory::HandleObjectDeserializationError(document);
     }
     Scripting::ObjectsLookupIdMapping.Set(nullptr);
-
-    // Link objects
-    //for (int32 i = 0; i < objectsCount; i++)
-    {
-        //SceneObject* obj = sceneObjects->At(i);
-        // TODO: post load or post spawn?
-        //obj->PostLoad();
-    }
 
     // Update objects order
     //for (int32 i = 0; i < objectsCount; i++)

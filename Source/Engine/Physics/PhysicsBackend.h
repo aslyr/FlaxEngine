@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -113,7 +113,7 @@ public:
     static void SetSceneBounceThresholdVelocity(void* scene, float value);
     static void SetSceneOrigin(void* scene, const Vector3& oldOrigin, const Vector3& newOrigin);
     static void AddSceneActor(void* scene, void* actor);
-    static void RemoveSceneActor(void* scene, void* actor);
+    static void RemoveSceneActor(void* scene, void* actor, bool immediately = false);
     static void AddSceneActorAction(void* scene, void* actor, ActionType action);
 #if COMPILE_WITH_PROFILER
     static void GetSceneStatistics(void* scene, PhysicsStatistics& result);
@@ -263,6 +263,7 @@ public:
     static void* CreateVehicle(class WheeledVehicle* actor);
     static void DestroyVehicle(void* vehicle, int32 driveType);
     static void UpdateVehicleWheels(WheeledVehicle* actor);
+    static void UpdateVehicleAntiRollBars(WheeledVehicle* actor);
     static void SetVehicleEngine(void* vehicle, const void* value);
     static void SetVehicleDifferential(void* vehicle, const void* value);
     static void SetVehicleGearbox(void* vehicle, const void* value);

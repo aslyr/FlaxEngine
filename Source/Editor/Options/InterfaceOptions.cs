@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System.ComponentModel;
 using FlaxEditor.GUI.Docking;
@@ -88,6 +88,32 @@ namespace FlaxEditor.Options
             /// Launches the game using the scenes currently loaded in the editor.
             /// </summary>
             PlayScenes,
+        }
+
+        /// <summary>
+        /// Available window modes for the game window.
+        /// </summary>
+        public enum GameWindowMode
+        {
+            /// <summary>
+            /// Shows the game window docked, inside the editor.
+            /// </summary>
+            Docked,
+
+            /// <summary>
+            /// Shows the game window as a popup.
+            /// </summary>
+            PopupWindow,
+
+            /// <summary>
+            /// Shows the game window maximized. (Same as pressing F11)
+            /// </summary>
+            MaximizedWindow,
+
+            /// <summary>
+            /// Shows the game window borderless.
+            /// </summary>
+            BorderlessWindow,
         }
 
         /// <summary>
@@ -228,6 +254,13 @@ namespace FlaxEditor.Options
         [DefaultValue(PlayAction.PlayScenes)]
         [EditorDisplay("Play In-Editor", "Play Button Action"), EditorOrder(410)]
         public PlayAction PlayButtonAction { get; set; } = PlayAction.PlayScenes;
+
+        /// <summary>
+        /// Gets or sets a value indicating how the game window should be displayed when the game is launched.
+        /// </summary>
+        [DefaultValue(GameWindowMode.Docked)]
+        [EditorDisplay("Play In-Editor", "Game Window Mode"), EditorOrder(420), Tooltip("Determines how the game window is displayed when the game is launched.")]
+        public GameWindowMode DefaultGameWindowMode { get; set; } = GameWindowMode.Docked;
 
         /// <summary>
         /// Gets or sets a value indicating the number of game clients to launch when building and/or running cooked game.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System.Collections.Generic;
 using FlaxEditor.Gizmo;
@@ -41,6 +41,7 @@ namespace FlaxEditor.Viewport
                 Gizmos[i].Update(deltaTime);
             }
         }
+
         /// <inheritdoc />
         public EditorViewport Viewport => this;
 
@@ -69,13 +70,16 @@ namespace FlaxEditor.Viewport
         public bool SnapToGround => Editor.Instance.Options.Options.Input.SnapToGround.Process(Root);
 
         /// <inheritdoc />
+        public bool SnapToVertex => Editor.Instance.Options.Options.Input.SnapToVertex.Process(Root);
+
+        /// <inheritdoc />
         public Float2 MouseDelta => _mouseDelta * 1000;
 
         /// <inheritdoc />
-        public bool UseSnapping => Root.GetKey(KeyboardKeys.Control);
+        public bool UseSnapping => Root?.GetKey(KeyboardKeys.Control) ?? false;
 
         /// <inheritdoc />
-        public bool UseDuplicate => Root.GetKey(KeyboardKeys.Shift);
+        public bool UseDuplicate => Root?.GetKey(KeyboardKeys.Shift) ?? false;
 
         /// <inheritdoc />
         public Undo Undo { get; }
@@ -88,6 +92,9 @@ namespace FlaxEditor.Viewport
 
         /// <inheritdoc />
         public abstract void Spawn(Actor actor);
+
+        /// <inheritdoc />
+        public abstract void OpenContextMenu();
 
         /// <inheritdoc />
         protected override bool IsControllingMouse => Gizmos.Active?.IsControllingMouse ?? false;
@@ -118,5 +125,41 @@ namespace FlaxEditor.Viewport
 
             base.OnDestroy();
         }
+
+        internal static readonly float[] TranslateSnapValues =
+        {
+            0.1f,
+            0.5f,
+            1.0f,
+            5.0f,
+            10.0f,
+            100.0f,
+            1000.0f,
+        };
+
+        internal static readonly float[] RotateSnapValues =
+        {
+            1.0f,
+            5.0f,
+            10.0f,
+            15.0f,
+            30.0f,
+            45.0f,
+            60.0f,
+            90.0f,
+        };
+
+        internal static readonly float[] ScaleSnapValues =
+        {
+            0.05f,
+            0.1f,
+            0.25f,
+            0.5f,
+            1.0f,
+            2.0f,
+            4.0f,
+            6.0f,
+            8.0f,
+        };
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Linq;
@@ -10,7 +10,6 @@ using FlaxEditor.Viewport.Cameras;
 using FlaxEditor.Viewport.Widgets;
 using FlaxEngine;
 using FlaxEngine.GUI;
-using Newtonsoft.Json;
 using JsonSerializer = FlaxEngine.Json.JsonSerializer;
 
 namespace FlaxEditor.Viewport
@@ -154,6 +153,7 @@ namespace FlaxEditor.Viewport
 
         // Input
 
+        internal bool _disableInputUpdate;
         private bool _isControllingMouse, _isViewportControllingMouse, _wasVirtualMouseRightDown, _isVirtualMouseRightDown;
         private int _deltaFilteringStep;
         private Float2 _startPos;
@@ -1496,6 +1496,9 @@ namespace FlaxEditor.Viewport
         {
             base.Update(deltaTime);
 
+            if (_disableInputUpdate)
+                return;
+
             // Update camera
             bool useMovementSpeed = false;
             if (_camera != null)
@@ -1534,7 +1537,7 @@ namespace FlaxEditor.Viewport
                 }
                 bool useMouse = IsControllingMouse || (Mathf.IsInRange(_viewMousePos.X, 0, Width) && Mathf.IsInRange(_viewMousePos.Y, 0, Height));
                 _prevInput = _input;
-                var hit = GetChildAt(_viewMousePos, c => c.Visible && !(c is CanvasRootControl));
+                var hit = GetChildAt(_viewMousePos, c => c.Visible && !(c is CanvasRootControl) && !(c is UIEditorRoot));
                 if (canUseInput && ContainsFocus && hit == null)
                     _input.Gather(win.Window, useMouse);
                 else

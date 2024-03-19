@@ -1,8 +1,7 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using FlaxEditor.Content;
 using FlaxEditor.Gizmo;
 using FlaxEditor.GUI.ContextMenu;
@@ -30,7 +29,6 @@ namespace FlaxEditor.Viewport
         {
             public PrefabWindowViewport Viewport;
 
-            /// <inheritdoc />
             public override bool CanRender()
             {
                 return (Task.View.Flags & ViewFlags.EditorSprites) == ViewFlags.EditorSprites && Enabled;
@@ -40,6 +38,25 @@ namespace FlaxEditor.Viewport
             {
                 ViewportIconsRenderer.DrawIcons(ref renderContext, Viewport.Instance);
             }
+        }
+
+        [HideInEditor]
+        private sealed class PrefabUIEditorRoot : UIEditorRoot
+        {
+            private readonly PrefabWindowViewport _viewport;
+            private bool UI => _viewport._hasUILinkedCached;
+
+            public PrefabUIEditorRoot(PrefabWindowViewport viewport)
+            : base(true)
+            {
+                _viewport = viewport;
+                Parent = viewport;
+            }
+
+            public override bool EnableInputs => !UI;
+            public override bool EnableSelecting => UI;
+            public override bool EnableBackground => UI;
+            public override TransformGizmo TransformGizmo => _viewport.TransformGizmo;
         }
 
         private readonly PrefabWindow _window;
@@ -55,6 +72,10 @@ namespace FlaxEditor.Viewport
 
         private readonly ViewportDebugDrawData _debugDrawData = new ViewportDebugDrawData(32);
         private PrefabSpritesRenderer _spritesRenderer;
+        private IntPtr _tempDebugDrawContext;
+
+        private bool _hasUILinkedCached;
+        private PrefabUIEditorRoot _uiRoot;
 
         /// <summary>
         /// Drag and drop handlers
@@ -111,6 +132,11 @@ namespace FlaxEditor.Viewport
             TransformGizmo.Duplicate += _window.Duplicate;
             Gizmos.Active = TransformGizmo;
 
+            // Use custom root for UI controls
+            _uiRoot = new PrefabUIEditorRoot(this);
+            _uiRoot.IndexInParent = 0; // Move viewport down below other widgets in the viewport
+            _uiParentLink = _uiRoot.UIRoot;
+
             // Transform space widget
             var transformSpaceWidget = new ViewportWidgetsContainer(ViewportWidgetLocation.UpperRight);
             var transformSpaceToggle = new ViewportWidgetButton(string.Empty, window.Editor.Icons.Globe32, null, true)
@@ -131,16 +157,14 @@ namespace FlaxEditor.Viewport
                 Parent = scaleSnappingWidget
             };
             enableScaleSnapping.Toggled += OnScaleSnappingToggle;
-
             var scaleSnappingCM = new ContextMenu();
             _scaleSnapping = new ViewportWidgetButton(TransformGizmo.ScaleSnapValue.ToString(), SpriteHandle.Invalid, scaleSnappingCM)
             {
                 TooltipText = "Scale snapping values"
             };
-
-            for (int i = 0; i < EditorViewportScaleSnapValues.Length; i++)
+            for (int i = 0; i < EditorGizmoViewport.ScaleSnapValues.Length; i++)
             {
-                var v = EditorViewportScaleSnapValues[i];
+                var v = EditorGizmoViewport.ScaleSnapValues[i];
                 var button = scaleSnappingCM.AddButton(v.ToString());
                 button.Tag = v;
             }
@@ -158,16 +182,14 @@ namespace FlaxEditor.Viewport
                 Parent = rotateSnappingWidget
             };
             enableRotateSnapping.Toggled += OnRotateSnappingToggle;
-
             var rotateSnappingCM = new ContextMenu();
             _rotateSnapping = new ViewportWidgetButton(TransformGizmo.RotationSnapValue.ToString(), SpriteHandle.Invalid, rotateSnappingCM)
             {
                 TooltipText = "Rotation snapping values"
             };
-
-            for (int i = 0; i < EditorViewportRotateSnapValues.Length; i++)
+            for (int i = 0; i < EditorGizmoViewport.RotateSnapValues.Length; i++)
             {
-                var v = EditorViewportRotateSnapValues[i];
+                var v = EditorGizmoViewport.RotateSnapValues[i];
                 var button = rotateSnappingCM.AddButton(v.ToString());
                 button.Tag = v;
             }
@@ -185,16 +207,14 @@ namespace FlaxEditor.Viewport
                 Parent = translateSnappingWidget
             };
             enableTranslateSnapping.Toggled += OnTranslateSnappingToggle;
-
             var translateSnappingCM = new ContextMenu();
             _translateSnappng = new ViewportWidgetButton(TransformGizmo.TranslationSnapValue.ToString(), SpriteHandle.Invalid, translateSnappingCM)
             {
                 TooltipText = "Position snapping values"
             };
-
-            for (int i = 0; i < EditorViewportTranslateSnapValues.Length; i++)
+            for (int i = 0; i < EditorGizmoViewport.TranslateSnapValues.Length; i++)
             {
-                var v = EditorViewportTranslateSnapValues[i];
+                var v = EditorGizmoViewport.TranslateSnapValues[i];
                 var button = translateSnappingCM.AddButton(v.ToString());
                 button.Tag = v;
             }
@@ -243,8 +263,54 @@ namespace FlaxEditor.Viewport
             SetUpdate(ref _update, OnUpdate);
         }
 
+        /// <summary>
+        /// Updates the viewport's gizmos, especially to toggle between 3D and UI editing modes.
+        /// </summary>
+        internal void UpdateGizmoMode()
+        {
+            // Skip if gizmo mode was unmodified
+            if (_hasUILinked == _hasUILinkedCached)
+                return;
+            _hasUILinkedCached = _hasUILinked;
+
+            if (_hasUILinked)
+            {
+                // UI widget
+                Gizmos.Active = null;
+                ViewportCamera = new UIEditorCamera { UIEditor = _uiRoot };
+
+                // Hide 3D visuals
+                ShowEditorPrimitives = false;
+                ShowDefaultSceneActors = false;
+                ShowDebugDraw = false;
+
+                // Show whole UI on startup
+                ViewportCamera.ShowActor(Instance);
+            }
+            else
+            {
+                // Generic prefab
+                Gizmos.Active = TransformGizmo;
+                ViewportCamera = new FPSCamera();
+            }
+
+            // Update default components usage
+            bool defaultFeatures = !_hasUILinked;
+            _disableInputUpdate = _hasUILinked;
+            _spritesRenderer.Enabled = defaultFeatures;
+            SelectionOutline.Enabled = defaultFeatures;
+            _showDefaultSceneButton.Visible = defaultFeatures;
+            _cameraWidget.Visible = defaultFeatures;
+            _cameraButton.Visible = defaultFeatures;
+            _orthographicModeButton.Visible = defaultFeatures;
+            Task.Enabled = defaultFeatures;
+            UseAutomaticTaskManagement = defaultFeatures;
+            TintColor = defaultFeatures ? Color.White : Color.Transparent;
+        }
+
         private void OnUpdate(float deltaTime)
         {
+            UpdateGizmoMode();
             for (int i = 0; i < Gizmos.Count; i++)
             {
                 Gizmos[i].Update(deltaTime);
@@ -259,11 +325,19 @@ namespace FlaxEditor.Viewport
             var selectedParents = TransformGizmo.SelectedParents;
             if (selectedParents.Count > 0)
             {
+                // Use temporary Debug Draw context to pull any debug shapes drawing in Scene Graph Nodes - those are used in OnDebugDraw down below
+                if (_tempDebugDrawContext == IntPtr.Zero)
+                    _tempDebugDrawContext = DebugDraw.AllocateContext();
+                DebugDraw.SetContext(_tempDebugDrawContext);
+                DebugDraw.UpdateContext(_tempDebugDrawContext, 1.0f);
+
                 for (int i = 0; i < selectedParents.Count; i++)
                 {
                     if (selectedParents[i].IsActiveInHierarchy)
                         selectedParents[i].OnDebugDraw(_debugDrawData);
                 }
+
+                DebugDraw.SetContext(IntPtr.Zero);
             }
         }
 
@@ -307,7 +381,7 @@ namespace FlaxEditor.Viewport
         public void ShowSelectedActors()
         {
             var orient = ViewOrientation;
-            ((FPSCamera)ViewportCamera).ShowActors(TransformGizmo.SelectedParents, ref orient);
+            ViewportCamera.ShowActors(TransformGizmo.SelectedParents, ref orient);
         }
 
         /// <inheritdoc />
@@ -338,6 +412,9 @@ namespace FlaxEditor.Viewport
         public bool SnapToGround => false;
 
         /// <inheritdoc />
+        public bool SnapToVertex => Editor.Instance.Options.Options.Input.SnapToVertex.Process(Root);
+
+        /// <inheritdoc />
         public Float2 MouseDelta => _mouseDelta * 1000;
 
         /// <inheritdoc />
@@ -362,6 +439,13 @@ namespace FlaxEditor.Viewport
         public void Spawn(Actor actor)
         {
             _window.Spawn(actor);
+        }
+
+        /// <inheritdoc />
+        public void OpenContextMenu()
+        {
+            var mouse = PointFromWindow(Root.MousePosition);
+            _window.ShowContextMenu(this, ref mouse);
         }
 
         /// <inheritdoc />
@@ -417,19 +501,6 @@ namespace FlaxEditor.Viewport
             _gizmoModeScale.Checked = mode == TransformGizmoBase.Mode.Scale;
         }
 
-        private static readonly float[] EditorViewportScaleSnapValues =
-        {
-            0.05f,
-            0.1f,
-            0.25f,
-            0.5f,
-            1.0f,
-            2.0f,
-            4.0f,
-            6.0f,
-            8.0f,
-        };
-
         private void OnWidgetScaleSnapClick(ContextMenuButton button)
         {
             var v = (float)button.Tag;
@@ -448,24 +519,10 @@ namespace FlaxEditor.Viewport
                 if (e is ContextMenuButton b)
                 {
                     var v = (float)b.Tag;
-                    b.Icon = Mathf.Abs(TransformGizmo.ScaleSnapValue - v) < 0.001f
-                             ? Style.Current.CheckBoxTick
-                             : SpriteHandle.Invalid;
+                    b.Icon = Mathf.Abs(TransformGizmo.ScaleSnapValue - v) < 0.001f ? Style.Current.CheckBoxTick : SpriteHandle.Invalid;
                 }
             }
         }
-
-        private static readonly float[] EditorViewportRotateSnapValues =
-        {
-            1.0f,
-            5.0f,
-            10.0f,
-            15.0f,
-            30.0f,
-            45.0f,
-            60.0f,
-            90.0f,
-        };
 
         private void OnWidgetRotateSnapClick(ContextMenuButton button)
         {
@@ -485,23 +542,10 @@ namespace FlaxEditor.Viewport
                 if (e is ContextMenuButton b)
                 {
                     var v = (float)b.Tag;
-                    b.Icon = Mathf.Abs(TransformGizmo.RotationSnapValue - v) < 0.001f
-                             ? Style.Current.CheckBoxTick
-                             : SpriteHandle.Invalid;
+                    b.Icon = Mathf.Abs(TransformGizmo.RotationSnapValue - v) < 0.001f ? Style.Current.CheckBoxTick : SpriteHandle.Invalid;
                 }
             }
         }
-
-        private static readonly float[] EditorViewportTranslateSnapValues =
-        {
-            0.1f,
-            0.5f,
-            1.0f,
-            5.0f,
-            10.0f,
-            100.0f,
-            1000.0f,
-        };
 
         private void OnWidgetTranslateSnapClick(ContextMenuButton button)
         {
@@ -521,9 +565,7 @@ namespace FlaxEditor.Viewport
                 if (e is ContextMenuButton b)
                 {
                     var v = (float)b.Tag;
-                    b.Icon = Mathf.Abs(TransformGizmo.TranslationSnapValue - v) < 0.001f
-                             ? Style.Current.CheckBoxTick
-                             : SpriteHandle.Invalid;
+                    b.Icon = Mathf.Abs(TransformGizmo.TranslationSnapValue - v) < 0.001f ? Style.Current.CheckBoxTick : SpriteHandle.Invalid;
                 }
             }
         }
@@ -579,23 +621,6 @@ namespace FlaxEditor.Viewport
                 trans.Translation += translationDelta;
 
                 obj.Transform = trans;
-            }
-        }
-
-        /// <inheritdoc />
-        public override void Draw()
-        {
-            base.Draw();
-
-            // Selected UI controls outline
-            for (var i = 0; i < _window.Selection.Count; i++)
-            {
-                if (_window.Selection[i]?.EditableObject is UIControl controlActor && controlActor && controlActor.Control != null)
-                {
-                    var control = controlActor.Control;
-                    var bounds = Rectangle.FromPoints(control.PointToParent(this, Float2.Zero), control.PointToParent(this, control.Size));
-                    Render2D.DrawRectangle(bounds, Editor.Instance.Options.Options.Visual.SelectionOutlineColor0, Editor.Instance.Options.Options.Visual.UISelectionOutlineSize);
-                }
             }
         }
 
@@ -741,14 +766,7 @@ namespace FlaxEditor.Viewport
         /// <param name="orientation">The target view orientation.</param>
         public void FocusSelection(ref Quaternion orientation)
         {
-            if (TransformGizmo.SelectedParents.Count == 0)
-                return;
-
-            var gizmoBounds = Gizmos.Active.FocusBounds;
-            if (gizmoBounds != BoundingSphere.Empty)
-                ((FPSCamera)ViewportCamera).ShowSphere(ref gizmoBounds, ref orientation);
-            else
-                ((FPSCamera)ViewportCamera).ShowActors(TransformGizmo.SelectedParents, ref orientation);
+            ViewportCamera.FocusSelection(Gizmos, ref orientation);
         }
 
         /// <inheritdoc />
@@ -773,6 +791,13 @@ namespace FlaxEditor.Viewport
         /// <inheritdoc />
         public override void OnDestroy()
         {
+            if (IsDisposing)
+                return;
+            if (_tempDebugDrawContext != IntPtr.Zero)
+            {
+                DebugDraw.FreeContext(_tempDebugDrawContext);
+                _tempDebugDrawContext = IntPtr.Zero;
+            }
             FlaxEngine.Object.Destroy(ref SelectionOutline);
             FlaxEngine.Object.Destroy(ref _spritesRenderer);
 
@@ -795,6 +820,15 @@ namespace FlaxEditor.Viewport
         protected override void OnDebugDraw(GPUContext context, ref RenderContext renderContext)
         {
             base.OnDebugDraw(context, ref renderContext);
+
+            // Collect selected objects debug shapes again when DebugDraw is active with a custom context
+            _debugDrawData.Clear();
+            var selectedParents = TransformGizmo.SelectedParents;
+            for (int i = 0; i < selectedParents.Count; i++)
+            {
+                if (selectedParents[i].IsActiveInHierarchy)
+                    selectedParents[i].OnDebugDraw(_debugDrawData);
+            }
 
             unsafe
             {

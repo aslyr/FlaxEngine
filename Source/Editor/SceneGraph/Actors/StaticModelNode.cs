@@ -1,6 +1,13 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
+
+#if USE_LARGE_WORLDS
+using Real = System.Double;
+#else
+using Real = System.Single;
+#endif
 
 using System;
+using System.Collections.Generic;
 using FlaxEditor.Content;
 using FlaxEditor.GUI.ContextMenu;
 using FlaxEditor.Windows;
@@ -15,10 +22,61 @@ namespace FlaxEditor.SceneGraph.Actors
     [HideInEditor]
     public sealed class StaticModelNode : ActorNode
     {
+        private Dictionary<IntPtr, Mesh.Vertex[]> _vertices;
+
         /// <inheritdoc />
         public StaticModelNode(Actor actor)
         : base(actor)
         {
+        }
+
+        /// <inheritdoc />
+        public override bool OnVertexSnap(ref Ray ray, Real hitDistance, out Vector3 result)
+        {
+            // Find the closest vertex to bounding box point (collision detection approximation)
+            result = ray.GetPoint(hitDistance);
+            var model = ((StaticModel)Actor).Model;
+            if (model && !model.WaitForLoaded())
+            {
+                // TODO: move to C++ and use cached vertex buffer internally inside the Mesh
+                if (_vertices == null)
+                    _vertices = new();
+                var pointLocal = (Float3)Actor.Transform.WorldToLocal(result);
+                var minDistance = Real.MaxValue;
+                var lodIndex = 0; // TODO: use LOD index based on the game view
+                var lod = model.LODs[lodIndex];
+                {
+                    var hit = false;
+                    foreach (var mesh in lod.Meshes)
+                    {
+                        var key = FlaxEngine.Object.GetUnmanagedPtr(mesh);
+                        if (!_vertices.TryGetValue(key, out var verts))
+                        {
+                            verts = mesh.DownloadVertexBuffer();
+                            if (verts == null)
+                                continue;
+                            _vertices.Add(key, verts);
+                        }
+                        for (int i = 0; i < verts.Length; i++)
+                        {
+                            var v = verts[i].Position;
+                            var distance = Float3.DistanceSquared(ref pointLocal, ref v);
+                            if (distance <= minDistance)
+                            {
+                                hit = true;
+                                minDistance = distance;
+                                result = v;
+                            }
+                        }
+                    }
+                    if (hit)
+                    {
+                        result = Actor.Transform.LocalToWorld(result);
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /// <inheritdoc />

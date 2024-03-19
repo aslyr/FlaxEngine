@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Threading;
@@ -264,10 +264,13 @@ namespace FlaxEditor.Modules
                 _enterPlayFocusedWindow = gameWin;
 
             // Show Game widow if hidden
-            if (gameWin != null && gameWin.FocusOnPlay)
+            if (gameWin != null)
             {
-                gameWin.FocusGameViewport();
+                if (gameWin.FocusOnPlay)
+                    gameWin.FocusGameViewport();
+                gameWin.SetWindowMode(Editor.Options.Options.Interface.DefaultGameWindowMode);
             }
+
 
             Editor.Log("[PlayMode] Enter");
         }

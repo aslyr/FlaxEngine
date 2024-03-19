@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -185,6 +185,10 @@ namespace FlaxEditor.Windows.Assets
                     }
 
                     base.Initialize(layout);
+
+                    // Ignore import settings GUI if the type is not animation. This removes the import UI if the animation asset was not created using an import.
+                    if (proxy.ImportSettings.Settings.Type != FlaxEngine.Tools.ModelTool.ModelType.Animation)
+                        return;
 
                     // Import Settings
                     {

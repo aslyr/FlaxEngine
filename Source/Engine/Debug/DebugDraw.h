@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #pragma once
 
@@ -86,6 +86,17 @@ API_CLASS(Static) class FLAXENGINE_API DebugDraw
     /// <param name="duration">The duration (in seconds). Use 0 to draw it only once.</param>
     /// <param name="depthTest">If set to <c>true</c> depth test will be performed, otherwise depth will be ignored.</param>
     API_FUNCTION() static void DrawDirection(const Vector3& origin, const Vector3& direction, const Color& color = Color::White, float duration = 0.0f, bool depthTest = true);
+
+    /// <summary>
+    /// Draws the line in a direction.
+    /// [Deprecated in v1.8]
+    /// </summary>
+    /// <param name="origin">The origin of the line.</param>
+    /// <param name="direction">The direction of the line.</param>
+    /// <param name="color">The color.</param>
+    /// <param name="duration">The duration (in seconds). Use 0 to draw it only once.</param>
+    /// <param name="depthTest">If set to <c>true</c> depth test will be performed, otherwise depth will be ignored.</param>
+    API_FUNCTION() DEPRECATED static void DrawRay(const Vector3& origin, const Vector3& direction, const Color& color = Color::White, float duration = 0.0f, bool depthTest = true);
 
     /// <summary>
     /// Draws the line in a direction.

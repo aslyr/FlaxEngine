@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -360,10 +360,9 @@ namespace FlaxEditor.Windows.Assets
         /// </summary>
         /// <param name="parent">The parent control.</param>
         /// <param name="location">The location (within a given control).</param>
-        private void ShowContextMenu(Control parent, ref Float2 location)
+        internal void ShowContextMenu(Control parent, ref Float2 location)
         {
             var contextMenu = CreateContextMenu();
-
             contextMenu.Show(parent, location);
         }
 

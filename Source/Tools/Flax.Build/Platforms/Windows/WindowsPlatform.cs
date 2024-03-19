@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System.IO;
 using System.Linq;
@@ -39,7 +39,8 @@ namespace Flax.Build.Platforms
             if (!toolsets.ContainsKey(WindowsPlatformToolset.v140) &&
                 !toolsets.ContainsKey(WindowsPlatformToolset.v141) &&
                 !toolsets.ContainsKey(WindowsPlatformToolset.v142) &&
-                !toolsets.ContainsKey(WindowsPlatformToolset.v143))
+                !toolsets.ContainsKey(WindowsPlatformToolset.v143) &&
+                !toolsets.ContainsKey(WindowsPlatformToolset.v144))
             {
                 Log.Warning("Missing MSVC toolset v140 or later (VS 2015 or later C++ build tools). Cannot build for Windows platform.");
                 _hasRequiredSDKsInstalled = false;

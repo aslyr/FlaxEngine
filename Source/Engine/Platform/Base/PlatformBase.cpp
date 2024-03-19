@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "Engine/Platform/Platform.h"
 #include "Engine/Platform/CPUInfo.h"
@@ -357,7 +357,13 @@ void PlatformBase::Error(const Char* msg)
 #if PLATFORM_HAS_HEADLESS_MODE
     if (CommandLine::Options.Headless)
     {
+#if PLATFORM_TEXT_IS_CHAR16
+        StringAnsi ansi(msg);
+        ansi += PLATFORM_LINE_TERMINATOR;
+        printf("Error: %s\n", ansi.Get());
+#else
         std::cout << "Error: " << msg << std::endl;
+#endif
     }
     else
 #endif

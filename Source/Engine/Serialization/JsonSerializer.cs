@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Globalization;
@@ -246,15 +246,7 @@ namespace FlaxEngine.Json
         /// <returns>The output json string.</returns>
         public static string Serialize(object obj, bool isManagedOnly = false)
         {
-            Type type = obj.GetType();
-            var cache = isManagedOnly ? CacheManagedOnly.Value : Cache.Value;
-            Current.Value = cache;
-
-            cache.WriteBegin();
-            cache.SerializerWriter.Serialize(cache.JsonWriter, obj, type);
-            cache.WriteEnd();
-
-            return cache.StringBuilder.ToString();
+            return Serialize(obj, obj.GetType(), isManagedOnly);
         }
 
         /// <summary>

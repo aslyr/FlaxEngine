@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "Collider.h"
 #include "Engine/Core/Log.h"
@@ -438,7 +438,7 @@ void Collider::OnPhysicsSceneChanged(PhysicsScene* previous)
 
     if (_staticActor != nullptr)
     {
-        PhysicsBackend::RemoveSceneActor(previous->GetPhysicsScene(), _staticActor);
+        PhysicsBackend::RemoveSceneActor(previous->GetPhysicsScene(), _staticActor, true);
         void* scene = GetPhysicsScene()->GetPhysicsScene();
         PhysicsBackend::AddSceneActor(scene, _staticActor);
     }

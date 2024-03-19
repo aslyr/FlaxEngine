@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_DEBUG_DRAW
 
@@ -940,6 +940,11 @@ void DebugDraw::DrawDirection(const Vector3& origin, const Vector3& direction, c
     auto dir = origin + direction;
     if (dir.IsNanOrInfinity())
         return;
+    DrawLine(origin, origin + direction, color, duration, depthTest);
+}
+
+void DebugDraw::DrawRay(const Vector3& origin, const Vector3& direction, const Color& color, float duration, bool depthTest)
+{
     DrawLine(origin, origin + direction, color, duration, depthTest);
 }
 

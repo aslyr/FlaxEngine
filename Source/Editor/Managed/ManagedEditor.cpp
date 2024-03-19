@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "ManagedEditor.h"
 #include "Editor/Editor.h"
@@ -278,13 +278,7 @@ void ManagedEditor::Update()
 void ManagedEditor::Exit()
 {
     if (WasExitCalled)
-    {
-        // Ups xD
-        LOG(Warning, "Managed Editor exit called after exit or before init.");
         return;
-    }
-
-    // Set flag
     WasExitCalled = true;
 
     // Skip if managed object is missing

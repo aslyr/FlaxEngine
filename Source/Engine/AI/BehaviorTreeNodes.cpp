@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "BehaviorTreeNodes.h"
 #include "Behavior.h"
@@ -704,6 +704,14 @@ bool BehaviorTreeKnowledgeConditionalDecorator::CanUpdate(const BehaviorUpdateCo
 bool BehaviorTreeKnowledgeValuesConditionalDecorator::CanUpdate(const BehaviorUpdateContext& context)
 {
     return BehaviorKnowledge::CompareValues((float)ValueA.Get(context.Knowledge), (float)ValueB.Get(context.Knowledge), Comparison);
+}
+
+bool BehaviorTreeKnowledgeBooleanDecorator::CanUpdate(const BehaviorUpdateContext& context)
+{
+    Variant value = Value.Get(context.Knowledge);
+    bool result = (bool)value;
+    result ^= Invert;
+    return result;
 }
 
 bool BehaviorTreeHasTagDecorator::CanUpdate(const BehaviorUpdateContext& context)

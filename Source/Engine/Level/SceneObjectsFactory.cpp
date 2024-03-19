@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "SceneObjectsFactory.h"
 #include "Engine/Level/Actor.h"
@@ -325,7 +325,7 @@ void SceneObjectsFactory::HandleObjectDeserializationError(const ISerializable::
                 dummyScript->Data = MoveTemp(bufferStr);
             }
 #endif
-            LOG(Warning, "Parent actor of the missing object: {0}", parent->GetName());
+            LOG(Warning, "Parent actor of the missing object: '{0}' ({1})", parent->GetNamePath(), String(parent->GetType().Fullname));
         }
     }
 #endif

@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "FlaxStorage.h"
 #include "FlaxFile.h"
@@ -19,6 +19,30 @@
 #include "Engine/Engine/Globals.h"
 #endif
 #include <ThirdParty/LZ4/lz4.h>
+
+int32 AssetHeader::GetChunksCount() const
+{
+    int32 result = 0;
+    for (int32 i = 0; i < ASSET_FILE_DATA_CHUNKS; i++)
+    {
+        if (Chunks[i] != nullptr)
+            result++;
+    }
+    return result;
+}
+
+void AssetHeader::DeleteChunks()
+{
+    for (int32 i = 0; i < ASSET_FILE_DATA_CHUNKS; i++)
+    {
+        SAFE_DELETE(Chunks[i]);
+    }
+}
+
+void AssetHeader::UnlinkChunks()
+{
+    Platform::MemoryClear(Chunks, sizeof(Chunks));
+}
 
 String AssetHeader::ToString() const
 {

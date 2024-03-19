@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -186,6 +186,11 @@ namespace FlaxEditor.GUI.Timeline
         private TimeShowModes _timeShowMode = TimeShowModes.Frames;
         private bool _showPreviewValues = true;
         private PlaybackStates _state = PlaybackStates.Disabled;
+
+        /// <summary>
+        /// The Track that is being dragged over. This could have a value when not dragging.
+        /// </summary>
+        internal Track DraggedOverTrack = null;
 
         /// <summary>
         /// Flag used to mark modified timeline data.

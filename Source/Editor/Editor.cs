@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -290,7 +290,6 @@ namespace FlaxEditor
 
             StateMachine = new EditorStateMachine(this);
             Undo = new EditorUndo(this);
-            UIControl.FallbackParentGetDelegate += OnUIControlFallbackParentGet;
 
             if (newProject)
                 InitProject();
@@ -353,27 +352,6 @@ namespace FlaxEditor
 
             // Start Editor initialization ending phrase (will wait for scripts compilation result)
             StateMachine.LoadingState.StartInitEnding(skipCompile);
-        }
-
-        private ContainerControl OnUIControlFallbackParentGet(UIControl control)
-        {
-            // Check if prefab root control is this UIControl
-            var loadingPreview = Viewport.Previews.PrefabPreview.LoadingPreview;
-            var activePreviews = Viewport.Previews.PrefabPreview.ActivePreviews;
-            if (activePreviews != null)
-            {
-                foreach (var preview in activePreviews)
-                {
-                    if (preview == loadingPreview ||
-                        (preview.Instance != null && (preview.Instance == control || preview.Instance.HasActorInHierarchy(control))))
-                    {
-                        // Link it to the prefab preview to see it in the editor
-                        preview.customControlLinked = control;
-                        return preview;
-                    }
-                }
-            }
-            return null;
         }
 
         internal void RegisterModule(EditorModule module)
@@ -1675,6 +1653,9 @@ namespace FlaxEditor
         [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_CanSetToRoot", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
         [return: MarshalAs(UnmanagedType.U1)]
         internal static partial bool Internal_CanSetToRoot(IntPtr prefab, IntPtr newRoot);
+
+        [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetPrefabNestedObject", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
+        internal static partial void Internal_GetPrefabNestedObject(IntPtr prefabId, IntPtr prefabObjectId, IntPtr outPrefabId, IntPtr outPrefabObjectId);
 
         [LibraryImport("FlaxEngine", EntryPoint = "EditorInternal_GetAnimationTime", StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(StringMarshaller))]
         internal static partial float Internal_GetAnimationTime(IntPtr animatedModel);

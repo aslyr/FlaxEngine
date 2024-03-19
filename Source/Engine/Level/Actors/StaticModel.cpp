@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "StaticModel.h"
 #include "Engine/Engine/Engine.h"
@@ -553,13 +553,11 @@ const Span<MaterialSlot> StaticModel::GetMaterialSlots() const
 
 MaterialBase* StaticModel::GetMaterial(int32 entryIndex)
 {
-    if (Model)
-        Model->WaitForLoaded();
-    else
+    if (!Model || Model->WaitForLoaded())
         return nullptr;
     CHECK_RETURN(entryIndex >= 0 && entryIndex < Entries.Count(), nullptr);
     MaterialBase* material = Entries[entryIndex].Material.Get();
-    if (!material)
+    if (!material && entryIndex < Model->MaterialSlots.Count())
     {
         material = Model->MaterialSlots[entryIndex].Material.Get();
         if (!material)

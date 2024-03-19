@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 using System;
 
@@ -390,7 +390,7 @@ namespace FlaxEngine
         }
 
 #if FLAX_EDITOR
-        internal bool ShowTransform => !(this is UIControl);
+        private bool ShowTransform => !(this is UIControl);
 #endif
     }
 }

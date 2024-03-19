@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #if COMPILE_WITH_EMPTY_PHYSICS
 
@@ -115,7 +115,7 @@ void PhysicsBackend::AddSceneActor(void* scene, void* actor)
 {
 }
 
-void PhysicsBackend::RemoveSceneActor(void* scene, void* actor)
+void PhysicsBackend::RemoveSceneActor(void* scene, void* actor, bool immediately)
 {
 }
 

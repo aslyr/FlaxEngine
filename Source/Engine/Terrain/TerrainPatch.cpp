@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2023 Wojciech Figat. All rights reserved.
+// Copyright (c) 2012-2024 Wojciech Figat. All rights reserved.
 
 #include "TerrainPatch.h"
 #include "Terrain.h"
@@ -38,8 +38,18 @@
 
 #define TERRAIN_PATCH_COLLISION_QUANTIZATION ((float)0x7fff)
 
+// [Deprecated on 4.03.2024, expires on 4.03.2029]
+struct TerrainCollisionDataHeaderOld
+{
+    int32 LOD;
+    float ScaleXZ;
+};
+
 struct TerrainCollisionDataHeader
 {
+    static constexpr int32 CurrentVersion = 1;
+    int32 CheckOldMagicNumber; // Used to detect if loading new header or old one
+    int32 Version;
     int32 LOD;
     float ScaleXZ;
 };
@@ -685,13 +695,13 @@ bool CookCollision(TerrainDataUpdateInfo& info, TextureBase::InitData* initData,
     // Cook height field
     MemoryWriteStream outputStream;
     if (CollisionCooking::CookHeightField(heightFieldSize, heightFieldSize, heightFieldData, outputStream))
-    {
         return true;
-    }
 
     // Write results
     collisionData->Resize(sizeof(TerrainCollisionDataHeader) + outputStream.GetPosition(), false);
     const auto header = (TerrainCollisionDataHeader*)collisionData->Get();
+    header->CheckOldMagicNumber = MAX_int32;
+    header->Version = TerrainCollisionDataHeader::CurrentVersion;
     header->LOD = collisionLOD;
     header->ScaleXZ = (float)info.HeightmapSize / heightFieldSize;
     Platform::MemoryCopy(collisionData->Get() + sizeof(TerrainCollisionDataHeader), outputStream.GetHandle(), outputStream.GetPosition());
@@ -2133,7 +2143,17 @@ bool TerrainPatch::CreateHeightField()
         return true;
     }
 
-    const auto collisionHeader = (TerrainCollisionDataHeader*)_heightfield->Data.Get();
+    // Check if the cooked collision matches the engine version
+    auto collisionHeader = (TerrainCollisionDataHeader*)_heightfield->Data.Get();
+    if (collisionHeader->CheckOldMagicNumber != MAX_int32 || collisionHeader->Version != TerrainCollisionDataHeader::CurrentVersion)
+    {
+        // Reset height map
+        PROFILE_CPU_NAMED("ResetHeightMap");
+        const float* data = GetHeightmapData();
+        return SetupHeightMap(_cachedHeightMap.Count(), data);
+    }
+
+    // Create heightfield object from the data
     _collisionScaleXZ = collisionHeader->ScaleXZ * TERRAIN_UNITS_PER_VERTEX;
     _physicsHeightField = PhysicsBackend::CreateHeightField(_heightfield->Data.Get() + sizeof(TerrainCollisionDataHeader), _heightfield->Data.Count() - sizeof(TerrainCollisionDataHeader));
     if (_physicsHeightField == nullptr)
@@ -2562,7 +2582,7 @@ void TerrainPatch::Deserialize(DeserializeStream& stream, ISerializeModifier* mo
 
 void TerrainPatch::OnPhysicsSceneChanged(PhysicsScene* previous)
 {
-    PhysicsBackend::RemoveSceneActor(previous->GetPhysicsScene(), _physicsActor);
+    PhysicsBackend::RemoveSceneActor(previous->GetPhysicsScene(), _physicsActor, true);
     void* scene = _terrain->GetPhysicsScene()->GetPhysicsScene();
     PhysicsBackend::AddSceneActor(scene, _physicsActor);
 }
